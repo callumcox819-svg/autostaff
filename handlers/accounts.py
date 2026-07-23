@@ -23,7 +23,6 @@ from sqlalchemy import select, update, or_
 from database import Session, db_session
 from models import User, EmailAccount
 from keyboards.main_menu import main_menu_kb
-from keyboards.settings_menu import settings_menu
 from utils.bg_jobs import is_running as bg_is_running, start as bg_start
 
 logger = logging.getLogger(__name__)

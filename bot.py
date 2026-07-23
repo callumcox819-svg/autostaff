@@ -76,6 +76,7 @@ def _bind_priority_dispatcher_handlers(dp: Dispatcher) -> None:
     from aiogram.filters import Command
     from aiogram.types import Message
 
+    from handlers.admin_panel import open_admin
     from handlers.accounts import open_accounts_from_settings, quick_gmail_from_main_menu
     from handlers.api_keys import aqua_show_key, aqua_show_profile
     from handlers.proxies import open_proxies
@@ -92,7 +93,16 @@ def _bind_priority_dispatcher_handlers(dp: Dispatcher) -> None:
     )
     from handlers.stopsend import cmd_stopsend
     from handlers.status import cmd_imap_diag, cmd_statussend
+    from handlers.test_mail import test_mail_start
     from handlers.templates import presets_menu
+    from keyboards.main_menu import (
+        is_admin_trigger,
+        is_quick_add_trigger,
+        is_send_trigger,
+        is_status_trigger,
+        is_stop_trigger,
+        is_test_mail_trigger,
+    )
 
     async def _dp_settings_message(message: Message, state: FSMContext) -> None:
         logger.info("⚙️ settings (dispatcher) tg=%s", message.from_user.id)
@@ -104,21 +114,32 @@ def _bind_priority_dispatcher_handlers(dp: Dispatcher) -> None:
     )
 
     dp.message.register(send_cmd, Command("send"))
-    dp.message.register(send_cmd, F.text == "Запустить рассылку")
+    dp.message.register(send_cmd, F.func(lambda m: is_send_trigger(getattr(m, "text", None))))
     dp.message.register(cmd_stopsend, Command("stop", "stopsend"))
     dp.message.register(
         cmd_stopsend,
-        F.text.in_({"Остановить рассылку", "/stop", "/stopsend"}),
+        F.func(lambda m: is_stop_trigger(getattr(m, "text", None))),
     )
     from handlers.reset import cmd_reset
 
     dp.message.register(cmd_reset, Command("reset"))
     dp.message.register(cmd_statussend, Command("stat", "status", "statussend"))
-    dp.message.register(cmd_statussend, F.text == "Статус рассылки")
+    dp.message.register(
+        cmd_statussend,
+        F.func(lambda m: is_status_trigger(getattr(m, "text", None))),
+    )
     dp.message.register(cmd_imap_diag, Command("imap_diag"))
     dp.message.register(
         quick_gmail_from_main_menu,
-        F.text.in_({"Быстрое добавление", "Быстрое добавление (Gmail)"}),
+        F.func(lambda m: is_quick_add_trigger(getattr(m, "text", None))),
+    )
+    dp.message.register(
+        open_admin,
+        F.func(lambda m: is_admin_trigger(getattr(m, "text", None))),
+    )
+    dp.message.register(
+        test_mail_start,
+        F.func(lambda m: is_test_mail_trigger(getattr(m, "text", None))),
     )
 
     _deprecated = frozenset({"settings_menu", "goo:settings", "goo_settings", "settings_main"})

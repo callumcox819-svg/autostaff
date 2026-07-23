@@ -16,6 +16,7 @@ from sqlalchemy import select, func
 
 from models import EmailAccount, SentEmail, OfferEmail, Offer, User
 from services.bot_roles import user_is_admin as is_admin, config_admin_ids
+from keyboards.main_menu import is_admin_trigger, main_menu_kb
 from middlewares.bot_access import invalidate_access_cache
 
 
@@ -52,7 +53,7 @@ def admin_kb() -> InlineKeyboardMarkup:
     )
 
 
-@router.message(F.text.in_({"/admin", "👑 Админ-панель", "🔥 Админ-панель"}))
+@router.message(F.func(lambda m: is_admin_trigger(getattr(m, "text", None))))
 async def open_admin(message: Message) -> None:
     if not await is_admin(message.from_user.id):
         await message.answer("⛔ У тебя нет доступа к админ-панели.")

@@ -22,7 +22,7 @@ from sqlalchemy import select, update, or_
 
 from database import Session, db_session
 from models import User, EmailAccount
-from keyboards.main_menu import main_menu_kb
+from keyboards.main_menu import is_quick_add_trigger
 from utils.bg_jobs import is_running as bg_is_running, start as bg_start
 
 logger = logging.getLogger(__name__)
@@ -723,7 +723,7 @@ async def _quick_gmail_begin(message: Message, state: FSMContext) -> None:
     )
 
 
-@router.message(F.text.in_({"⚡ Быстрое добавление", "⚡ Быстрое добавление (Gmail)"}))
+@router.message(F.func(lambda m: is_quick_add_trigger(getattr(m, "text", None))))
 async def quick_gmail_from_main_menu(message: Message, state: FSMContext) -> None:
     await _quick_gmail_begin(message, state)
 

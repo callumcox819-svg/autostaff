@@ -61,7 +61,34 @@ def is_stop_trigger(text: str | None) -> bool:
 
 def is_status_trigger(text: str | None) -> bool:
     t = (text or "").strip()
-    return t in {TEXT_STATUS, label("status", TEXT_STATUS), "📊 Статус рассылки", "/stat"}
+    return t in {TEXT_STATUS, label("status", TEXT_STATUS), "📊 Статус рассылки", "/stat", "/status", "/statussend"}
+
+
+def is_quick_add_trigger(text: str | None) -> bool:
+    t = (text or "").strip()
+    return t in {
+        TEXT_QUICK_ADD,
+        label("quick_add", TEXT_QUICK_ADD),
+        "⚡ Быстрое добавление",
+        "⚡ Быстрое добавление (Gmail)",
+        "Быстрое добавление (Gmail)",
+    }
+
+
+def is_admin_trigger(text: str | None) -> bool:
+    t = (text or "").strip()
+    return t in {
+        TEXT_ADMIN,
+        label("admin", TEXT_ADMIN),
+        "👑 Админ-панель",
+        "🔥 Админ-панель",
+        "/admin",
+    }
+
+
+def is_test_mail_trigger(text: str | None) -> bool:
+    t = (text or "").strip()
+    return t in {TEXT_TEST_MAIL, label("test_mail", TEXT_TEST_MAIL), "🧪 Тест маил", "/testmail"}
 
 
 def main_menu_kb(user_id: int, *, show_admin: bool = False) -> ReplyKeyboardMarkup:

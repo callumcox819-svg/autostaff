@@ -26,8 +26,8 @@ from services.smtp_delivery_verify import verify_message_in_sent
 from services.smtp_proxy_send import send_email_via_account_with_proxy
 from services.user_settings import get_user_setting, set_user_setting
 from sqlalchemy import func, select
-from utils.bg_jobs import is_running as bg_is_running
-from utils.bg_jobs import start as bg_start
+from keyboards.main_menu import is_test_mail_trigger
+from utils.bg_jobs import is_running as bg_is_running, start as bg_start
 
 router = Router()
 
@@ -133,7 +133,7 @@ async def _show_menu(message: Message, *, edit: bool = False) -> None:
     from services.bot_roles import user_is_admin
 
     if not await user_is_admin(message.from_user.id):
-        return
+        return await message.answer("⛔ Тест маил только для админов.")
     async with async_session() as session:
         user = (
             await session.execute(select(User).where(User.telegram_id == int(message.from_user.id)))
@@ -151,7 +151,8 @@ async def _show_menu(message: Message, *, edit: bool = False) -> None:
     await message.answer(text, reply_markup=kb, parse_mode="HTML")
 
 
-@router.message(F.text == "🧪 Тест маил")
+@router.message(Command("testmail"))
+@router.message(F.func(lambda m: is_test_mail_trigger(getattr(m, "text", None))))
 async def test_mail_start(message: Message, state: FSMContext) -> None:
     await state.clear()
     await _show_menu(message)

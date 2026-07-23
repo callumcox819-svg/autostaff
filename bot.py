@@ -291,6 +291,15 @@ async def main() -> None:
 
     _acquire_single_instance_lock()
 
+    try:
+        import socks  # noqa: F401 — PySocks, нужен для проверки/рассылки через прокси
+    except ModuleNotFoundError:
+        logger.error(
+            "PySocks не установлен (pip install PySocks). "
+            "Без него прокси и SMTP через SOCKS5/HTTP не работают."
+        )
+        sys.exit(1)
+
     token = (config.BOT_TOKEN or os.getenv("BOT_TOKEN") or "").strip()
     if not token:
         logger.error(

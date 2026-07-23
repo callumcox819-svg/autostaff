@@ -17,6 +17,13 @@ from services.user_settings import get_user_setting, set_user_setting
 from keyboards.main_menu import main_menu_kb
 from utils.callback_safe import callback_answer_safe
 from utils.ui_emoji import inline_button
+
+
+def _back_kb(callback_data: str = "settings_open") -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[[inline_button("back", "Назад", callback_data=callback_data)]]
+    )
+
 from services.aqua_keys import (
     AQUA_SERVICE_KEY,
     aqua_service_for_html_dir,
@@ -233,7 +240,7 @@ async def _spoof_name_menu_payload(tg_user_id: int) -> tuple[str, InlineKeyboard
         inline_keyboard=[
             [InlineKeyboardButton(text=f"✅ Установить имя ({label})", callback_data="spoof_name_set")],
             [InlineKeyboardButton(text="📌 Тема для HTML", callback_data="html_theme_menu")],
-            [InlineKeyboardButton(text="⬅️ Назад", callback_data="settings_open")],
+            _back_kb("settings_open").inline_keyboard[0],
         ]
     )
     return text, kb
@@ -352,7 +359,7 @@ async def sender_name_menu(callback: CallbackQuery) -> None:
     kb = InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="✏️ Установить", callback_data="sender_name_set")],
-            [InlineKeyboardButton(text="⬅️ Назад", callback_data="settings_open")],
+            _back_kb("settings_open").inline_keyboard[0],
         ]
     )
     await callback.message.edit_text(
@@ -383,7 +390,7 @@ async def html_nick_menu(callback: CallbackQuery, state: FSMContext) -> None:
     kb = InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="✏️ Установить", callback_data="html_nick_set")],
-            [InlineKeyboardButton(text="⬅️ Назад", callback_data="settings_open")],
+            _back_kb("settings_open").inline_keyboard[0],
         ]
     )
 
@@ -407,7 +414,7 @@ async def html_nick_set_start(callback: CallbackQuery, state: FSMContext) -> Non
         "📝 <b>Смена ника</b>\n\n"
         "Отправь новый ник одним сообщением (или «-», чтобы очистить).",
         reply_markup=InlineKeyboardMarkup(
-            inline_keyboard=[[InlineKeyboardButton(text="⬅️ Назад", callback_data="settings_open")]]
+            inline_keyboard=_back_kb("settings_open").inline_keyboard,
         ),
         parse_mode="HTML",
     )
@@ -469,7 +476,7 @@ _REF_TOGGLE_KEYS = {
 
 
 def _simple_back_kb() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⬅️ Назад", callback_data="settings_open")]])
+    return _back_kb("settings_open")
 
 
 @router.callback_query(F.data.startswith("ref_toggle:"))
@@ -523,7 +530,7 @@ async def ref_open(callback: CallbackQuery, state: FSMContext):
         await callback.message.edit_text(
             msg,
             reply_markup=InlineKeyboardMarkup(
-                inline_keyboard=[[InlineKeyboardButton(text="⬅️ Назад", callback_data="settings_open")]]
+                inline_keyboard=_back_kb("settings_open").inline_keyboard,
             ),
             parse_mode="HTML",
         )
@@ -585,7 +592,7 @@ async def ref_open_commands(callback: CallbackQuery, state: FSMContext):
     )
     await _safe_send(callback.message.edit_text(
         text,
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⬅️ Назад", callback_data="settings_open")]]),
+        reply_markup=_back_kb("settings_open"),
         parse_mode="HTML",
     ))
     await callback.answer()
@@ -625,7 +632,7 @@ async def themes_menu(callback: CallbackQuery, state: FSMContext):
             *preset_rows,
             [InlineKeyboardButton(text="✏️ Свой шаблон", callback_data="themes_edit")],
             [InlineKeyboardButton(text="🗑 Сброс (по умолчанию)", callback_data="themes_clear")],
-            [InlineKeyboardButton(text="⬅️ Назад", callback_data="settings_open")],
+            _back_kb("settings_open").inline_keyboard[0],
         ]
     )
     cur_show = effective
@@ -675,7 +682,7 @@ async def themes_edit(callback: CallbackQuery, state: FSMContext):
         "Отправь шаблон с <code>OFFER</code> (название товара).\n"
         "Примеры: <code>Re: OFFER</code>, <code>Tuote: OFFER</code>\n"
         "Сброс — отправь <code>-</code>.",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⬅️ Назад", callback_data="themes_menu")]]),
+        reply_markup=_back_kb("themes_menu"),
         parse_mode="HTML",
     ))
     await callback.answer()
@@ -715,7 +722,7 @@ async def _themes_menu_after_save(message: Message, state: FSMContext, cur_show:
             *preset_rows,
             [InlineKeyboardButton(text="✏️ Свой шаблон", callback_data="themes_edit")],
             [InlineKeyboardButton(text="🗑 Сброс (по умолчанию)", callback_data="themes_clear")],
-            [InlineKeyboardButton(text="⬅️ Назад", callback_data="settings_open")],
+            _back_kb("settings_open").inline_keyboard[0],
         ]
     )
     preview = render_subject_with_offer(effective, "Pöytäliina")
@@ -748,7 +755,7 @@ async def html_theme_menu(callback: CallbackQuery, state: FSMContext):
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="✏️ Изменить", callback_data="html_theme_edit")],
         [InlineKeyboardButton(text="🗑 Очистить", callback_data="html_theme_clear")],
-        [InlineKeyboardButton(text="⬅️ Назад", callback_data="spoof_name_menu")],
+        _back_kb("spoof_name_menu").inline_keyboard[0],
     ])
     cur_show = cur if cur else "—"
     txt = (
@@ -767,7 +774,7 @@ async def html_theme_edit(callback: CallbackQuery, state: FSMContext):
     await _safe_send(callback.message.edit_text(
         "🧾 <b>Тема для HTML</b>\n\nОтправь тему одной строкой.\n"
         "Чтобы удалить — отправь <code>-</code>.",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⬅️ Назад", callback_data="spoof_name_menu")]]),
+        reply_markup=_back_kb("spoof_name_menu"),
         parse_mode="HTML",
     ))
     await callback.answer()
@@ -821,7 +828,7 @@ async def priority_menu(callback: CallbackQuery, state: FSMContext):
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="✏️ Изменить приоритет", callback_data="priority_edit")],
         [InlineKeyboardButton(text="🗑 Сбросить приоритет", callback_data="priority_reset")],
-        [InlineKeyboardButton(text="⬅️ Назад", callback_data="settings_open")],
+        _back_kb("settings_open").inline_keyboard[0],
     ])
     await _safe_send(callback.message.edit_text(
         "📊 <b>Приоритет отправки</b>\n\n"
@@ -840,7 +847,7 @@ async def priority_edit(callback: CallbackQuery, state: FSMContext):
         "Отправь домены списком (каждый с новой строки).\n"
         "Пример:\n<code>gmx.de\ngmail.com\n...</code>\n\n"
         "Чтобы очистить — отправь <code>-</code>",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⬅️ Назад", callback_data="priority_menu")]]),
+        reply_markup=_back_kb("priority_menu"),
         parse_mode="HTML",
     ))
     await callback.answer()

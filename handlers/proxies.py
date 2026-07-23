@@ -29,6 +29,7 @@ from services.proxy_verify import (
 )
 from proxy_manager import normalize_proxy_type
 from utils.bg_jobs import is_running as bg_is_running, start as bg_start
+from utils.ui_emoji import html_emoji, icon_button, inline_button
 
 router = Router()
 logger = logging.getLogger(__name__)
@@ -363,12 +364,12 @@ def parse_proxy_block(text: str) -> Optional[dict]:
 #  Меню
 # ======================
 
-def _proxy_status_emoji(p: Proxy) -> str:
+def _proxy_status_key(p: Proxy) -> str:
     if p.is_active is True:
-        return "🟢"
+        return "green"
     if p.is_active is False:
-        return "🔴"
-    return "🟡"
+        return "red"
+    return "yellow"
 
 
 def _proxy_counts(proxies: List[Proxy]) -> tuple[int, int, int]:
@@ -387,20 +388,19 @@ def proxies_menu(proxies: List[Proxy]) -> InlineKeyboardMarkup:
     rows = []
 
     for p in proxies:
-        status = _proxy_status_emoji(p)
         ptype = (p.type or "socks5").lower()
-        text = f"{status} {ptype} {p.host}:{p.port}"
+        label_text = f"{ptype} {p.host}:{p.port}"
 
         rows.append([
-            InlineKeyboardButton(text=text, callback_data=f"proxy_info:{p.id}"),
-            InlineKeyboardButton(text="🗑", callback_data=f"proxy_del:{p.id}"),
-            InlineKeyboardButton(text="🔄", callback_data=f"proxy_test:{p.id}"),
+            inline_button(_proxy_status_key(p), label_text, callback_data=f"proxy_info:{p.id}"),
+            icon_button("delete", callback_data=f"proxy_del:{p.id}"),
+            icon_button("refresh", callback_data=f"proxy_test:{p.id}"),
         ])
 
-    rows.append([InlineKeyboardButton(text="➕ Добавить прокси", callback_data="proxy_add_menu")])
+    rows.append([inline_button("add", "Добавить прокси", callback_data="proxy_add_menu")])
     if proxies:
-        rows.append([InlineKeyboardButton(text="🔍 Проверить прокси", callback_data="proxies_check_all")])
-    rows.append([InlineKeyboardButton(text="⬅️ Назад", callback_data="settings_back")])
+        rows.append([inline_button("search", "Проверить прокси", callback_data="proxies_check_all")])
+    rows.append([inline_button("back", "Назад", callback_data="settings_back")])
 
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
@@ -425,13 +425,14 @@ async def render_proxy_menu(message_or_cb, telegram_id: int):
             proxies = list(result.scalars())
 
     ok_n, unk_n, bad_n = _proxy_counts(proxies)
+    g, y, r = html_emoji("green"), html_emoji("yellow"), html_emoji("red")
     text = (
-        "🧩 <b>Твои прокси</b>\n\n"
+        f"{html_emoji('puzzle')} <b>Твои прокси</b>\n\n"
         f"Всего: {len(proxies)}\n"
-        f"🟢 SMTP OK: {ok_n} · 🟡 неясно/не проверен: {unk_n} · 🔴 мёртв при рассылке: {bad_n}\n\n"
-        "<i>Проверка: SMTP+STARTTLS (до 2 попыток). "
-        "🔴 только если туннель реально умер при /send — не из-за таймаута проверки.</i>\n"
-        "<i>Рассылка использует все SOCKS5 и HTTP, в т.ч. 🟡.</i>"
+        f"{g} SMTP OK: {ok_n} · {y} неясно/не проверен: {unk_n} · {r} мёртв при рассылке: {bad_n}\n\n"
+        "<i>Проверка: туннель до smtp.gmail.com:587 (как при рассылке).</i>\n"
+        f"<i>{r} только если туннель реально умер при /send.</i>\n"
+        f"<i>Рассылка использует все SOCKS5 и HTTP, в т.ч. {y}.</i>"
     )
 
     kb = proxies_menu(proxies)
@@ -683,14 +684,14 @@ async def proxy_info(callback: CallbackQuery):
 
     err = proxy.last_error or "-"
     if proxy.is_active is True:
-        st_line = "🟢 SMTP OK (проверка или рассылка)"
+        st_line = f"{html_emoji('green')} SMTP OK (проверка или рассылка)"
     elif proxy.is_active is False and is_mailing_marked_dead(err):
-        st_line = "🔴 Мёртв при рассылке (туннель)"
+        st_line = f"{html_emoji('red')} Мёртв при рассылке (туннель)"
     else:
-        st_line = "🟡 Не проверен / проверка не прошла — в рассылке используется"
+        st_line = f"{html_emoji('yellow')} Не проверен / проверка не прошла — в рассылке используется"
 
     text = (
-        "🧩 <b>Прокси</b>\n\n"
+        f"{html_emoji('proxy')} <b>Прокси</b>\n\n"
         f"Host: <code>{proxy.host}</code>\n"
         f"Port: <code>{proxy.port}</code>\n"
         f"Type: <code>{proxy.type}</code>\n"
@@ -702,8 +703,8 @@ async def proxy_info(callback: CallbackQuery):
 
     kb = InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="🔄 Проверить", callback_data=f"proxy_test:{proxy.id}")],
-            [InlineKeyboardButton(text="⬅️ Назад", callback_data="settings_proxies")],
+            [inline_button("refresh", "Проверить", callback_data=f"proxy_test:{proxy.id}")],
+            [inline_button("back", "Назад", callback_data="settings_proxies")],
         ]
     )
 
@@ -905,11 +906,11 @@ async def proxy_test(callback: CallbackQuery):
                 await session2.commit()
 
         status_text = (
-            f"✅ SMTP+STARTTLS OK\n<code>{info}</code>"
+            f"{html_emoji('ok')} SMTP+STARTTLS OK\n<code>{info}</code>"
             if ok
             else (
-                f"⚠️ Проверка не прошла (прокси <b>не</b> отключён)\n<code>{info}</code>\n"
-                "<i>🔴 будет только если при рассылке туннель реально мёртв.</i>"
+                f"{html_emoji('fail')} Проверка не прошла\n<code>{info}</code>\n"
+                f"<i>{html_emoji('red')} будет только если при рассылке туннель реально мёртв.</i>"
             )
         )
         try:

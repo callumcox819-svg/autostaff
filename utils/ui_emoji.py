@@ -1,4 +1,4 @@
-"""Premium (custom) emoji для кнопок Telegram — icon_custom_emoji_id."""
+"""Premium (custom) emoji для кнопок и текста Telegram — icon_custom_emoji_id / tg-emoji."""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ from aiogram.types import InlineKeyboardButton, KeyboardButton
 
 logger = logging.getLogger(__name__)
 
-# Unicode fallback, если id не задан (для локальной отладки)
+# Unicode fallback, если id не задан (локальная отладка)
 _UNICODE_FALLBACK: dict[str, str] = {
     "settings": "⚙️",
     "quick_add": "⚡",
@@ -39,7 +39,10 @@ _UNICODE_FALLBACK: dict[str, str] = {
     "ok": "✅",
     "fail": "❌",
     "wait": "⏳",
+    "refresh": "🔄",
+    "search": "🔍",
     "burst": "⚡",
+    "puzzle": "🧩",
 }
 
 
@@ -59,8 +62,9 @@ def _load_emoji_ids() -> dict[str, str]:
                 for k, v in data.items():
                     sk = str(k).strip()
                     sv = str(v).strip()
-                    if sk and sv.isdigit():
-                        out[sk] = sv
+                    if sk.startswith("_") or not sk or not sv.isdigit():
+                        continue
+                    out[sk] = sv
         except Exception:
             logger.exception("Failed to load premium emoji config: %s", p)
 
@@ -79,26 +83,36 @@ def emoji_id(key: str) -> str | None:
     return _load_emoji_ids().get((key or "").strip().lower())
 
 
+def unicode_fallback(key: str) -> str:
+    return _UNICODE_FALLBACK.get((key or "").strip().lower(), "")
+
+
 def label(key: str, text: str, *, fallback_in_text: bool = True) -> str:
     """Текст кнопки: без unicode, если есть premium id (emoji рисуется отдельно)."""
     if emoji_id(key):
         return text
     if fallback_in_text:
-        fb = _UNICODE_FALLBACK.get(key, "")
+        fb = unicode_fallback(key)
         return f"{fb} {text}".strip() if fb else text
     return text
 
 
+def html_emoji(key: str, *, fallback: str | None = None) -> str:
+    """Premium emoji в HTML-сообщениях бота."""
+    eid = emoji_id(key)
+    fb = fallback if fallback is not None else unicode_fallback(key)
+    if eid:
+        return f'<tg-emoji emoji-id="{eid}">{fb or "•"}</tg-emoji>'
+    return fb or ""
+
+
 def reply_button(key: str, text: str, *, style: str | None = None, **kwargs: Any) -> KeyboardButton:
+    """
+    Reply-клавиатура: premium icon + читаемый текст.
+    style=primary/success/danger на клиентах часто прячет подпись — не используем.
+    """
     eid = emoji_id(key)
     kw: dict[str, Any] = dict(kwargs)
-    if style:
-        kw["style"] = style
-    # Styled reply-кнопки: без icon_custom_emoji_id — подпись читается (⚙️ Настройки).
-    if style:
-        fb = _UNICODE_FALLBACK.get(key, "")
-        display = f"{fb} {text}".strip() if fb else text
-        return KeyboardButton(text=display, **kw)
     if eid:
         return KeyboardButton(text=text, icon_custom_emoji_id=eid, **kw)
     return KeyboardButton(text=label(key, text), **kw)
@@ -127,6 +141,12 @@ def inline_button(
     return InlineKeyboardButton(text=btn_text, **kw)
 
 
+def icon_button(key: str, *, callback_data: str, style: str | None = None) -> InlineKeyboardButton:
+    """Компактная inline-кнопка только с premium-иконкой."""
+    fb = unicode_fallback(key) or "•"
+    return inline_button(key, fb, callback_data=callback_data, style=style)
+
+
 def toggle_button(on: bool, caption: str, callback_data: str) -> InlineKeyboardButton:
     key = "green" if on else "red"
     eid = emoji_id(key)
@@ -138,7 +158,7 @@ def toggle_button(on: bool, caption: str, callback_data: str) -> InlineKeyboardB
             callback_data=callback_data,
             style=style,
         )
-    fb = _UNICODE_FALLBACK.get(key, "")
+    fb = unicode_fallback(key)
     return InlineKeyboardButton(
         text=f"{fb} {caption}".strip(),
         callback_data=callback_data,

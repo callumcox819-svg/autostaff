@@ -175,7 +175,7 @@ async def _test_proxy_once(proxy: Proxy | dict[str, Any], *, timeout: int = 20) 
     tunnel_timeout = max(12, min(smtp_timeout, 20))
     tunnel_ok, tunnel_info = await _test_proxy_tunnel_handshake(proxy, timeout=tunnel_timeout)
     if tunnel_ok:
-        return False, f"Туннель до SMTP есть, но EHLO/STARTTLS не прошёл: {smtp_info}"
+        return True, f"Туннель до SMTP OK ({tunnel_info})"
     return False, f"SMTP: {smtp_info} · туннель: {tunnel_info}"
 
 

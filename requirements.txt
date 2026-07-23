@@ -1,2 +1,3 @@
-# Railway / production: полный набор (в т.ч. PySocks для прокси).
+PySocks==1.7.1
+# Railway / production: полный набор зависимостей.
 -r requirements.prod.txt

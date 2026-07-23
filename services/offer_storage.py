@@ -116,7 +116,7 @@ def offer_effective_title(offer: Offer | None) -> str:
 
 
 def offer_effective_link(offer: Offer | None) -> str:
-    """Ссылка 2dehands/bpost: Offer.link, иначе item_link/link из raw_json."""
+    """Ссылка ricardo.ch/tutti.ch: Offer.link, иначе item_link/link из raw_json."""
     if not offer:
         return ""
     link = str(getattr(offer, "link", None) or "").strip()

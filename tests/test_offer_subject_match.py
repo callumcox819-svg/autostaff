@@ -6,7 +6,7 @@ from types import SimpleNamespace
 
 from services.offer_matching import (
     _pick_offer_by_subject_in_list,
-    narkologia_link_title_from_mail,
+    gag_link_title_from_mail,
     offer_display_title,
     product_title_from_subject,
     subject_match_score,
@@ -44,20 +44,20 @@ class OfferSubjectMatchTests(unittest.TestCase):
         subj = "Re: Trampoline"
         self.assertEqual(offer_display_title(subj, tramp), "Trampoline")
 
-    def test_narkologia_link_title_from_mail_subject_only(self):
+    def test_gag_link_title_from_mail_subject_only(self):
         tramp = SimpleNamespace(title="Trampoline van Berg", raw_json=None)
         subj = "Re: Trampoline"
-        self.assertEqual(narkologia_link_title_from_mail(subj, tramp), "Trampoline")
+        self.assertEqual(gag_link_title_from_mail(subj, tramp), "Trampoline")
 
     def test_pick_trampoline_offer_among_seller_listings(self):
         tramp = SimpleNamespace(
             title="Trampoline van Berg",
-            link="https://www.2dehands.be/v/trampoline",
+            link="https://www.ricardo.ch/de/a/trampoline",
             raw_json=None,
         )
         sofa = SimpleNamespace(
             title="Grote bank",
-            link="https://www.2dehands.be/v/bank",
+            link="https://www.ricardo.ch/de/a/bank",
             raw_json=None,
         )
         hit = _pick_offer_by_subject_in_list([sofa, tramp], "Re: Trampoline")

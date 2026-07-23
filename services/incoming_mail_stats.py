@@ -25,7 +25,7 @@ _AUTO_REPLY_RE = re.compile(
 )
 
 _PLATFORM_DOMAIN_RE = re.compile(
-    r"(2dehands\.be|2ememain\.be|bpost\.be|facebook\.com|marketplace|gmx\.(net|de)|"
+    r"(ricardo\.ch|tutti\.ch|facebook\.com|marketplace|gmx\.(net|de|ch)|"
     r"mail\.gmail\.com)",
     re.I,
 )
@@ -92,7 +92,7 @@ def classify_incoming_row(row: IncomingMail) -> str:
 _CATEGORY_LABELS = {
     "seller_matched": "🟢 Продавец (рассылка / email в базе) — ближе всего к «живому»",
     "offer_title_only": "📦 Оффер без Re: в теме (редко — проверьте вручную)",
-    "platform": "🏪 Платформа / сервис (2dehands.be, bpost.be, gmx…)",
+    "platform": "🏪 Платформа / сервис (ricardo.ch, tutti.ch, gmx…)",
     "google": "📧 Google / системное (в TG обычно нет карточки)",
     "bounce_block": "⛔ Block отправителя (Gmail 5.7.1 / Message blocked)",
     "bounce_recipient": "💀 Мёртвый адрес получателя (не ответ продавца)",

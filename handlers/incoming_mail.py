@@ -112,7 +112,7 @@ async def _aqua_generate_link(
         raise AquaError("Личный API-ключ не установлен. ⚙️ → 🔑")
     if not team_key:
         raise AquaError(
-            "Ключ команды Narkologia не задан на сервере (переменная NARKOLOGIA_TEAM_API_KEY)."
+            "Ключ команды GAG не задан на сервере (переменная GAG_TEAM_API_KEY)."
         )
     from services.aqua_keys import user_profile_fields_complete
 
@@ -1014,10 +1014,10 @@ def _service_label_for_card(service_code: str) -> str:
     """
     sc = (service_code or "").strip().lower()
 
-    if sc in {"2dehands_be", "2dehands.be", "2dehands", "2ememain_be", "2ememain.be"}:
-        return "2dehands.be"
-    if sc in {"bpost_be", "bpost.be", "bpost"}:
-        return "bpost.be"
+    if sc in {"ricardo_ch", "ricardo.ch", "ricardo"}:
+        return "ricardo.ch"
+    if sc in {"tutti_ch", "tutti.ch", "tutti"}:
+        return "tutti.ch"
 
     # FB (inbox)
     if sc in {"facebook", "facebook.com"}:
@@ -1692,7 +1692,7 @@ async def _create_aqua_link_from_db_work(callback: CallbackQuery, mail_id: int) 
                 f"<b>Тема:</b> <code>{_e(subj_hint or '—')}</code>\n"
                 f"<b>От:</b> <code>{_e(contact_email) or '—'}</code>\n\n"
                 "Загрузите JSON с этим лотом, провалидируйте email продавца "
-                "(поле <code>item_link</code> — ссылка 2dehands/bpost), затем снова «Создать ссылку».",
+                "(поле <code>item_link</code> — ссылка ricardo.ch/tutti.ch), затем снова «Создать ссылку».",
                 parse_mode="HTML",
                 disable_web_page_preview=True,
             )
@@ -1727,7 +1727,7 @@ async def _create_aqua_link_from_db_work(callback: CallbackQuery, mail_id: int) 
                 image=offer_image,
             )
         except AquaError as e:
-            await callback.message.answer(f"❌ <b>Narkologia API</b>\n<code>{_e(str(e)[:400])}</code>", parse_mode="HTML")
+            await callback.message.answer(f"❌ <b>GAG API</b>\n<code>{_e(str(e)[:400])}</code>", parse_mode="HTML")
             await callback.answer()
             return
 
@@ -1916,7 +1916,7 @@ async def _create_aqua_link_work(callback: CallbackQuery, acc_id: int, uid: str,
             )
         except AquaError as e:
             await callback.message.answer(
-                f"❌ <b>Narkologia API</b>\n<code>{_e(str(e)[:400])}</code>",
+                f"❌ <b>GAG API</b>\n<code>{_e(str(e)[:400])}</code>",
                 parse_mode="HTML",
             )
             return await callback.answer()
@@ -2234,7 +2234,7 @@ async def _offer_title_for_email(session: Session, user_id: int, to_email: str) 
 
 
 async def _load_html_template_for_user(session: Session, user: User, filename: str) -> tuple[str, str | None]:
-    """HTML только из data/HTMLbe/<сервис>/ (без fallback)."""
+    """HTML только из data/HTMLch/<сервис>/ (без fallback)."""
     from services.html_templates import load_html_for_user
 
     html, _subdir, err = await load_html_for_user(
@@ -3004,7 +3004,7 @@ async def cb_offer_price(callback: CallbackQuery, state: FSMContext):
         "💶 <b>Цена</b>\n\n"
         f"Текущая цена: <code>{_e(current)}</code>\n\n"
         "Отправь новую цену (например: <code>500</code> или <code>500.00 EUR</code>).\n"
-        "Бот пересоздаст ссылку Narkologia и отправит её к письму.\n\n"
+        "Бот пересоздаст ссылку GAG и отправит её к письму.\n\n"
         "Чтобы отменить — отправь <code>-</code>.",
         parse_mode="HTML",
     )

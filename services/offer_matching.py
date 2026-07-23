@@ -50,8 +50,8 @@ def product_title_from_subject(subject: str) -> str:
     return subj
 
 
-def narkologia_link_title_from_mail(subject: str, offer: Offer | None = None) -> str:
-    """Имя для Narkologia API и карточки ссылки — всегда из темы письма, не из title в БД."""
+def gag_link_title_from_mail(subject: str, offer: Offer | None = None) -> str:
+    """Имя для GAG API и карточки ссылки — всегда из темы письма, не из title в БД."""
     subj_t = product_title_from_subject(subject)
     if subj_t:
         return subj_t
@@ -507,7 +507,7 @@ async def finalize_aqua_listing_context(
     elif off_url and not subject_is_informative(subject):
         offer = off_url
 
-    title = narkologia_link_title_from_mail(subject, offer)
+    title = gag_link_title_from_mail(subject, offer)
     price = image = None
 
     if offer:

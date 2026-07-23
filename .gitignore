@@ -4,5 +4,4 @@ __pycache__/
 *.db
 .venv/
 venv/
-.belgium_bot.pid
 .gag_bot.pid

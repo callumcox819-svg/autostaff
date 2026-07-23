@@ -1,70 +1,78 @@
-# GAG Bot (Швейцария)
+# GAG Bot — Швейцария
 
-Отдельный Telegram-бот для команды **GAG** — валидация + **burst-рассылка** с максимальной доходимостью.
+Telegram-бот для команды **GAG**: валидация email, **burst-рассылка**, входящие письма, генерация ссылок через GAG API.
 
-## Inbox placement (Inbox получателя, не Spam)
+Площадки: **ricardo.ch**, **tutti.ch**.
 
-**SMTP 250 ≠ Inbox.** Письмо может быть «принято» Gmail SMTP, но попасть в Spam у продавца.
+## Возможности
 
-Бот настроен под **Inbox placement**:
+- Burst-рассылка: параллельно по всем Gmail, цель 2–5 с на очередь
+- Inbox placement: plain text, без URL в первом письме, stagger между ящиками
+- Один ротирующий SOCKS5-прокси
+- Ротация Gmail-аккаунтов и текстов
+- Premium emoji в кнопках (`config/premium_emoji.json`)
+- HTML-шаблоны для ответов: `data/HTMLch/ricardo_ch/`, `data/HTMLch/tutti_ch/`
 
-| Механизм | Зачем |
-|---|---|
-| Plain text only | HTML-multipart чаще в Spam на cold mail |
-| Без URL в 1-м письме | Ссылка — в ответе/HTML после ответа продавца |
-| Без ложного `Re:` в теме | Фильтры режут fake reply |
-| Уник. тема + текст + подпись | Не один шаблон на 100 адресов |
-| Stagger ящиков (150 ms) | Не залп с 50 Gmail за 0.1 с |
-| Gap на ящик (2.5 s) | Если адресов больше, чем ящиков |
-| Minimal From | `from@gmail.com` без marketing-имени |
-| Validemail strict | Только живые адреса в очереди |
-
-**Важно для Inbox:**
-- Прогретые Gmail (не свежие)
-- Ротационный **residential** SOCKS5
-- Запуск с **VPS/ПК**, не Railway (EHLO fingerprint) — `MAILING_EHLO_NAME`
-- Сначала **Тест маил** на свой ящик → Inbox или Spam
-
-```env
-INBOX_STAGGER_MS=150
-INBOX_ACCOUNT_GAP_SEC=2.5
-MAILING_EHLO_NAME=localhost
-```
-
-## Premium emoji в кнопках
-
-Заполните `config/premium_emoji.json` ID из Telegram Premium (или env `EMOJI_SEND=123…`).
-
-Как получить ID:
-1. Перешлите premium-emoji боту [@RawDataBot](https://t.me/RawDataBot) или посмотрите `custom_emoji_id` в update
-2. Вставьте в JSON: `"send": "5440123456789012345"`
-
-Без ID — fallback на обычные Unicode (в логе будет warning).
-
-## Запуск
+## Быстрый старт
 
 ```bash
-cd C:\Users\user\Projects\gag-bot
+cd gag-bot
 pip install -r requirements.txt
 copy .env.example .env
+# заполните BOT_TOKEN, GAG_TEAM_API_KEY, VALIDEMAIL_API_KEYS
 python bot.py
 ```
 
-## .env минимум
+## .env
 
 ```env
 BOT_TOKEN=
 GAG_TEAM_API_KEY=
 VALIDEMAIL_API_KEYS=
+DATABASE_URL=          # опционально; без него — локальный SQLite
+ROTATING_PROXY_ID=     # один SOCKS5 с ротацией IP
 ```
 
-## Burst-рассылка
+### Inbox placement
 
-- Один ротирующий SOCKS5
-- Параллельно по всем active Gmail
-- Цель: **2–5 с** на всю очередь (≈ 1 ящик = 1 параллельное письмо)
-- SMTP 250 + NOOP, без IMAP-проверки (скорость)
+```env
+MAILING_PLAIN_ONLY=1
+MAILING_MINIMAL_HEADERS=1
+MAILING_STRIP_LINK=1
+INBOX_STAGGER_MS=150
+INBOX_ACCOUNT_GAP_SEC=2.5
+MAILING_EHLO_NAME=localhost
+```
 
-## API
+Рекомендуется запуск с VPS/ПК (не shared PaaS) для корректного EHLO.
 
-Сервисы: `ricardo_ch`, `tutti.ch` → `tutti_ch`. Личный ключ: ⚙️ → 🔑.
+## GAG API
+
+Сервисы: `ricardo_ch`, `tutti_ch`. Личный ключ: ⚙️ → 🔑.
+
+## Структура
+
+```
+bot.py              — точка входа
+handlers/           — Telegram-команды
+services/           — рассылка, API, IMAP, валидация
+data/HTMLch/        — HTML-шаблоны CH
+config/             — premium emoji
+region.py           — CH/GAG настройки
+```
+
+## IMAP worker (опционально)
+
+Отдельный процесс для входящей почты:
+
+```bash
+ENABLE_INCOMING_MAIL=1 python imap_worker.py
+```
+
+На основном боте: `IMAP_DEDICATED_WORKER=1`.
+
+## Тесты
+
+```bash
+python -m unittest discover -s tests -p "test_*.py"
+```

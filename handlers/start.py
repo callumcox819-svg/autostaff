@@ -80,7 +80,7 @@ async def cmd_start(message: Message, state: FSMContext) -> None:
         logger.error("/start DB timeout tg=%s", tg_id)
         await message.answer(
             "⏳ База данных не отвечает. Подожди 15 сек и снова /start.\n"
-            "<i>Если повторяется — проверь Postgres на Railway.</i>",
+            "<i>Если повторяется — проверьте PostgreSQL (DATABASE_URL).</i>",
             parse_mode="HTML",
         )
         return

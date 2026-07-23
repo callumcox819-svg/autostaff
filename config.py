@@ -44,20 +44,16 @@ class Config:
     # GAG / APEX API — docs.domainforapi.com
     GAG_API_BASE = (
         os.getenv("GAG_API_BASE")
-        or os.getenv("NARKOLOGIA_API_BASE")
         or os.getenv("APEX_API_BASE")
         or os.getenv("GOO_API_BASE")
         or ""
     ).strip().rstrip("/")
-    NARKOLOGIA_API_BASE = GAG_API_BASE
     TEAM_NAME = TEAM_NAME
     GAG_TEAM_API_KEY = (
         os.getenv("GAG_TEAM_API_KEY")
-        or os.getenv("NARKOLOGIA_TEAM_API_KEY")
         or os.getenv("AQUA_TEAM_API_KEY")
         or ""
     ).strip()
-    NARKOLOGIA_TEAM_API_KEY = GAG_TEAM_API_KEY
     AQUA_TEAM_API_KEY = GAG_TEAM_API_KEY
     AQUA_DEFAULT_IMAGE_URL = (os.getenv("AQUA_DEFAULT_IMAGE_URL") or "").strip()
     COUNTRY_CODE = "CH"

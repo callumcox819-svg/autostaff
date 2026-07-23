@@ -17,13 +17,17 @@ log = logging.getLogger(__name__)
 _LOCAL_SQLITE_FALLBACK = "sqlite+aiosqlite:///./bot.db"
 
 
-def is_railway_runtime() -> bool:
-    return bool(
-        os.getenv("RAILWAY_ENVIRONMENT")
-        or os.getenv("RAILWAY_SERVICE_NAME")
-        or os.getenv("RAILWAY_PROJECT_ID")
-        or os.getenv("RAILWAY_DEPLOYMENT_ID")
-    )
+def is_production_runtime() -> bool:
+    env = (os.getenv("ENV") or os.getenv("APP_ENV") or "").strip().lower()
+    return env in {"production", "prod"}
+
+
+def resolve_database_url() -> str:
+    """Источник правды для URL БД (config.py дублировать не нужно)."""
+    raw = (os.getenv("DATABASE_URL") or "").strip()
+    if raw:
+        return normalize_database_url(raw)
+    return _LOCAL_SQLITE_FALLBACK
 
 
 def _truthy_env(name: str) -> bool:
@@ -55,16 +59,6 @@ def normalize_database_url(raw: str) -> str:
     return url
 
 
-def resolve_database_url() -> str:
-    """Источник правды для URL БД (config.py дублировать не нужно)."""
-    raw = (os.getenv("DATABASE_URL") or "").strip()
-    if raw:
-        return normalize_database_url(raw)
-    if is_railway_runtime():
-        return ""
-    return _LOCAL_SQLITE_FALLBACK
-
-
 def database_url_for_logs(url: str) -> str:
     u = (url or "").strip()
     if not u:
@@ -81,37 +75,21 @@ def database_url_for_logs(url: str) -> str:
         return "postgresql://***"
 
 
-def _railway_variables_hint() -> str:
-    if (os.getenv("APP_ROLE") or "").strip() == "imap_worker":
-        name = (os.getenv("RAILWAY_SERVICE_NAME") or "").strip()
-        return f"Сервис IMAP ({name or 'imap_worker / unique-solace'})"
-    name = (os.getenv("RAILWAY_SERVICE_NAME") or "").strip()
-    if name:
-        return f"Сервис «{name}»"
-    return "Сервис бота (finkabot)"
-
-
 def assert_persistent_database_or_exit(url: str | None = None) -> None:
-    """На Railway SQLite/пустой DATABASE_URL — данные пропадают при redeploy."""
+    """В production без PostgreSQL данные не сохраняются между перезапусками."""
     db_url = normalize_database_url(url or resolve_database_url())
-    if not is_railway_runtime():
+    if not is_production_runtime():
         return
     if _truthy_env("ALLOW_EPHEMERAL_DB"):
-        log.warning("ALLOW_EPHEMERAL_DB=1 — SQLite на Railway разрешён (данные НЕ сохраняются)")
+        log.warning("ALLOW_EPHEMERAL_DB=1 — SQLite в production разрешён (данные НЕ сохраняются)")
         return
     if is_persistent_database_url(db_url):
         return
 
     log.critical("=" * 60)
-    log.critical("Railway: нужен PostgreSQL, иначе всё сбросится при redeploy!")
+    log.critical("Production: нужен PostgreSQL (DATABASE_URL), иначе данные сбросятся при redeploy!")
     log.critical("DATABASE_URL сейчас: %s", database_url_for_logs(db_url))
-    log.critical("")
-    log.critical("1) В проекте Railway: + New → Database → PostgreSQL")
-    svc = _railway_variables_hint()
-    log.critical("2) %s → Variables → удали ПУСТУЮ DATABASE_URL (если есть)", svc)
-    log.critical("3) + New Variable → Variable Reference → Postgres → DATABASE_URL")
-    log.critical("4) Redeploy. В логах: «БД: PostgreSQL»")
-    log.critical("Подробно: RAILWAY_DATABASE.txt")
+    log.critical("Задайте DATABASE_URL=postgresql://… или ENV=development для локального SQLite.")
     log.critical("=" * 60)
     sys.exit(1)
 
@@ -264,7 +242,7 @@ async def _ensure_incoming_mail_link_columns() -> None:
         return
 
     async with engine.begin() as conn:
-        # Railway/Postgres поддерживает IF NOT EXISTS для ADD COLUMN
+        # Postgres поддерживает IF NOT EXISTS для ADD COLUMN
         await conn.execute(text("ALTER TABLE incoming_mails ADD COLUMN IF NOT EXISTS ad_url TEXT"))
         await conn.execute(text("ALTER TABLE incoming_mails ADD COLUMN IF NOT EXISTS generated_link TEXT"))
 
@@ -335,7 +313,7 @@ async def init_db() -> None:
         )
     else:
         log.warning(
-            "БД: %s · %s (только локально; на Railway нужен Postgres)",
+            "БД: %s · %s (локально; для production задайте DATABASE_URL=postgresql://…)",
             dialect,
             database_url_for_logs(DATABASE_URL),
         )

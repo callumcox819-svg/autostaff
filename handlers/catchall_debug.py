@@ -7,7 +7,7 @@ from aiogram.types import Message, CallbackQuery
 router = Router()
 
 # Если нужно временно вернуть отладочные ответы в Telegram:
-# Railway env: DEBUG_CATCHALL=1
+# env: DEBUG_CATCHALL=1
 DEBUG_CATCHALL = os.getenv("DEBUG_CATCHALL", "").strip() == "1"
 
 

@@ -47,7 +47,7 @@ class TemplateItem:
 
 
 # =========================
-# STORAGE (Postgres на Railway / файлы локально)
+# STORAGE (Postgres / файлы локально)
 # =========================
 def _items_from_json(data: object) -> List[TemplateItem]:
     out: List[TemplateItem] = []

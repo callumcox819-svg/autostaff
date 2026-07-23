@@ -8,7 +8,7 @@ from services.offer_matching import (
     _load_conversation_link,
     find_offer_by_incoming_subject,
     is_seller_reply_subject,
-    narkologia_link_title_from_mail,
+    gag_link_title_from_mail,
     resolve_listing_for_incoming_mail,
 )
 from services.offer_storage import (
@@ -33,10 +33,10 @@ def _reply_bound(*, how: str, subject: str, mailed: bool = False, has_conv_ancho
 
 def _service_label_from_link(link: str) -> str | None:
     u = (link or "").lower()
-    if "2dehands" in u or "2ememain" in u:
-        return "2dehands.be"
-    if "bpost" in u:
-        return "bpost.be"
+    if "ricardo.ch" in u:
+        return "ricardo.ch"
+    if "tutti.ch" in u:
+        return "tutti.ch"
     return None
 
 
@@ -158,7 +158,7 @@ def _snapshot_from_offer(subject: str, offer: Offer, *, mailing_bound: bool) -> 
     price = (offer_effective_price(offer, default="") or "").strip()
     photo = (offer_effective_photo(offer) or "").strip()
     return {
-        "product_title": narkologia_link_title_from_mail(subject, offer),
+        "product_title": gag_link_title_from_mail(subject, offer),
         "offer_price": price,
         "photo_url": photo,
         "service_label": _service_label_from_link(link) or "",

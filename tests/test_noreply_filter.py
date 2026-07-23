@@ -24,7 +24,7 @@ class TestNoreplyFilter(unittest.TestCase):
     def test_allows_seller_emails(self):
         for addr in (
             "kurt.seller@gmail.com",
-            "info@2dehands-verkoper.be",
+            "info@ricardo.ch",
             "anna.zehringer@example.com",
             "harriettekukzr073@gmail.com",
         ):

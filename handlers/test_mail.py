@@ -37,7 +37,7 @@ TEST_MAIL_RECIPIENTS_KEY = "test_mail_recipients"
 MAX_TEST_RECIPIENTS = 4
 TEST_SEND_DELAY_SEC = 2.0
 
-# Запасные NL-тексты (ASCII → 7bit), если пресетов нет — как живое 2dehands-сообщение
+# Запасные DE-тексты (ASCII → 7bit), если пресетов нет — как живое ricardo/tutti-сообщение
 _BE_FALLBACK_BODIES = [
     "Hallo! Is dit artikel nog beschikbaar? Alvast bedankt.",
     "Goedendag, ik heb interesse in uw advertentie. Is deze nog te koop?",
@@ -483,13 +483,7 @@ def _is_valid_ad_link(url: str) -> bool:
     u = url.lower().strip()
     if not u.startswith(("http://", "https://")):
         return False
-    if "2dehands.be" in u or "2ememain.be" in u or "bpost.be" in u:
-        return True
-    if "tutti.ch" in u:
-        return True
-    if "kleinanzeigen.de" in u:
-        return True
-    if "ebay." in u and ".de" in u:
+    if "ricardo.ch" in u or "tutti.ch" in u:
         return True
     return False
 
@@ -555,7 +549,7 @@ async def preview_imap_card(message: Message) -> None:
         body=demo_body,
         offer_id=12345,
         link_id="210743034",
-        service_label="2dehands.be",
+        service_label="ricardo.ch",
         product_title="Johann Jakob Couchtisch, Messing-Glas",
     )
     kb = build_kb(0, "preview", mail_id=None)

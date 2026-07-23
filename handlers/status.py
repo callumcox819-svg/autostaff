@@ -173,7 +173,7 @@ def render_status_text(
     verify_hint = ""
     if os.getenv("MAIL_VERIFY_SENT", "0").strip().lower() not in ("1", "true", "yes", "on"):
         verify_hint = (
-            "\n<i>💡 На Railway: MAIL_VERIFY_SENT=1 — в «отправлено» только письма в папке Sent.</i>"
+            "\n<i>💡 MAIL_VERIFY_SENT=1 — в «отправлено» только письма в папке Sent.</i>"
         )
 
     return (

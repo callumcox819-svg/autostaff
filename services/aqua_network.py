@@ -24,7 +24,7 @@ class AquaError(Exception):
 
 
 def _api_bases() -> list[str]:
-    custom = (getattr(config, "NARKOLOGIA_API_BASE", None) or "").strip().rstrip("/")
+    custom = (getattr(config, "GAG_API_BASE", None) or "").strip().rstrip("/")
     if custom:
         return [custom] + [b for b in _DEFAULT_API_BASES if b != custom]
     return list(_DEFAULT_API_BASES)
@@ -152,7 +152,7 @@ async def _request_json(
     raise last_err or AquaError("Не удалось выполнить запрос к API GAG")
 
 
-async def verify_narkologia_auth(
+async def verify_gag_auth(
     *,
     user_api_key: str,
     team_api_key: str,

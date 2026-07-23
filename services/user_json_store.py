@@ -1,4 +1,4 @@
-"""Хранение JSON пользователя: Postgres на Railway, файлы — локально."""
+"""Хранение JSON пользователя: Postgres или файлы локально."""
 
 from __future__ import annotations
 

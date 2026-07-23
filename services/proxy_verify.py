@@ -196,7 +196,7 @@ async def _test_proxy_once(proxy: Proxy | dict[str, Any], *, timeout: int = 20) 
 async def test_proxy(
     proxy: Proxy | dict[str, Any], *, timeout: int = 20, retries: int | None = None
 ) -> Tuple[bool, str]:
-    """Проверка с повторами — меньше ложных 🟡 из-за лага сети/Railway."""
+    """Проверка с повторами — меньше ложных 🟡 из-за лага сети."""
     attempts = max(1, int(retries if retries is not None else PROXY_CHECK_RETRIES))
     last_info = ""
     for attempt in range(1, attempts + 1):

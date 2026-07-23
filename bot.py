@@ -315,14 +315,14 @@ async def main() -> None:
     token = (config.BOT_TOKEN or os.getenv("BOT_TOKEN") or "").strip()
     if not token:
         logger.error(
-            "BOT_TOKEN не задан. Railway → сервис бота → Variables → "
+            "BOT_TOKEN не задан. Добавьте в .env: "
             "BOT_TOKEN = токен от @BotFather (формат 123456789:AA...)"
         )
         sys.exit(1)
     if ":" not in token or len(token) < 30:
         logger.error(
             "BOT_TOKEN невалидный (пустой, обрезанный или с лишними кавычками). "
-            "Проверь Variables на Railway — без пробелов и без '...' в значении."
+            "Проверьте .env — без пробелов и без '...' в значении."
         )
         sys.exit(1)
 

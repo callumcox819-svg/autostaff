@@ -30,8 +30,8 @@ router = Router()
 _SMTP_TIMEOUT = 25
 logger = logging.getLogger(__name__)
 
-HTML_DIR = Path("data/html")
-HTML_CH_DIR = Path("data/HTMLbe")
+HTML_DIR = Path("data/HTMLch")
+HTML_CH_DIR = Path("data/HTMLch")
 
 
 HTML_NICK_KEY = "html_nick"

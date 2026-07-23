@@ -279,7 +279,7 @@ class GlobalSentEmail(Base):
 # QUICK TEMPLATES
 # =========================
 class UserJsonBlob(Base):
-    """JSON-данные пользователя (пресеты и т.п.) — для Railway Postgres, не теряются при redeploy."""
+    """JSON-данные пользователя (пресеты и т.п.) — в Postgres, не теряются при redeploy."""
 
     __tablename__ = "user_json_blobs"
     __table_args__ = (

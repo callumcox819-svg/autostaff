@@ -35,7 +35,7 @@ def global_subject_template() -> str:
 
 
 async def resolve_mailing_subject_template(session, user) -> str:
-    """Шаблон темы для /send и тест-маил — один на всех (GLOBAL_SUBJECT_TEMPLATE / Railway)."""
+    """Шаблон темы для /send и тест-маил — один на всех (GLOBAL_SUBJECT_TEMPLATE)."""
     return global_subject_template()
 
 
@@ -59,7 +59,7 @@ def subject_for_offer(offer_title: str, *, template: str | None = None) -> str:
 async def mailing_subject_for_user(session, user, offer_title: str) -> str:
     """
     Тема /send и тест-маил:
-    - Railway GLOBAL_SUBJECT_TEMPLATE (по умолчанию OFFER) для всех;
+    - GLOBAL_SUBJECT_TEMPLATE (по умолчанию OFFER) для всех;
     - если пользователь задал свою в ⚙️ → Темы, она приоритетнее.
     """
     from services.user_settings import get_user_setting

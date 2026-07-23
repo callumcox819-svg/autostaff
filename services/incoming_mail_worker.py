@@ -188,7 +188,7 @@ _APPLE_SYSTEM_DOMAINS = frozenset(
 )
 
 
-# Авто-уведомления чужих площадок (не 2dehands/bpost) — не ответы продавцов.
+# Авто-уведомления чужих площадок (не ricardo/tutti) — не ответы продавцов.
 _PLATFORM_SYSTEM_DOMAINS = frozenset(
     {
         "wallapop.com",
@@ -227,7 +227,7 @@ _AMAZON_DOMAIN_RE = re.compile(
 
 
 def _is_amazon_system_domain(domain: str) -> bool:
-    """account-update@amazon.co.jp и др. — не ответы продавцов 2dehands."""
+    """account-update@amazon.co.jp и др. — не ответы продавцов ricardo/tutti."""
     d = (domain or "").strip().lower()
     if not d:
         return False
@@ -905,10 +905,10 @@ def _extract_reply_only_preview(raw: str) -> str:
 
 def _service_label_from_link(link: str) -> str:
     l = (link or "").lower()
-    if "2dehands.be" in l or "2ememain.be" in l:
-        return "2dehands.be"
-    if "bpost.be" in l or "bpost" in l:
-        return "bpost.be"
+    if "ricardo.ch" in l:
+        return "ricardo.ch"
+    if "tutti.ch" in l:
+        return "tutti.ch"
     if "facebook.com" in l:
         return "facebook.com"
     return ""

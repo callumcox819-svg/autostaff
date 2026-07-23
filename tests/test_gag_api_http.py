@@ -1,4 +1,4 @@
-"""Narkologia API: HTTP 2xx (в т.ч. 201 Created) — успех, не ошибка."""
+"""GAG API: HTTP 2xx (в т.ч. 201 Created) — успех, не ошибка."""
 from __future__ import annotations
 
 import unittest
@@ -26,7 +26,7 @@ class _FakeResponse:
         return False
 
 
-class NarkologiaHttpStatusTests(unittest.IsolatedAsyncioTestCase):
+class GagHttpStatusTests(unittest.IsolatedAsyncioTestCase):
     async def test_http_201_order_created_is_success(self):
         payload = {
             "success": True,
@@ -47,7 +47,7 @@ class NarkologiaHttpStatusTests(unittest.IsolatedAsyncioTestCase):
                 "/api/order/generate/lonely",
                 user_api_key="user-token",
                 team_api_key="team-token",
-                body={"service": "2dehands_be"},
+                body={"service": "ricardo_ch"},
             )
 
         self.assertEqual(data["message"], "Order created")

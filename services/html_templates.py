@@ -11,7 +11,7 @@ from services.aqua_keys import (
     normalize_aqua_service,
 )
 
-HTMLBE_ROOT = Path("data") / HTML_DATA_DIR
+HTML_ROOT = Path("data") / HTML_DATA_DIR
 
 GO_FILENAME = "confirmation.html"
 GO_NEW_FILENAME = "confirmation_new.html"
@@ -29,7 +29,7 @@ def html_template_path(service_code: str | None, filename: str) -> Path | None:
     sub = html_subdir_for_service(service_code)
     if not sub:
         return None
-    p = HTMLBE_ROOT / sub / filename
+    p = HTML_ROOT / sub / filename
     return p if p.is_file() else None
 
 
@@ -37,7 +37,7 @@ def list_html_templates_for_service(service_code: str | None) -> list[str]:
     sub = html_subdir_for_service(service_code)
     if not sub:
         return []
-    d = HTMLBE_ROOT / sub
+    d = HTML_ROOT / sub
     if not d.is_dir():
         return []
     return sorted(f.name for f in d.glob("*.html"))

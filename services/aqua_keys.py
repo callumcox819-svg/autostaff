@@ -90,10 +90,8 @@ def get_global_aqua_team_key() -> str:
     """Ключ команды GAG — GAG_TEAM_API_KEY."""
     raw = (
         os.getenv("GAG_TEAM_API_KEY")
-        or os.getenv("NARKOLOGIA_TEAM_API_KEY")
         or os.getenv("AQUA_TEAM_API_KEY")
         or getattr(config, "GAG_TEAM_API_KEY", None)
-        or getattr(config, "NARKOLOGIA_TEAM_API_KEY", None)
         or getattr(config, "AQUA_TEAM_API_KEY", None)
         or ""
     )

@@ -1,9 +1,7 @@
 """
 Отдельный процесс только для входящей почты (IMAP).
 
-На Railway: второй сервис из того же репозитория:
-  Start command: python imap_worker.py
-
+Запуск: python imap_worker.py
 Общее с ботом: DATABASE_URL (Postgres), BOT_TOKEN (только send_message, без polling).
 На сервисе бота: IMAP_DEDICATED_WORKER=1 — IMAP в bot.py не запускается.
 """
@@ -34,7 +32,7 @@ def _truthy(name: str, default: str = "") -> bool:
 
 
 def _apply_imap_worker_defaults() -> None:
-    """Дефолты для отдельного IMAP-сервиса (можно переопределить в Railway Variables)."""
+    """Дефолты для отдельного IMAP-сервиса (можно переопределить в .env)."""
     defaults = {
         "MAX_IMAP_CONCURRENT": "20",
         "INCOMING_MAIL_POLL_SECONDS": "120",
@@ -122,7 +120,7 @@ async def main() -> None:
         )
     else:
         logger.warning(
-            "IMAP worker: БД %s — для Railway нужен Postgres!",
+            "IMAP worker: БД %s — для production нужен Postgres (DATABASE_URL)!",
             db_engine.dialect.name,
         )
 

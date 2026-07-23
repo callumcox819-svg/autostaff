@@ -61,7 +61,7 @@ async def build_offer_html_ctx(
     *,
     link: str = "",
 ) -> dict[str, str]:
-    """Контекст для HTML-шаблонов: оффер из БД + профиль + ссылка Narkologia."""
+    """Контекст для HTML-шаблонов: оффер из БД + профиль + ссылка GAG."""
     from datetime import datetime
 
     from sqlalchemy import select

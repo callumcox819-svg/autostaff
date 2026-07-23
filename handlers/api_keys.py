@@ -30,7 +30,7 @@ from services.aqua_keys import (
     normalize_aqua_api_key,
     user_profile_fields_complete,
 )
-from services.aqua_network import AquaError, verify_narkologia_auth
+from services.aqua_network import AquaError, verify_gag_auth
 from services.user_settings import set_user_setting
 from utils.secrets import clean_secret
 
@@ -283,13 +283,13 @@ async def aqua_test_keys(callback: CallbackQuery) -> None:
         if not team_key:
             return await callback.message.answer("❌ Токен команды не задан на сервере.")
         try:
-            await verify_narkologia_auth(user_api_key=user_key, team_api_key=team_key)
+            await verify_gag_auth(user_api_key=user_key, team_api_key=team_key)
         except AquaError as e:
             return await callback.message.answer(
-                f"❌ <b>Narkologia API</b>\n<code>{html.escape(str(e)[:400])}</code>",
+                f"❌ <b>GAG API</b>\n<code>{html.escape(str(e)[:400])}</code>",
                 parse_mode="HTML",
             )
-    await callback.message.answer("✅ Ключи работают (Narkologia API).", parse_mode="HTML")
+    await callback.message.answer("✅ Ключи работают (GAG API).", parse_mode="HTML")
 
 
 @router.callback_query(F.data == "aqua_set:user_key")

@@ -88,7 +88,6 @@ def _bind_priority_dispatcher_handlers(dp: Dispatcher) -> None:
         ref_hide,
         ref_toggle,
         settings_open_cb,
-        settings_timings,
         spoof_name_menu,
     )
     from handlers.stopsend import cmd_stopsend
@@ -130,7 +129,6 @@ def _bind_priority_dispatcher_handlers(dp: Dispatcher) -> None:
         (spoof_name_menu, F.data == "spoof_name_menu"),
         (open_accounts_from_settings, F.data == "settings_accounts"),
         (open_proxies, F.data == "settings_proxies"),
-        (settings_timings, F.data == "settings_timings"),
         (aqua_show_key, F.data == "aqua_show:key"),
         (aqua_show_profile, F.data == "aqua_show:profile"),
         (ref_hide, F.data == "ref_hide"),
@@ -222,14 +220,6 @@ async def _on_startup(bot: Bot) -> None:
         await register_bot_commands(bot)
     except Exception:
         logger.exception("Не удалось зарегистрировать меню /start /send /stop /reset /stat")
-
-    async def _redeploy_ping() -> None:
-        await asyncio.sleep(2)
-        from services.redeploy_notify import notify_users_after_redeploy
-
-        await notify_users_after_redeploy(bot)
-
-    asyncio.create_task(_redeploy_ping())
 
     wh = await bot.get_webhook_info()
     logger.info(

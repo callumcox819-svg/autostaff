@@ -141,7 +141,7 @@ async def save_html_nick(session: Session, tg_user_id: int, value: str | None) -
 
 
 # =========================
-# FSM for simple inputs (nick, timings)
+# FSM for simple inputs (nick, priority, html theme)
 # =========================
 
 
@@ -150,7 +150,6 @@ class _SettingsInput(StatesGroup):
     subject_template = State()
     priority = State()
     html_theme = State()
-    timings = State()
 
 
 def settings_menu_kb(flags: dict[str, bool]) -> InlineKeyboardMarkup:
@@ -181,9 +180,6 @@ def settings_menu_kb(flags: dict[str, bool]) -> InlineKeyboardMarkup:
             [
                 inline_button("email", "E-mail", callback_data="settings_accounts"),
                 inline_button("proxy", "Прокси", callback_data="settings_proxies"),
-            ],
-            [
-                inline_button("interval", "Интервал", callback_data="settings_timings"),
             ],
             [
                 inline_button("key", "Ключ", callback_data="aqua_show:key"),
@@ -442,84 +438,6 @@ async def html_nick_set(message: Message, state: FSMContext) -> None:
         value = ""
     async with Session() as session:
         await save_html_nick(session, message.from_user.id, value)
-    await state.clear()
-    await message.answer("✅ Сохранено.")
-
-
-# =========================
-# Timings (ONLY UI change: menu + "Изменить тайминг" button)
-# =========================
-
-@router.callback_query(F.data == "settings_timings")
-async def settings_timings(callback: CallbackQuery, state: FSMContext) -> None:
-    """Show timings menu (no immediate input)."""
-    from services.settings import load_timing
-
-    await state.clear()
-
-    async with db_session() as session:
-        timing = await load_timing(session, callback.from_user.id)
-
-    await callback.message.edit_text(
-        "⏱ <b>Тайминги рассылки</b>\n\n"
-        "Текущий диапазон:\n"
-        f"MIN: <code>{timing.get('min')}</code> сек\n"
-        f"MAX: <code>{timing.get('max')}</code> сек\n\n"
-        " ",
-        reply_markup=InlineKeyboardMarkup(
-            inline_keyboard=[
-                [InlineKeyboardButton(text="✏️ Изменить тайминг", callback_data="timings_edit")],
-                [InlineKeyboardButton(text="⬅️ Назад", callback_data="settings_open")],
-            ]
-        ),
-        parse_mode="HTML",
-    )
-
-
-@router.callback_query(F.data == "timings_edit")
-async def timings_edit(callback: CallbackQuery, state: FSMContext) -> None:
-    """Ask user to input MIN MAX after pressing 'Изменить тайминг'."""
-    await state.clear()
-    await state.set_state(_SettingsInput.timings)
-
-    await callback.message.edit_text(
-        "⏱ <b>Тайминги рассылки</b>\n\n"
-        "Отправь двумя числами: <code>MIN MAX</code> (пример: <code>1 5</code>).",
-        reply_markup=InlineKeyboardMarkup(
-            inline_keyboard=[
-                [InlineKeyboardButton(text="⬅️ Назад", callback_data="settings_timings")],
-            ]
-        ),
-        parse_mode="HTML",
-    )
-    await callback.answer()
-
-
-
-
-@router.message(_SettingsInput.timings)
-async def timings_set(message: Message, state: FSMContext) -> None:
-    from services.settings import load_timing, save_timing
-
-    text = (message.text or "").strip()
-    m = re.match(r"^(\d+(?:\.\d+)?)\s+(\d+(?:\.\d+)?)$", text)
-    if not m:
-        await message.answer("❌ Формат: MIN MAX (например: 1 5)")
-        return
-    mn = float(m.group(1))
-    mx = float(m.group(2))
-    if mn <= 0 or mx <= 0 or mx < mn:
-        await message.answer("❌ Неверные значения. Нужно: 0 < MIN <= MAX")
-        return
-
-    async with Session() as session:
-        cur = await load_timing(session, message.from_user.id)
-        cur["min"] = int(mn) if mn.is_integer() else mn
-        cur["max"] = int(mx) if mx.is_integer() else mx
-        cur["min_delay"] = mn
-        cur["max_delay"] = mx
-        await save_timing(session, message.from_user.id, cur)
-
     await state.clear()
     await message.answer("✅ Сохранено.")
 

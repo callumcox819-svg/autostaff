@@ -94,6 +94,11 @@ def reply_button(key: str, text: str, *, style: str | None = None, **kwargs: Any
     kw: dict[str, Any] = dict(kwargs)
     if style:
         kw["style"] = style
+    # Styled reply-кнопки: без icon_custom_emoji_id — подпись читается (⚙️ Настройки).
+    if style:
+        fb = _UNICODE_FALLBACK.get(key, "")
+        display = f"{fb} {text}".strip() if fb else text
+        return KeyboardButton(text=display, **kw)
     if eid:
         return KeyboardButton(text=text, icon_custom_emoji_id=eid, **kw)
     return KeyboardButton(text=label(key, text), **kw)

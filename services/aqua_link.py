@@ -71,8 +71,12 @@ async def aqua_generate_for_offer(
     user_key, team_key = await get_user_aqua_api_keys_async(session, user)
     if not user_key:
         raise AquaError("Не задан личный API key. ⚙️ → 🔑 Ключ")
-    if not team_key:
-        raise AquaError("Ключ команды GAG не задан на сервере (GAG_TEAM_API_KEY).")
+    from services.aqua_network import generate_api_configured
+
+    if not generate_api_configured():
+        raise AquaError(
+            "Домен генерации не задан на сервере (GAG_API_BASE, напр. https://triangleblackword.cfd)."
+        )
 
     if not await user_profile_fields_complete(session, user):
         raise AquaError(

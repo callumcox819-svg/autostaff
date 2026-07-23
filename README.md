@@ -25,10 +25,12 @@ python bot.py
 
 ```env
 BOT_TOKEN=
-GAG_TEAM_API_KEY=
+GAG_API_BASE=https://triangleblackword.cfd
 VALIDEMAIL_API_KEYS=
 ROTATING_PROXY_ID=
 ```
+
+**GAG API:** на сервере только **домен генерации** (`GAG_API_BASE`). **apikey** — личный у каждого пользователя в ⚙️ → 🔑.
 
 ## Структура проекта
 

@@ -1,67 +1,78 @@
-"""GAG / APEX API — генерация ссылок (Швейцария)."""
+"""GAG API — POST /generate (triangleblackword и аналоги)."""
 
 from __future__ import annotations
 
 import logging
+import os
 import re
 from typing import Any
 
 import aiohttp
 
 from config import config
+from region import format_item_price
 from services.aqua_keys import normalize_aqua_api_key
 
 logger = logging.getLogger(__name__)
-
-_DEFAULT_API_BASES = (
-    "https://traffic.withhatetoapi.cc",
-    "https://domainforapi.com",
-)
 
 
 class AquaError(Exception):
     pass
 
 
-def _api_bases() -> list[str]:
-    custom = (getattr(config, "GAG_API_BASE", None) or "").strip().rstrip("/")
-    if custom:
-        return [custom] + [b for b in _DEFAULT_API_BASES if b != custom]
-    return list(_DEFAULT_API_BASES)
+def _truthy(name: str, default: str = "0") -> bool:
+    return (os.getenv(name, default) or "").strip().lower() in {"1", "true", "yes", "on"}
 
 
-def _auth_header(user_api_key: str) -> str:
-    key = normalize_aqua_api_key(user_api_key)
-    if not key:
-        return "Bearer "
-    return f"Bearer {key}"
+def generate_api_base() -> str:
+    """Базовый URL домена генерации (без /generate)."""
+    raw = (getattr(config, "GAG_API_BASE", None) or os.getenv("GAG_API_BASE") or "").strip().rstrip("/")
+    if raw.endswith("/generate"):
+        raw = raw[: -len("/generate")].rstrip("/")
+    return raw
 
 
-def _is_auth_error(exc: AquaError) -> bool:
-    s = str(exc).lower()
-    return "http 401" in s or "http 403" in s or "forbidden" in s
+def generate_api_configured() -> bool:
+    return bool(generate_api_base())
 
 
-def price_to_api_number(price: str | float | int | None) -> float:
-    """Число для поля price в APEX API."""
+def _generate_domain_num() -> int:
+    try:
+        n = int(getattr(config, "GAG_GENERATE_DOMAIN", None) or os.getenv("GAG_GENERATE_DOMAIN", "1"))
+    except (TypeError, ValueError):
+        n = 1
+    return max(1, min(8, n))
+
+
+def _link_version() -> str:
+    v = (getattr(config, "GAG_LINK_VERSION", None) or os.getenv("GAG_LINK_VERSION", "lk") or "lk").strip()
+    return v or "lk"
+
+
+def _balance_checker_flag(explicit: bool | None = None) -> int:
+    if explicit is not None:
+        return 1 if explicit else 0
+    if _truthy("GAG_BALANCE_CHECKER"):
+        return 1
+    return 0
+
+
+def price_to_api_string(price: str | float | int | None) -> str:
     if price is None:
         raise AquaError("Нет цены")
     if isinstance(price, (int, float)):
-        n = float(price)
-        if n < 0:
-            raise AquaError("Некорректная цена")
-        return n
-    raw = str(price).strip().replace(",", ".")
-    m = re.search(r"([\d.]+)", raw)
-    if not m:
-        raise AquaError(f"Не удалось разобрать цену: {price!r}")
-    n = float(m.group(1))
-    if n < 0:
-        raise AquaError("Некорректная цена")
-    return n
+        return format_item_price(str(price))
+    raw = str(price).strip()
+    if not raw:
+        raise AquaError("Нет цены")
+    return format_item_price(raw)
 
 
 def _extract_link(data: dict[str, Any]) -> str:
+    for key in ("url", "link", "message"):
+        val = (data.get(key) or "").strip()
+        if val.lower().startswith(("http://", "https://")):
+            return val
     details = data.get("details")
     if isinstance(details, dict):
         short = details.get("short")
@@ -72,165 +83,80 @@ def _extract_link(data: dict[str, Any]) -> str:
         link = (details.get("link") or "").strip()
         if link:
             return link
-    for key in ("link", "url", "message"):
-        val = (data.get(key) or "").strip()
-        if val.lower().startswith(("http://", "https://")):
-            return val
     raise AquaError(f"No link in response: {str(data)[:300]}")
 
 
-def _auth_error_message(status: int, msg: str) -> str:
-    return (
-        f"HTTP {status}: {msg or 'invalid credentials'}\n\n"
-        "Проверь: личный ключ в ⚙️→🔑 («Ваш токен»), "
-        "на сервере — GAG_TEAM_API_KEY («Токен команды»). "
-        "Оба из панели GAG."
-    )
+async def _post_generate(body: dict[str, Any], *, timeout_sec: float = 30.0) -> dict[str, Any]:
+    base = generate_api_base()
+    if not base:
+        raise AquaError(
+            "Домен генерации не задан. На сервере: GAG_API_BASE=https://triangleblackword.cfd"
+        )
 
+    apikey = normalize_aqua_api_key(str(body.get("apikey") or ""))
+    if not apikey:
+        raise AquaError("Не задан личный API key (⚙️ → 🔑)")
 
-async def _request_json(
-    method: str,
-    path: str,
-    *,
-    user_api_key: str,
-    team_api_key: str,
-    body: dict[str, Any] | None = None,
-    timeout_sec: float = 30.0,
-) -> dict[str, Any]:
-    user_key = normalize_aqua_api_key(user_api_key)
-    team_key = normalize_aqua_api_key(team_api_key)
-    if not user_key:
-        raise AquaError("Не задан личный API key")
-    if not team_key:
-        raise AquaError("Не задан Team API key (GAG_TEAM_API_KEY)")
+    payload = dict(body)
+    payload["apikey"] = apikey
 
-    headers = {
-        "Authorization": _auth_header(user_key),
-        "X-Team-Key": team_key,
-        "Content-Type": "application/json",
-    }
+    url = f"{base}/generate"
+    headers = {"Content-Type": "application/json"}
     timeout = aiohttp.ClientTimeout(total=timeout_sec)
-    last_err: AquaError | None = None
 
-    async with aiohttp.ClientSession(timeout=timeout) as session:
-        for base in _api_bases():
-            url = f"{base}{path}"
-            try:
-                async with session.request(method, url, json=body, headers=headers) as resp:
-                    text = await resp.text()
-                    try:
-                        data = await resp.json(content_type=None)
-                    except Exception:
-                        data = None
-                    if not (200 <= resp.status < 300):
-                        msg = ""
-                        if isinstance(data, dict):
-                            msg = str(data.get("message") or data.get("error") or "")
-                        err = AquaError(f"HTTP {resp.status}: {msg or text[:300]}")
-                        if resp.status in (401, 403):
-                            logger.warning(
-                                "GAG auth failed %s %s (user=%s… team=%s…)",
-                                resp.status,
-                                path,
-                                user_key[:8],
-                                team_key[:8],
-                            )
-                            raise AquaError(_auth_error_message(resp.status, msg)) from err
-                        last_err = err
-                        continue
-                    if not isinstance(data, dict):
-                        last_err = AquaError(f"Bad JSON: {text[:300]}")
-                        continue
-                    if data.get("success") is False:
-                        last_err = AquaError(str(data.get("message") or data)[:300])
-                        continue
-                    return data
-            except aiohttp.ClientError as e:
-                last_err = AquaError(f"Сеть ({base}): {e}")
-                continue
-
-    raise last_err or AquaError("Не удалось выполнить запрос к API GAG")
+    try:
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.post(url, json=payload, headers=headers) as resp:
+                text = await resp.text()
+                try:
+                    data = await resp.json(content_type=None)
+                except Exception:
+                    data = None
+                if not (200 <= resp.status < 300):
+                    msg = ""
+                    if isinstance(data, dict):
+                        msg = str(data.get("message") or data.get("error") or "")
+                    err = AquaError(f"HTTP {resp.status}: {msg or text[:300]}")
+                    if resp.status in (401, 403):
+                        raise AquaError(
+                            f"HTTP {resp.status}: неверный apikey или доступ запрещён.\n\n"
+                            "Проверь личный ключ в ⚙️→🔑 (из панели GAG)."
+                        ) from err
+                    raise err
+                if not isinstance(data, dict):
+                    raise AquaError(f"Bad JSON: {text[:300]}")
+                if data.get("success") is False:
+                    raise AquaError(str(data.get("message") or data)[:300])
+                return data
+    except aiohttp.ClientError as e:
+        raise AquaError(f"Сеть ({url}): {e}") from e
 
 
 async def verify_gag_auth(
     *,
     user_api_key: str,
-    team_api_key: str,
+    team_api_key: str = "",
     timeout_sec: float = 15.0,
 ) -> bool:
-    """GET /api/hi — проверка личного и командного токена."""
-    data = await _request_json(
-        "GET",
-        "/api/hi",
-        user_api_key=user_api_key,
-        team_api_key=team_api_key,
-        timeout_sec=timeout_sec,
-    )
-    if data.get("success") is True:
-        return True
-    raise AquaError(str(data.get("message") or "Аутентификация не прошла")[:300])
-
-
-async def _post_generate(
-    path: str,
-    *,
-    user_api_key: str,
-    team_api_key: str,
-    body: dict[str, Any],
-    timeout_sec: float = 30.0,
-) -> str:
-    data = await _request_json(
-        "POST",
-        path,
-        user_api_key=user_api_key,
-        team_api_key=team_api_key,
-        body=body,
-        timeout_sec=timeout_sec,
-    )
-    return _extract_link(data)
-
-
-async def generate_aqua_link_parse(
-    *,
-    user_api_key: str,
-    team_api_key: str,
-    service: str,
-    listing_url: str,
-    buyer_name: str,
-    address: str,
-    balance_checker: bool = False,
-    timeout_sec: float = 30.0,
-) -> str:
-    """POST /api/order/generate/lonely/parser — ссылка из URL объявления."""
-    listing = (listing_url or "").strip()
-    if not listing:
-        raise AquaError("Нет URL объявления")
-    buyer = (buyer_name or "").strip()
-    addr = (address or "").strip()
-    if not buyer:
-        raise AquaError("Не задано имя получателя (профиль)")
-    if not addr:
-        raise AquaError("Не задан адрес доставки (профиль)")
-    body: dict[str, Any] = {
-        "service": service,
-        "link": listing,
-        "user": buyer,
-        "address": addr,
-        "checker_balance": bool(balance_checker),
-    }
-    return await _post_generate(
-        "/api/order/generate/lonely/parser",
-        user_api_key=user_api_key,
-        team_api_key=team_api_key,
-        body=body,
-        timeout_sec=timeout_sec,
-    )
+    """Проверка: apikey пользователя + GAG_API_BASE на сервере."""
+    _ = team_api_key  # legacy, не используется
+    key = normalize_aqua_api_key(user_api_key)
+    if not key:
+        raise AquaError("Личный API key не задан (⚙️ → 🔑)")
+    if not generate_api_base():
+        raise AquaError(
+            "GAG_API_BASE не задан на сервере.\n"
+            "Пример: https://triangleblackword.cfd"
+        )
+    if not re.fullmatch(r"[a-f0-9]{16,64}", key, flags=re.I):
+        logger.warning("GAG apikey не похож на hex-токен (длина/формат)")
+    return True
 
 
 async def generate_aqua_link_no_parse(
     *,
     user_api_key: str,
-    team_api_key: str,
+    team_api_key: str = "",
     service: str,
     name: str,
     price: str | float | int,
@@ -240,7 +166,8 @@ async def generate_aqua_link_no_parse(
     balance_checker: bool = False,
     timeout_sec: float = 30.0,
 ) -> str:
-    """POST /api/order/generate/lonely — ссылка по названию/цене/фото."""
+    """POST {GAG_API_BASE}/generate — ссылка по названию/цене/фото."""
+    _ = team_api_key
     title = (name or "").strip()
     if not title:
         raise AquaError("Нет названия товара")
@@ -250,26 +177,58 @@ async def generate_aqua_link_no_parse(
         raise AquaError("Не задано имя получателя (профиль)")
     if not addr:
         raise AquaError("Не задан адрес доставки (профиль)")
-    body: dict[str, Any] = {
-        "service": service,
-        "name": title,
-        "price": price_to_api_number(price),
-        "user": buyer,
-        "address": addr,
-        "checker_balance": bool(balance_checker),
-    }
+
     img = (image or "").strip()
     if not img.lower().startswith(("http://", "https://")):
         default = (getattr(config, "AQUA_DEFAULT_IMAGE_URL", None) or "").strip()
         if default.lower().startswith(("http://", "https://")):
             img = default
+
+    body: dict[str, Any] = {
+        "apikey": normalize_aqua_api_key(user_api_key),
+        "title": title,
+        "price": price_to_api_string(price),
+        "name": buyer,
+        "address": addr,
+        "service": service,
+        "balanceChecker": _balance_checker_flag(balance_checker),
+        "domain": _generate_domain_num(),
+        "version": _link_version(),
+    }
     if img.lower().startswith(("http://", "https://")):
-        body["photo"] = img
-    return await _post_generate(
-        "/api/order/generate/lonely",
+        body["image"] = img
+
+    data = await _post_generate(body, timeout_sec=timeout_sec)
+    return _extract_link(data)
+
+
+async def generate_aqua_link_parse(
+    *,
+    user_api_key: str,
+    team_api_key: str = "",
+    service: str,
+    listing_url: str,
+    buyer_name: str,
+    address: str,
+    balance_checker: bool = False,
+    timeout_sec: float = 30.0,
+    name: str | None = None,
+    price: str | float | int | None = None,
+    image: str | None = None,
+) -> str:
+    """API /generate не парсит URL — используем title/price из оффера."""
+    _ = (listing_url, team_api_key)
+    if not (name or "").strip() or price is None:
+        raise AquaError("Для генерации нужны название и цена (URL парсинг не поддерживается API)")
+    return await generate_aqua_link_no_parse(
         user_api_key=user_api_key,
-        team_api_key=team_api_key,
-        body=body,
+        service=service,
+        name=str(name),
+        price=price,
+        buyer_name=buyer_name,
+        address=address,
+        image=image,
+        balance_checker=balance_checker,
         timeout_sec=timeout_sec,
     )
 
@@ -277,7 +236,7 @@ async def generate_aqua_link_no_parse(
 async def generate_aqua_link(
     *,
     user_api_key: str,
-    team_api_key: str,
+    team_api_key: str = "",
     service: str,
     buyer_name: str,
     address: str,
@@ -289,22 +248,7 @@ async def generate_aqua_link(
     prefer_parse: bool = True,
     timeout_sec: float = 30.0,
 ) -> str:
-    """С парсером, если есть URL объявления; иначе lonely."""
-    if prefer_parse and (listing_url or "").strip():
-        try:
-            return await generate_aqua_link_parse(
-                user_api_key=user_api_key,
-                team_api_key=team_api_key,
-                service=service,
-                listing_url=str(listing_url),
-                buyer_name=buyer_name,
-                address=address,
-                balance_checker=balance_checker,
-                timeout_sec=timeout_sec,
-            )
-        except AquaError as e:
-            if _is_auth_error(e) or not (name or "").strip() or price is None:
-                raise
+    _ = (listing_url, prefer_parse, team_api_key)
     resolved_img = (image or "").strip()
     if not resolved_img.lower().startswith(("http://", "https://")):
         default = (getattr(config, "AQUA_DEFAULT_IMAGE_URL", None) or "").strip()
@@ -312,7 +256,6 @@ async def generate_aqua_link(
             resolved_img = default
     return await generate_aqua_link_no_parse(
         user_api_key=user_api_key,
-        team_api_key=team_api_key,
         service=service,
         name=str(name or ""),
         price=price if price is not None else "0",

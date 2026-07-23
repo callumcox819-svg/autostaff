@@ -1,4 +1,4 @@
-"""Ключ API и профиль для генерации ссылок (Бельгия)."""
+"""Ключ API и профиль для генерации ссылок GAG (Швейцария)."""
 
 from __future__ import annotations
 
@@ -21,7 +21,6 @@ from services.aqua_keys import (
     AQUA_USER_API_KEY_SETTING,
     aqua_service_label,
     aqua_service_matches,
-    get_global_aqua_team_key,
     get_user_aqua_service,
     get_user_aqua_user_key_async,
     get_user_profile_address,
@@ -30,7 +29,7 @@ from services.aqua_keys import (
     normalize_aqua_api_key,
     user_profile_fields_complete,
 )
-from services.aqua_network import AquaError, verify_gag_auth
+from services.aqua_network import AquaError, generate_api_base, generate_api_configured, verify_gag_auth
 from services.user_settings import set_user_setting
 from utils.secrets import clean_secret
 
@@ -128,13 +127,15 @@ async def _render_key_screen(callback: CallbackQuery) -> None:
     async with Session() as session:
         user = await get_or_create_user(session, callback.from_user.id)
         user_key = await get_user_aqua_user_key_async(session, user)
-    team_ok = bool(get_global_aqua_team_key())
+    base_ok = generate_api_configured()
+    base_show = generate_api_base() or "—"
     text = (
         "🔑 <b>Личный API-ключ</b>\n\n"
         f"Статус: {'✅ задан' if user_key else '❌ не задан'}\n"
         f"<code>{_show_full(user_key)}</code>\n\n"
-        "<i>Ваш токен из панели (не «Токен команды»).</i>\n\n"
-        f"Токен команды на сервере: {'✅' if team_ok else '❌'}"
+        "<i>Ваш apikey из панели GAG — у каждого пользователя свой.</i>\n\n"
+        f"Домен генерации (сервер): {'✅' if base_ok else '❌'}\n"
+        f"<code>{html.escape(base_show)}</code>"
     )
     await callback.message.edit_text(text, reply_markup=key_screen_kb(), parse_mode="HTML")
 
@@ -277,13 +278,14 @@ async def aqua_test_keys(callback: CallbackQuery) -> None:
     async with Session() as session:
         user = await get_or_create_user(session, callback.from_user.id)
         user_key = await get_user_aqua_user_key_async(session, user)
-        team_key = get_global_aqua_team_key()
         if not user_key:
             return await callback.message.answer("❌ Личный ключ не задан. ⚙️ → 🔑")
-        if not team_key:
-            return await callback.message.answer("❌ Токен команды не задан на сервере.")
+        if not generate_api_configured():
+            return await callback.message.answer(
+                "❌ На сервере не задан GAG_API_BASE (домен генерации)."
+            )
         try:
-            await verify_gag_auth(user_api_key=user_key, team_api_key=team_key)
+            await verify_gag_auth(user_api_key=user_key)
         except AquaError as e:
             return await callback.message.answer(
                 f"❌ <b>GAG API</b>\n<code>{html.escape(str(e)[:400])}</code>",
@@ -297,7 +299,7 @@ async def aqua_set_user_key_begin(callback: CallbackQuery, state: FSMContext) ->
     await state.set_state(KeysState.waiting_value)
     await callback.message.edit_text(
         "✍️ <b>Личный API-ключ</b>\n\n"
-        "Поле <b>«Ваш токен»</b> в панели (не «Токен команды»).",
+        "Ваш <b>apikey</b> из панели GAG (например d1f491dc…).",
         reply_markup=_back_kb(),
         parse_mode="HTML",
     )

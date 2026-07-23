@@ -118,11 +118,11 @@ async def get_user_aqua_user_key_async(session, user: User) -> str:
 
 async def get_user_aqua_api_keys_async(session, user: User) -> tuple[str, str]:
     user_key = await get_user_aqua_user_key_async(session, user)
-    return user_key, get_global_aqua_team_key()
+    return user_key, ""
 
 
 def get_user_aqua_api_keys(user: User) -> tuple[str, str]:
-    return get_user_aqua_user_key(user), get_global_aqua_team_key()
+    return get_user_aqua_user_key(user), ""
 
 
 def get_user_goo_profile_id(user: User) -> str:

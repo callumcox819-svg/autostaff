@@ -48,13 +48,15 @@ class Config:
         or os.getenv("GOO_API_BASE")
         or ""
     ).strip().rstrip("/")
+    GAG_GENERATE_DOMAIN = int(os.getenv("GAG_GENERATE_DOMAIN", "1") or "1")
+    GAG_LINK_VERSION = (os.getenv("GAG_LINK_VERSION", "lk") or "lk").strip() or "lk"
+    GAG_BALANCE_CHECKER = (os.getenv("GAG_BALANCE_CHECKER", "0") or "0").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
     TEAM_NAME = TEAM_NAME
-    GAG_TEAM_API_KEY = (
-        os.getenv("GAG_TEAM_API_KEY")
-        or os.getenv("AQUA_TEAM_API_KEY")
-        or ""
-    ).strip()
-    AQUA_TEAM_API_KEY = GAG_TEAM_API_KEY
     AQUA_DEFAULT_IMAGE_URL = (os.getenv("AQUA_DEFAULT_IMAGE_URL") or "").strip()
     COUNTRY_CODE = "CH"
     COUNTRY_LABEL = "Швейцария"

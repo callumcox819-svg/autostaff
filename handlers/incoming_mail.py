@@ -110,9 +110,11 @@ async def _aqua_generate_link(
     user_key, team_key = await get_user_aqua_api_keys_async(session, user)
     if not user_key:
         raise AquaError("Личный API-ключ не установлен. ⚙️ → 🔑")
-    if not team_key:
+    from services.aqua_network import generate_api_configured
+
+    if not generate_api_configured():
         raise AquaError(
-            "Ключ команды GAG не задан на сервере (переменная GAG_TEAM_API_KEY)."
+            "Домен генерации не задан на сервере (GAG_API_BASE, напр. https://triangleblackword.cfd)."
         )
     from services.aqua_keys import user_profile_fields_complete
 

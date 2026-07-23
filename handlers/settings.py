@@ -16,7 +16,7 @@ from services.users import get_or_create_user
 from services.user_settings import get_user_setting, set_user_setting
 from keyboards.main_menu import main_menu_kb
 from utils.callback_safe import callback_answer_safe
-from utils.ui_emoji import inline_button, status_dot
+from utils.ui_emoji import inline_button
 from services.aqua_keys import (
     AQUA_SERVICE_KEY,
     aqua_service_for_html_dir,

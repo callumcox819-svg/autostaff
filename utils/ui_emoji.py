@@ -93,7 +93,7 @@ def reply_button(key: str, text: str, **kwargs: Any) -> KeyboardButton:
     eid = emoji_id(key)
     if eid:
         return KeyboardButton(text=text, icon_custom_emoji_id=eid, **kwargs)
-    return KeyboardButton(text=text, **kwargs)
+    return KeyboardButton(text=label(key, text), **kwargs)
 
 
 def inline_button(
@@ -105,6 +105,7 @@ def inline_button(
     **kwargs: Any,
 ) -> InlineKeyboardButton:
     eid = emoji_id(key)
+    btn_text = text if eid else label(key, text)
     kw: dict[str, Any] = dict(kwargs)
     if eid:
         kw["icon_custom_emoji_id"] = eid
@@ -112,7 +113,7 @@ def inline_button(
         kw["callback_data"] = callback_data
     if url is not None:
         kw["url"] = url
-    return InlineKeyboardButton(text=text, **kw)
+    return InlineKeyboardButton(text=btn_text, **kw)
 
 
 def toggle_button(on: bool, caption: str, callback_data: str) -> InlineKeyboardButton:
@@ -122,7 +123,8 @@ def toggle_button(on: bool, caption: str, callback_data: str) -> InlineKeyboardB
         return InlineKeyboardButton(
             text=caption, icon_custom_emoji_id=eid, callback_data=callback_data
         )
-    return InlineKeyboardButton(text=caption, callback_data=callback_data)
+    fb = _UNICODE_FALLBACK.get(key, "")
+    return InlineKeyboardButton(text=f"{fb} {caption}".strip(), callback_data=callback_data)
 
 
 def log_emoji_profile() -> None:

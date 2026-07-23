@@ -16,7 +16,6 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
 from database import async_session
-from handlers.first_sms import pick_random_first_sms
 from handlers.templates import pick_random_smart_preset
 from models import EmailAccount, Offer, OfferEmail, User
 from services.aqua_keys import AQUA_PROFILE_ADDRESS_KEY, AQUA_PROFILE_NAME_KEY
@@ -37,11 +36,11 @@ TEST_MAIL_RECIPIENTS_KEY = "test_mail_recipients"
 MAX_TEST_RECIPIENTS = 4
 TEST_SEND_DELAY_SEC = 2.0
 
-# Запасные DE-тексты (ASCII → 7bit), если пресетов нет — как живое ricardo/tutti-сообщение
-_BE_FALLBACK_BODIES = [
-    "Hallo! Is dit artikel nog beschikbaar? Alvast bedankt.",
-    "Goedendag, ik heb interesse in uw advertentie. Is deze nog te koop?",
-    "Dag, ik zou graag willen weten of u dit nog verkoopt. Groeten.",
+# Запасные DE-тексты (ASCII → 7bit), если пресетов нет
+_CH_FALLBACK_BODIES = [
+    "Grüezi! Ist der Artikel noch verfügbar? Besten Dank.",
+    "Guten Tag, ich interessiere mich für Ihr Inserat. Ist es noch zu haben?",
+    "Hallo, ich würde gerne wissen, ob Sie das noch verkaufen. Freundliche Grüsse.",
 ]
 
 class TestMailStates(StatesGroup):
@@ -310,9 +309,7 @@ async def _build_test_message(
 
     base_text = await pick_random_smart_preset(tg_id, item_title)
     if not (base_text or "").strip():
-        base_text = await pick_random_first_sms(tg_id, item_title)
-    if not (base_text or "").strip():
-        base_text = random.choice(_BE_FALLBACK_BODIES)
+        base_text = random.choice(_CH_FALLBACK_BODIES)
         if item_title and item_title != "OFFER":
             base_text = f"{base_text} ({item_title})"
 

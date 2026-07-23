@@ -39,13 +39,7 @@ def _discover_handler_modules(package_name: str = "handlers") -> List[str]:
             module_names.append(m.name)
 
     module_names = list(dict.fromkeys(module_names))
-    module_names_sorted = sorted(module_names)
-
-    catchall = f"{package_name}.catchall_debug"
-    if catchall in module_names_sorted:
-        module_names_sorted = [x for x in module_names_sorted if x != catchall] + [catchall]
-
-    return module_names_sorted
+    return sorted(module_names)
 
 
 def _extract_routers(module, module_name: str) -> List[Router]:
@@ -68,12 +62,9 @@ def _extract_routers(module, module_name: str) -> List[Router]:
 
 def _sort_routers(routers: List[Tuple[str, Router]]) -> List[Tuple[str, Router]]:
     priority = {name: i for i, name in enumerate(_ROUTER_BOOT_ORDER)}
-    catchall = "handlers.catchall_debug"
 
     def key(item: Tuple[str, Router]) -> Tuple[int, str]:
         mod_name, _ = item
-        if mod_name == catchall:
-            return (10_000, mod_name)
         if mod_name in priority:
             return (priority[mod_name], mod_name)
         return (100, mod_name)
@@ -87,7 +78,6 @@ def _bind_priority_dispatcher_handlers(dp: Dispatcher) -> None:
 
     from handlers.accounts import open_accounts_from_settings, quick_gmail_from_main_menu
     from handlers.api_keys import aqua_show_key, aqua_show_profile
-    from handlers.first_sms import firstsms_open
     from handlers.proxies import open_proxies
     from handlers.send import send_cmd
     from handlers.settings import (
@@ -137,7 +127,6 @@ def _bind_priority_dispatcher_handlers(dp: Dispatcher) -> None:
         (settings_open_cb, F.data == "settings_open"),
         (priority_menu, F.data == "priority_menu"),
         (presets_menu, F.data == "presets_menu"),
-        (firstsms_open, F.data == "firstsms_open"),
         (spoof_name_menu, F.data == "spoof_name_menu"),
         (open_accounts_from_settings, F.data == "settings_accounts"),
         (open_proxies, F.data == "settings_proxies"),

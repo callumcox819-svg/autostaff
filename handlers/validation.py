@@ -370,6 +370,10 @@ async def _run_validation_pipeline(message: Message, status_msg: Message, items:
 
         pr = [str(x or "").strip().lower() for x in priority_list if str(x or "").strip()]
         domains = merge_validation_domains(pr + db_domains)
+        if not domains:
+            from region import DEFAULT_VALIDATION_DOMAINS
+
+            domains = merge_validation_domains(list(DEFAULT_VALIDATION_DOMAINS))
 
         if not domains:
             return await status_msg.edit_text("❌ У тебя нет доменов.")

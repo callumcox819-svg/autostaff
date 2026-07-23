@@ -9,61 +9,61 @@ Telegram-бот для команды **GAG**: валидация email, **burst
 - Burst-рассылка: параллельно по всем Gmail, цель 2–5 с на очередь
 - Inbox placement: plain text, без URL в первом письме, stagger между ящиками
 - Один ротирующий SOCKS5-прокси
-- Ротация Gmail-аккаунтов и текстов
+- Ротация Gmail-аккаунтов и текстов (умные пресеты)
 - Premium emoji в кнопках (`config/premium_emoji.json`)
-- HTML-шаблоны для ответов: `data/HTMLch/ricardo_ch/`, `data/HTMLch/tutti_ch/`
+- HTML-шаблоны для ответов: `data/HTMLch/`
 
 ## Быстрый старт
 
 ```bash
-cd gag-bot
 pip install -r requirements.txt
 copy .env.example .env
-# заполните BOT_TOKEN, GAG_TEAM_API_KEY, VALIDEMAIL_API_KEYS
 python bot.py
 ```
 
-## .env
+## .env минимум
 
 ```env
 BOT_TOKEN=
 GAG_TEAM_API_KEY=
 VALIDEMAIL_API_KEYS=
-DATABASE_URL=          # опционально; без него — локальный SQLite
-ROTATING_PROXY_ID=     # один SOCKS5 с ротацией IP
+ROTATING_PROXY_ID=
 ```
 
-### Inbox placement
-
-```env
-MAILING_PLAIN_ONLY=1
-MAILING_MINIMAL_HEADERS=1
-MAILING_STRIP_LINK=1
-INBOX_STAGGER_MS=150
-INBOX_ACCOUNT_GAP_SEC=2.5
-MAILING_EHLO_NAME=localhost
-```
-
-Рекомендуется запуск с VPS/ПК (не shared PaaS) для корректного EHLO.
-
-## GAG API
-
-Сервисы: `ricardo_ch`, `tutti_ch`. Личный ключ: ⚙️ → 🔑.
-
-## Структура
+## Структура проекта
 
 ```
-bot.py              — точка входа
-handlers/           — Telegram-команды
-services/           — рассылка, API, IMAP, валидация
-data/HTMLch/        — HTML-шаблоны CH
-config/             — premium emoji
-region.py           — CH/GAG настройки
+bot.py                 — точка входа
+imap_worker.py         — опционально: входящая почта отдельным процессом
+region.py              — CH/GAG (домены валидации, сервисы API)
+config.py              — переменные окружения
+
+handlers/
+  start.py             — /start, главное меню
+  send.py              — burst-рассылка
+  stopsend.py          — остановка
+  reset.py             — сброс очереди
+  status.py            — статус рассылки
+  validation.py        — валидация email
+  settings.py          — настройки
+  templates.py         — пресеты и умные пресеты
+  accounts.py          — Gmail-аккаунты
+  proxies.py           — SOCKS5-прокси
+  api_keys.py          — ключи GAG API
+  incoming_mail.py     — входящие + HTML-ответы
+  mail_templates.py    — пресеты для ответов на письма
+  test_mail.py         — тест маил (админ)
+  admin_panel.py       — админ-панель
+
+services/              — SMTP, API, IMAP, validemail, burst mailer
+data/HTMLch/           — HTML ricardo_ch / tutti_ch
+keyboards/             — меню
+middlewares/           — доступ, логи
+utils/                 — emoji, bg jobs, secrets
+tests/                 — unit-тесты
 ```
 
 ## IMAP worker (опционально)
-
-Отдельный процесс для входящей почты:
 
 ```bash
 ENABLE_INCOMING_MAIL=1 python imap_worker.py

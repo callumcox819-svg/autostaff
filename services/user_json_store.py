@@ -20,7 +20,6 @@ DATA_DIR = Path("data")
 _BLOB_FILES = {
     "templates": "templates_{tg_id}.json",
     "smart_templates": "smart_templates_{tg_id}.json",
-    "first_sms": "first_sms_{tg_id}.json",
 }
 
 

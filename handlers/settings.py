@@ -356,7 +356,7 @@ async def settings_open_cb(callback: CallbackQuery, state: FSMContext):
 
 
 # =========================
-# Missing callbacks from settings menu (Domains / Sender name / Templates / Timings / HTML nick)
+# Callbacks настроек (темы, тайминги, HTML nick)
 # =========================
 
 

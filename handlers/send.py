@@ -188,14 +188,9 @@ async def _build_message_for_target(
     except Exception:
         base_text = ""
     if not (base_text or "").strip():
-        try:
-            from handlers.first_sms import pick_random_first_sms
-
-            base_text = await pick_random_first_sms(tg_user_id, item_title)
-        except Exception:
-            base_text = (
-                "Grüezi! Ist der Artikel noch verfügbar? " + (item_title or "OFFER")
-            ).strip()
+        base_text = (
+            "Grüezi! Ist der Artikel noch verfügbar? " + (item_title or "OFFER")
+        ).strip()
 
     body = apply_placeholders(base_text, link=link, ctx=ctx)
     from services.offer_text import finalize_mailing_body

@@ -35,8 +35,6 @@ from utils.preset_list_ui import (
     text_presets_pick_kb,
 )
 
-DATA_DIR = "data"
-MAX_TITLE_LEN = 40
 MAX_TEXT_LEN = 4000
 
 

@@ -66,11 +66,11 @@ def is_status_trigger(text: str | None) -> bool:
 
 def main_menu_kb(user_id: int, *, show_admin: bool = False) -> ReplyKeyboardMarkup:
     rows = [
-        [reply_button("settings", TEXT_SETTINGS)],
+        [reply_button("settings", TEXT_SETTINGS, style="primary")],
         [reply_button("quick_add", TEXT_QUICK_ADD)],
         [
-            reply_button("send", TEXT_SEND),
-            reply_button("stop", TEXT_STOP),
+            reply_button("send", TEXT_SEND, style="success"),
+            reply_button("stop", TEXT_STOP, style="danger"),
         ],
         [reply_button("status", TEXT_STATUS)],
     ]

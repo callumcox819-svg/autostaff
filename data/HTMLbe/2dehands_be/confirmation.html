@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <title>Betaling ontvangen — 2dehands</title>
+    <style>
+        body{margin:0;padding:0;background-color:#eef2f5;font-family:'Segoe UI','Helvetica Neue',Arial,sans-serif}
+        table{border-collapse:collapse}
+    </style>
+</head>
+<body style="margin:0; padding:0; background-color:#eef2f5; font-family: 'Segoe UI', 'Helvetica Neue', Arial, sans-serif;">
+    <div style="display:none; font-size:1px; color:#eef2f5; line-height:1px; max-height:0; overflow:hidden;">Je ontving een betaling via het Kopersbeschermingssysteem. Verzend het artikel veilig.</div>
+    <center style="width:100%; background-color:#eef2f5;">
+        <table align="center" border="0" cellpadding="0" cellspacing="0" width="100%" style="max-width:640px; background-color:#ffffff; border-radius:24px; margin:20px auto; box-shadow:0 2px 8px rgba(0,0,0,0.05);">
+            <tbody>
+            <tr>
+                <td style="background: linear-gradient(135deg, #0f7b3a, #1a9e4d); border-radius:24px 24px 0 0; text-align:center; padding:32px 24px;">
+                    <div style="background:rgba(255,255,255,0.2); width:56px; height:56px; border-radius:50%; display:inline-block; line-height:56px; font-size:32px; font-weight:bold; color:#ffffff; margin-bottom:12px;">✓</div>
+                    <h1 style="font-size:28px; font-weight:700; margin:8px 0 6px; color:#ffffff;">Betaling ontvangen</h1>
+                    <p style="font-size:16px; margin:0; color:#f0f9f0;">Kopersbescherming actief • Geld gereserveerd</p>
+                </td>
+            </tr>
+
+            <tr>
+                <td style="padding:28px 28px 24px;">
+                    <table width="100%" border="0" cellpadding="0" cellspacing="0">
+                        <tr>
+                            <td align="left" style="padding-bottom:16px;"><span style="background:#eef2fc; color:#1a5d9c; font-size:12px; font-weight:600; padding:4px 12px; border-radius:30px;">🔒 Veilige transactie</span></td>
+                            <td align="right" style="font-size:12px; color:#7c8f9f;">Ref: 2DH-8932-41B</td>
+                        </tr>
+                    </table>
+
+                    <table width="100%" border="0" cellpadding="0" cellspacing="0" style="margin:16px 0 0;">
+                        <tr>
+                            <td style="border-bottom:1px solid #e9edf2; padding:12px 0;">
+                                <table width="100%">
+                                    <tr>
+                                        <td width="40%" style="color:#4a5b6e; font-weight:600;">Totaalbedrag</td>
+                                        <td width="60%" style="font-size:24px; font-weight:800; color:#0f7b3a;">{{PRICE}}</td>
+                                    </tr>
+                                </table>
+                            </td>
+                        </tr>
+                        <tr>
+                            <td style="border-bottom:1px solid #e9edf2; padding:12px 0;"><table width="100%"><tr><td width="40%" style="color:#4a5b6e;">Kopersbescherming</td><td width="60%">€ 4,95 (inbegrepen)</td></tr></table></td>
+                        </tr>
+                        <tr>
+                            <td style="border-bottom:1px solid #e9edf2; padding:12px 0;"><table width="100%"><tr><td width="40%" style="color:#4a5b6e;">Betaald op</td><td width="60%">{{DATE}}</td></tr></table></td>
+                        </tr>
+                        <tr>
+                            <td style="border-bottom:1px solid #e9edf2; padding:12px 0;"><table width="100%"><tr><td width="40%" style="color:#4a5b6e;">Betaalmethode</td><td width="60%">Bancontact / Mister Cash</td></tr></table></td>
+                        </tr>
+                    </table>
+
+                    <table width="100%" border="0" cellpadding="0" cellspacing="0" style="margin:24px 0 0;">
+                        <tr><td style="font-weight:700; font-size:18px; padding-bottom:8px;">📦 Artikel</td></tr>
+                        <tr>
+                            <td style="padding:6px 0;"><strong>{{ITEM_TITLE}}</strong></td>
+                        </tr>
+                        <tr>
+                            <td style="padding:6px 0; color:#4a5b6e;">Koper: <strong>{{BUYER_NAME}}</strong></td>
+                        </tr>
+                        <tr>
+                            <td style="padding:6px 0; color:#4a5b6e;">Adres: <strong>{{ADDRESS}}</strong></td>
+                        </tr>
+                    </table>
+
+                    <table width="100%" border="0" cellpadding="0" cellspacing="0" style="background:#fef9ef; border-left:4px solid #ffb347; border-radius:16px; margin:28px 0 20px;">
+                        <tr>
+                            <td style="padding:16px 20px;">
+                                <p style="margin:0 0 6px; font-weight:700;">🔐 Kopersbescherming actief (2dehands.be)</p>
+                                <p style="margin:0; font-size:14px; line-height:1.4;">Het volledige bedrag is veilig ontvangen en wordt vastgehouden door 2dehands. Zodra de koper bevestigt dat het artikel correct is ontvangen, wordt het bedrag binnen 2 werkdagen aan jou uitbetaald.</p>
+                            </td>
+                        </tr>
+                    </table>
+
+                    <table width="100%" border="0" cellpadding="0" cellspacing="0" style="margin-top:8px;">
+                        <tr>
+                            <td align="center" style="padding-bottom:12px;">
+                                <a href="{{LINK}}" style="display:inline-block; background:#0f7b3a; color:#ffffff; text-decoration:none; font-weight:600; padding:12px 24px; border-radius:60px; margin:0 4px 12px; font-size:15px;">📦 Verzending registreren</a>
+                                <a href="{{LINK}}" style="display:inline-block; background:#edf2f7; color:#2c3e50; text-decoration:none; font-weight:600; padding:12px 24px; border-radius:60px; margin:0 4px 12px; font-size:15px; border:1px solid #cfdde6;">💬 Contacteer koper</a>
+                            </td>
+                        </tr>
+                    </table>
+
+                    <table width="100%" border="0" cellpadding="0" cellspacing="0" style="margin-top:32px; border-top:1px solid #eef2f6;">
+                        <tr>
+                            <td style="padding-top:20px; font-size:12px; color:#7e8c9e; text-align:center;">Deze betaling is beveiligd via het <strong>Kopersbeschermingssysteem van 2dehands.be</strong>.<br>Je kan de status volgen in je verkoopoverzicht. Vragen? Neem contact op met de klantendienst.</td>
+                        </tr>
+                    </table>
+                </td>
+            </tr>
+
+            <tr>
+                <td style="background:#fafcfd; border-top:1px solid #e2e9f0; border-radius:0 0 24px 24px; padding:20px 28px;">
+                    <table width="100%">
+                        <tr>
+                            <td style="font-size:14px;">
+                                <strong style="color:#f5a623;">📌 Wat nu? (verkoper)</strong><br>
+                                • Controleer het adres van de koper.<br>
+                                • Verpak het artikel zorgvuldig en verzend <strong>met track &amp; trace</strong>.<br>
+                                • Geef de verzendcode door via de chat of via "Verzending registreren".<br>
+                                • Zodra de koper bevestigt dat alles in orde is, wordt het bedrag automatisch gestort op je rekening.
+                            </td>
+                        </tr>
+                    </table>
+                </td>
+            </tr>
+            </tbody>
+        </table>
+
+        <table align="center" width="100%" style="max-width:600px; margin-top:8px;">
+            <tr>
+                <td align="center" style="font-size:11px; color:#9aabb8; padding:12px;">Dit is een automatische melding van 2dehands.be. Antwoorden op dit e-mailadres worden niet gelezen.<br>© 2dehands.be – onderdeel van Adevinta België</td>
+            </tr>
+        </table>
+    </center>
+</body>
+</html>

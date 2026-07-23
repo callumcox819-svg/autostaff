@@ -1,0 +1,18 @@
+# Сервис «bot»: numReplicas = 1 (два polling на одном BOT_TOKEN = конфликт).
+[deploy]
+numReplicas = 1
+
+# Сервис «bot»:
+#   DATABASE_URL = ${{Postgres.DATABASE_URL}}
+#   BOT_TOKEN = ...
+#   NARKOLOGIA_TEAM_API_KEY = ...   # общий X-Team-Key команды Narkologia
+#   IMAP_DEDICATED_WORKER=1   — если IMAP на отдельном сервисе (см. ниже)
+#
+# Второй сервис «imap-worker» (тот же GitHub-репо):
+#   Start command: python imap_worker.py
+#   ENABLE_INCOMING_MAIL=1
+#   DATABASE_URL = Reference Postgres (как у бота)
+#   BOT_TOKEN = тот же
+#   INCOMING_MAIL_POLL_SECONDS=120
+#   MAX_IMAP_CONCURRENT=20
+# На боте: IMAP_DEDICATED_WORKER=1, без ENABLE_INCOMING_MAIL

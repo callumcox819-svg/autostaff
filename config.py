@@ -1,0 +1,72 @@
+import os
+
+try:
+    from dotenv import load_dotenv
+
+    load_dotenv()
+except ImportError:
+    pass
+
+from region import TEAM_NAME
+
+
+def _parse_admin_ids(raw: str) -> list[int]:
+    out: list[int] = []
+    for part in (raw or "").split(","):
+        part = part.strip()
+        if part.isdigit():
+            out.append(int(part))
+    return out
+
+
+class Config:
+    BOT_TOKEN = (os.getenv("BOT_TOKEN") or "").strip()
+
+    _admins_env = os.getenv("ADMIN_IDS", "").strip()
+    ADMIN_IDS = _parse_admin_ids(_admins_env) if _admins_env else []
+
+    DATABASE_URL = (os.getenv("DATABASE_URL") or "").strip()
+
+    VALIDEMAIL_URL = os.getenv("VALIDEMAIL_URL", "https://validemail.co/api/v1/validate").strip()
+    VALIDEMAIL_API_KEY_1 = os.getenv("VALIDEMAIL_API_KEY_1", "").strip()
+    VALIDEMAIL_API_KEY_2 = os.getenv("VALIDEMAIL_API_KEY_2", "").strip()
+    _keys_env = os.getenv("VALIDEMAIL_API_KEYS", "").strip()
+    if _keys_env:
+        VALIDEMAIL_API_KEYS = [x.strip() for x in _keys_env.split(",") if x.strip()]
+    else:
+        VALIDEMAIL_API_KEYS = [k for k in (VALIDEMAIL_API_KEY_1, VALIDEMAIL_API_KEY_2) if k]
+    VALIDEMAIL_CONCURRENCY = int(os.getenv("VALIDEMAIL_CONCURRENCY", "24"))
+    VALIDEMAIL_API_TIMEOUT = int(os.getenv("VALIDEMAIL_API_TIMEOUT", "12"))
+    VALIDEMAIL_MAX_RETRIES = int(os.getenv("VALIDEMAIL_MAX_RETRIES", "3"))
+
+    GLOBAL_SUBJECT_TEMPLATE = os.getenv("GLOBAL_SUBJECT_TEMPLATE", "OFFER").strip() or "OFFER"
+
+    # GAG / APEX API — docs.domainforapi.com
+    GAG_API_BASE = (
+        os.getenv("GAG_API_BASE")
+        or os.getenv("NARKOLOGIA_API_BASE")
+        or os.getenv("APEX_API_BASE")
+        or os.getenv("GOO_API_BASE")
+        or ""
+    ).strip().rstrip("/")
+    NARKOLOGIA_API_BASE = GAG_API_BASE
+    TEAM_NAME = TEAM_NAME
+    GAG_TEAM_API_KEY = (
+        os.getenv("GAG_TEAM_API_KEY")
+        or os.getenv("NARKOLOGIA_TEAM_API_KEY")
+        or os.getenv("AQUA_TEAM_API_KEY")
+        or ""
+    ).strip()
+    NARKOLOGIA_TEAM_API_KEY = GAG_TEAM_API_KEY
+    AQUA_TEAM_API_KEY = GAG_TEAM_API_KEY
+    AQUA_DEFAULT_IMAGE_URL = (os.getenv("AQUA_DEFAULT_IMAGE_URL") or "").strip()
+    COUNTRY_CODE = "CH"
+    COUNTRY_LABEL = "Швейцария"
+
+    DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "").strip()
+    DEEPSEEK_API_BASE = (os.getenv("DEEPSEEK_API_BASE", "https://api.deepseek.com") or "").strip().rstrip("/")
+    DEEPSEEK_MODEL = (os.getenv("DEEPSEEK_MODEL", "deepseek-chat") or "deepseek-chat").strip()
+    TRANSLATE_PROVIDER = (os.getenv("TRANSLATE_PROVIDER", "auto") or "auto").strip().lower()
+
+
+config = Config()

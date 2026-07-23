@@ -1,0 +1,151 @@
+"""Тема и имя отправителя для HTML-ответов (отдельно от рассылки с OFFER)."""
+
+from __future__ import annotations
+
+from models import User
+from services.html_spoof import apply_nick_to_html, get_spoof_display_name
+from services.subject_offer import sanitize_email_subject
+from services.user_settings import get_user_setting
+
+# как в handlers/settings.py → html_theme_menu
+HTML_THEME_KEY = "html_theme"
+
+
+async def get_html_reply_subject(session, user: User, *, fallback: str = "") -> str:
+    """
+    Тема для HTML: задаёт пользователь в настройках (📌 Тема HTML).
+    Не путать с глобальным OFFER для массовой рассылки.
+    """
+    subj = sanitize_email_subject(await get_user_setting(session, user, HTML_THEME_KEY) or "")
+    if subj:
+        return subj[:140] if len(subj) > 140 else subj
+    fb = sanitize_email_subject(fallback or "")
+    return fb[:140] if len(fb) > 140 else (fb or "Message")
+
+
+async def get_html_sender_name(session, user: User) -> str | None:
+    """
+    HTML: при 🟢 Спуфинг — имя из «👤 Имя для спуфинга».
+    Иначе — имя отправителя из аккаунтов (user.sender_name), как при рассылке.
+    """
+    spoof = await get_spoof_display_name(session, user)
+    if spoof:
+        return sanitize_email_subject(spoof)
+    name = sanitize_email_subject((getattr(user, "sender_name", None) or "").strip())
+    return name or None
+
+
+async def prepare_html_body(html: str, session, user: User) -> str:
+    nick = await get_spoof_display_name(session, user)
+    return apply_nick_to_html(html, nick)
+
+
+def _canon_email(email: str) -> str:
+    return (email or "").strip().lower()
+
+
+def _format_eur_price(price: str) -> str:
+    p = (price or "").strip()
+    if not p:
+        return ""
+    up = p.upper()
+    if up.startswith("EUR") or up.startswith("€"):
+        return p
+    return f"EUR {p}"
+
+
+async def build_offer_html_ctx(
+    session,
+    user_id: int,
+    seller_email: str,
+    *,
+    link: str = "",
+) -> dict[str, str]:
+    """Контекст для HTML-шаблонов: оффер из БД + профиль + ссылка Narkologia."""
+    from datetime import datetime
+
+    from sqlalchemy import select
+
+    from models import Offer, OfferEmail, User
+    from services.aqua_keys import AQUA_PROFILE_ADDRESS_KEY, AQUA_PROFILE_NAME_KEY
+    from services.user_settings import get_user_setting
+
+    title = ""
+    price = ""
+    photo = ""
+    buyer_name = ""
+    address = ""
+    try:
+        canon = _canon_email(seller_email)
+        off = (
+            await session.execute(
+                select(Offer)
+                .join(OfferEmail, OfferEmail.offer_id == Offer.id)
+                .where(Offer.user_id == int(user_id))
+                .where(OfferEmail.email == canon)
+                .order_by(Offer.id.desc())
+                .limit(1)
+            )
+        ).scalars().first()
+        if off:
+            title = (off.title or "").strip()
+            price = _format_eur_price((off.price or "").strip())
+            photo = (off.photo or "").strip()
+    except Exception:
+        pass
+
+    try:
+        user = await session.get(User, int(user_id))
+        if user:
+            buyer_name = (
+                await get_user_setting(session, user, AQUA_PROFILE_NAME_KEY) or ""
+            ).strip()
+            address = (
+                await get_user_setting(session, user, AQUA_PROFILE_ADDRESS_KEY) or ""
+            ).strip()
+    except Exception:
+        pass
+
+    return {
+        "ITEM_TITLE": title,
+        "PRICE": price,
+        "IMAGE_URL": photo,
+        "SELLER_EMAIL": _canon_email(seller_email),
+        "BUYER_NAME": buyer_name,
+        "ADDRESS": address,
+        "DATE": datetime.now().strftime("%d/%m/%Y"),
+        "LINK": (link or "").strip(),
+    }
+
+
+async def resolve_aqua_link_for_reply(
+    session,
+    user_id: int,
+    *,
+    account_email: str,
+    seller_email: str,
+    mail_generated_link: str | None = None,
+) -> str:
+    """AQUA-ссылка из ConversationLink или из письма после «Создать ссылку»."""
+    from sqlalchemy import select
+
+    from models import ConversationLink
+
+    link = (mail_generated_link or "").strip()
+    if link:
+        return link
+
+    inbox = _canon_email(account_email)
+    seller = _canon_email(seller_email)
+    if inbox and seller:
+        conv = (
+            await session.execute(
+                select(ConversationLink)
+                .where(ConversationLink.user_id == int(user_id))
+                .where(ConversationLink.account_email == inbox)
+                .where(ConversationLink.from_email == seller)
+            )
+        ).scalar_one_or_none()
+        if conv and conv.generated_link:
+            return str(conv.generated_link).strip()
+    return ""

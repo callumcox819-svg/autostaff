@@ -77,22 +77,18 @@ def _bind_priority_dispatcher_handlers(dp: Dispatcher) -> None:
     from aiogram.types import Message
 
     from handlers.accounts import open_accounts_from_settings, quick_gmail_from_main_menu
-    from handlers.api_keys import aqua_show_key, aqua_show_profile
+    from handlers.api_keys import aqua_show_key
     from handlers.proxies import open_proxies
     from handlers.send import send_cmd
     from handlers.settings import (
         _force_settings_menu,
         match_settings_menu_text,
         open_settings_menu,
-        priority_menu,
         ref_hide,
-        ref_toggle,
         settings_open_cb,
-        spoof_name_menu,
     )
     from handlers.stopsend import cmd_stopsend
     from handlers.status import cmd_imap_diag, cmd_statussend
-    from handlers.templates import presets_menu
 
     async def _dp_settings_message(message: Message, state: FSMContext) -> None:
         logger.info("⚙️ settings (dispatcher) tg=%s", message.from_user.id)
@@ -104,36 +100,31 @@ def _bind_priority_dispatcher_handlers(dp: Dispatcher) -> None:
     )
 
     dp.message.register(send_cmd, Command("send"))
-    dp.message.register(send_cmd, F.text == "▶️ Запустить рассылку")
+    dp.message.register(send_cmd, F.text == "Запустить рассылку")
     dp.message.register(cmd_stopsend, Command("stop", "stopsend"))
     dp.message.register(
         cmd_stopsend,
-        F.text.in_({"⏹ Остановить рассылку", "/stop", "/stopsend"}),
+        F.text.in_({"Остановить рассылку", "/stop", "/stopsend"}),
     )
     from handlers.reset import cmd_reset
 
     dp.message.register(cmd_reset, Command("reset"))
     dp.message.register(cmd_statussend, Command("stat", "status", "statussend"))
-    dp.message.register(cmd_statussend, F.text == "📊 Статус рассылки")
+    dp.message.register(cmd_statussend, F.text == "Статус рассылки")
     dp.message.register(cmd_imap_diag, Command("imap_diag"))
     dp.message.register(
         quick_gmail_from_main_menu,
-        F.text.in_({"⚡ Быстрое добавление", "⚡ Быстрое добавление (Gmail)"}),
+        F.text.in_({"Быстрое добавление", "Быстрое добавление (Gmail)"}),
     )
 
     _deprecated = frozenset({"settings_menu", "goo:settings", "goo_settings", "settings_main"})
     bindings = (
         (settings_open_cb, F.data == "settings_open"),
-        (priority_menu, F.data == "priority_menu"),
-        (presets_menu, F.data == "presets_menu"),
-        (spoof_name_menu, F.data == "spoof_name_menu"),
         (open_accounts_from_settings, F.data == "settings_accounts"),
         (open_proxies, F.data == "settings_proxies"),
         (aqua_show_key, F.data == "aqua_show:key"),
-        (aqua_show_profile, F.data == "aqua_show:profile"),
         (ref_hide, F.data == "ref_hide"),
         (_force_settings_menu, F.data.in_(_deprecated)),
-        (ref_toggle, F.data.startswith("ref_toggle:")),
     )
     for cb, flt in bindings:
         dp.callback_query.register(cb, flt)

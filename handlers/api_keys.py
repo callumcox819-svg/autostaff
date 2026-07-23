@@ -130,11 +130,10 @@ async def _render_key_screen(callback: CallbackQuery) -> None:
     base_ok = generate_api_configured()
     base_show = generate_api_base() or "—"
     text = (
-        "🔑 <b>Личный API-ключ</b>\n\n"
+        "🔑 <b>API-ключ</b>\n\n"
         f"Статус: {'✅ задан' if user_key else '❌ не задан'}\n"
         f"<code>{_show_full(user_key)}</code>\n\n"
-        "<i>Ваш apikey из панели GAG — у каждого пользователя свой.</i>\n\n"
-        f"Домен генерации (сервер): {'✅' if base_ok else '❌'}\n"
+        f"Сервер: {'✅' if base_ok else '❌'}\n"
         f"<code>{html.escape(base_show)}</code>"
     )
     await callback.message.edit_text(text, reply_markup=key_screen_kb(), parse_mode="HTML")

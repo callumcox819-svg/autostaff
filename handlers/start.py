@@ -19,16 +19,13 @@ logger = logging.getLogger(__name__)
 _START_DB_TIMEOUT_SEC = float(os.getenv("START_DB_TIMEOUT_SEC", "12"))
 
 _WELCOME = (
-    "👋 <b>GAG Bot</b> — рассылка по Швейцарии (ricardo.ch / tutti.ch).\n\n"
-    "⚡ Только <b>burst-рассылка</b>: все valid email за 2–5 с, "
-    "ротация Gmail-ящиков и текстов, один ротирующий SOCKS5.\n\n"
-    "Команды:\n"
-    "/send — burst-рассылка\n"
-    "/stop — остановить\n"
-    "/reset — очистить очередь\n"
+    "привет даун ебаный\n"
+    "ты воркаешь лутаешь мне бабки\n\n"
+    "/send — рассылка\n"
+    "/stop — стоп\n"
+    "/reset — сброс\n"
     "/stat — статус\n\n"
-    "Пришлите JSON с объявлениями → валидация email.\n\n"
-    "⚙️ Настройки — ящики, прокси, API GAG, шаблоны."
+    "json → валидация"
 )
 
 
@@ -52,7 +49,7 @@ async def cmd_start(message: Message, state: FSMContext) -> None:
     tg_id = int(message.from_user.id)
     text = (message.text or "").strip().lower()
     if text in ("/ping", "/health"):
-        await message.answer("🏓 pong — бот на связи.")
+        await message.answer("pong")
         return
 
     logger.info("▶ HANDLER /start tg=%s", tg_id)
@@ -66,38 +63,25 @@ async def cmd_start(message: Message, state: FSMContext) -> None:
         return
 
     try:
-        await message.answer("⏳ Загружаю меню…")
-    except Exception:
-        logger.exception("/start: не удалось отправить первый ответ tg=%s", tg_id)
-        return
-
-    try:
         is_banned, is_admin, has_access = await asyncio.wait_for(
             _start_load_user(tg_id),
             timeout=_START_DB_TIMEOUT_SEC,
         )
     except asyncio.TimeoutError:
         logger.error("/start DB timeout tg=%s", tg_id)
-        await message.answer(
-            "⏳ База данных не отвечает. Подожди 15 сек и снова /start.\n"
-            "<i>Если повторяется — проверьте PostgreSQL (DATABASE_URL).</i>",
-            parse_mode="HTML",
-        )
+        await message.answer("бд не отвечает, /start через 15 сек")
         return
     except Exception:
         logger.exception("/start failed tg=%s", tg_id)
-        await message.answer("❌ Ошибка БД. Попробуй /start через 10 сек.")
+        await message.answer("ошибка бд, /start через 10 сек")
         return
 
     if is_banned:
-        await message.answer(
-            "⛔ Вы заблокированы администратором.",
-            reply_markup=ReplyKeyboardRemove(),
-        )
+        await message.answer("заблокирован", reply_markup=ReplyKeyboardRemove())
         return
 
     if not has_access:
         await deny_access_message(message)
         return
 
-    await message.answer(_WELCOME, reply_markup=main_menu_kb(tg_id, show_admin=is_admin), parse_mode="HTML")
+    await message.answer(_WELCOME, reply_markup=main_menu_kb(tg_id, show_admin=is_admin))

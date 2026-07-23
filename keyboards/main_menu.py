@@ -17,7 +17,6 @@ def _menu_text_variants(*keys_and_plain: tuple[str, str]) -> frozenset[str]:
     for key, plain in keys_and_plain:
         out.add(plain)
         out.add(label(key, plain))
-        # legacy unicode labels
         legacy = {
             TEXT_SETTINGS: ("⚙️ Настройки", "Настройки"),
             TEXT_QUICK_ADD: ("⚡ Быстрое добавление", "⚡ Быстрое добавление (Gmail)"),

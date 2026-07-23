@@ -357,11 +357,10 @@ async def _start_sending_inner(
     try:
         await _edit_status_text(
             status_msg,
-            "⚡ <b>Burst-рассылка GAG</b> (inbox-safe)\n"
+            "⚡ <b>Рассылка</b>\n"
             f"В очереди: <b>{total_targets}</b> · ящиков: <b>{len(accounts)}</b>\n"
             f"{px_detail}\n"
-            f"SOCKS5 id=<b>{sticky_proxy_id}</b> (ротация IP)\n"
-            "Inbox: plain · без ссылок · уник. тема/текст · stagger ящиков\n"
+            f"SOCKS5 id=<b>{sticky_proxy_id}</b>\n"
             f"Успех: <b>{'IMAP Sent' if MAIL_VERIFY_SENT else 'SMTP 250+NOOP'}</b>",
             parse_mode="HTML",
         )

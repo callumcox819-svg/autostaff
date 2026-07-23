@@ -89,10 +89,6 @@ async def open_settings_menu(message: Message, state: FSMContext) -> None:
     tg_id = int(message.from_user.id)
     logger.info("open_settings_menu tg=%s text=%r", tg_id, message.text)
     try:
-        await message.answer("⏳ Открываю настройки…")
-    except Exception:
-        pass
-    try:
         kb = await asyncio.wait_for(
             _settings_menu_kb_for_user(tg_id),
             timeout=float(__import__("os").getenv("SETTINGS_MENU_DB_TIMEOUT_SEC", "12")),
@@ -100,21 +96,13 @@ async def open_settings_menu(message: Message, state: FSMContext) -> None:
         await message.answer(
             SETTINGS_MENU_TEXT,
             reply_markup=kb,
-            parse_mode="HTML",
         )
     except asyncio.TimeoutError:
         logger.error("open_settings_menu DB timeout tg=%s", tg_id)
-        await message.answer(
-            SETTINGS_MENU_TEXT,
-            reply_markup=settings_menu_kb({}),
-            parse_mode="HTML",
-        )
+        await message.answer(SETTINGS_MENU_TEXT, reply_markup=settings_menu_kb())
     except Exception:
         logger.exception("open_settings_menu failed tg=%s", tg_id)
-        await message.answer(
-            "❌ Не удалось открыть настройки (ошибка БД). Попробуйте через 5 сек или /start.",
-            parse_mode="HTML",
-        )
+        await message.answer("не открылось, /start")
 
 
 # =========================
@@ -152,31 +140,10 @@ class _SettingsInput(StatesGroup):
     html_theme = State()
 
 
-def settings_menu_kb(flags: dict[str, bool]) -> InlineKeyboardMarkup:
-    """Главное меню настроек: GAG / Швейцария."""
-    from utils.ui_emoji import inline_button, toggle_button
-
+def settings_menu_kb() -> InlineKeyboardMarkup:
+    """Минимальное меню: только то, что нужно для рассылки."""
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [
-                inline_button("status", "Приоритет\nотправки", callback_data="priority_menu"),
-                inline_button("presets", "Пресеты", callback_data="presets_menu"),
-            ],
-            [
-                toggle_button(flags.get("smart_mode", False), "Умный режим", "ref_toggle:smart_mode"),
-                inline_button("presets", "Умные пресеты", callback_data="smart_presets_menu"),
-            ],
-            [
-                toggle_button(flags.get("spoofing", False), "Спуфинг", "ref_toggle:spoofing"),
-                inline_button("profile", "Имя для\nспуфинга", callback_data="spoof_name_menu"),
-            ],
-            [
-                toggle_button(
-                    flags.get("block_control", False),
-                    "Контроль\nблокировок",
-                    "ref_toggle:block_control",
-                ),
-            ],
             [
                 inline_button("email", "E-mail", callback_data="settings_accounts"),
                 inline_button("proxy", "Прокси", callback_data="settings_proxies"),
@@ -185,7 +152,6 @@ def settings_menu_kb(flags: dict[str, bool]) -> InlineKeyboardMarkup:
                 inline_button("key", "Ключ", callback_data="aqua_show:key"),
             ],
             [
-                inline_button("profile", "Профиль", callback_data="aqua_show:profile"),
                 inline_button("hide", "Скрыть", callback_data="ref_hide"),
             ],
         ]
@@ -193,24 +159,7 @@ def settings_menu_kb(flags: dict[str, bool]) -> InlineKeyboardMarkup:
 
 
 async def _settings_menu_kb_for_user(tg_user_id: int) -> InlineKeyboardMarkup:
-    """Return settings menu keyboard with current toggle states (per-user)."""
-    async with db_session() as session:
-        user = await get_or_create_user(session, tg_user_id)
-
-        async def _b(key: str, default: bool = False) -> bool:
-            v = await get_user_setting(session, user, key)
-            if v is None:
-                return default
-            s = str(v).strip().lower()
-            return s in {"1", "true", "yes", "on", "y"}
-
-        flags = {
-            "smart_mode": await _b("smart_mode", False),
-            "spoofing": await _b("spoofing", False),
-            "block_control": await _b("block_control", False),
-        }
-
-    return settings_menu_kb(flags)
+    return settings_menu_kb()
 
 
 def _is_settings_menu_message(message: Message) -> bool:
@@ -344,10 +293,10 @@ async def settings_open_cb(callback: CallbackQuery, state: FSMContext):
         )
     except asyncio.TimeoutError:
         logger.error("settings_open_cb DB timeout tg=%s", callback.from_user.id)
-        kb = settings_menu_kb({})
+        kb = settings_menu_kb()
     except Exception:
         logger.exception("settings_open_cb failed tg=%s", callback.from_user.id)
-        kb = settings_menu_kb({})
+        kb = settings_menu_kb()
     await _cq_edit_text(callback, "Настройки", reply_markup=kb)
 
 

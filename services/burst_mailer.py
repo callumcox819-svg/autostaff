@@ -1,4 +1,4 @@
-"""GAG burst: быстро, но с inbox-safe паттерном (stagger + gap на ящик)."""
+"""Burst-рассылка: волны параллельно по ящикам, 2–10 с на очередь + inbox-safe."""
 
 from __future__ import annotations
 
@@ -7,14 +7,13 @@ import logging
 import os
 import random
 import time
-from collections import defaultdict
 from typing import Awaitable, Callable, List, Sequence, Tuple
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import db_session
 from models import EmailAccount, OfferEmail
-from services.mailing_deliverability import inbox_account_gap_sec, inbox_stagger_ms
+from services.mailing_deliverability import burst_wave_gap_sec, inbox_stagger_ms
 from services.mailing_send import send_mailing_one_parallel
 from services.sender import normalize_send_error
 from services.smtp_proxy_send import pick_sticky_proxy_for_fast_mailing
@@ -23,10 +22,10 @@ logger = logging.getLogger(__name__)
 
 BURST_SMTP_RETRIES = max(1, min(4, int(os.getenv("BURST_SMTP_RETRIES", "2"))))
 BURST_RETRY_PAUSE_SEC = max(
-    0.0, min(1.0, float(os.getenv("BURST_RETRY_PAUSE_SEC", "0.08")))
+    0.0, min(1.0, float(os.getenv("BURST_RETRY_PAUSE_SEC", "0.06")))
 )
 BURST_PER_LETTER_TIMEOUT_SEC = max(
-    20, min(90, int(os.getenv("BURST_PER_LETTER_TIMEOUT_SEC", "45")))
+    12, min(60, int(os.getenv("BURST_PER_LETTER_TIMEOUT_SEC", "28")))
 )
 
 
@@ -36,18 +35,23 @@ def shuffle_accounts(accounts: Sequence[EmailAccount]) -> List[EmailAccount]:
     return out
 
 
-def bucket_targets_by_account(
+def pair_targets_with_accounts(
     targets: Sequence[OfferEmail],
     accounts: Sequence[EmailAccount],
-) -> dict[int, List[OfferEmail]]:
-    buckets: dict[int, List[OfferEmail]] = defaultdict(list)
-    if not accounts:
-        return buckets
-    acc_list = list(accounts)
-    for i, tgt in enumerate(targets):
-        acc = acc_list[i % len(acc_list)]
-        buckets[int(acc.id)].append(tgt)
-    return buckets
+) -> List[Tuple[OfferEmail, EmailAccount]]:
+    acc_list = shuffle_accounts(accounts)
+    if not acc_list:
+        return []
+    return [(tgt, acc_list[i % len(acc_list)]) for i, tgt in enumerate(targets)]
+
+
+def split_into_waves(
+    pairs: Sequence[Tuple[OfferEmail, EmailAccount]],
+    *,
+    wave_size: int,
+) -> List[List[Tuple[OfferEmail, EmailAccount]]]:
+    size = max(1, wave_size)
+    return [list(pairs[i : i + size]) for i in range(0, len(pairs), size)]
 
 
 async def _send_one_with_retry(
@@ -92,11 +96,11 @@ async def _send_one_with_retry(
     return False, last_err or "UNKNOWN"
 
 
-async def _drain_account_bucket(
+async def _send_pair(
     *,
     db_user_id: int,
+    tgt: OfferEmail,
     account: EmailAccount,
-    targets: Sequence[OfferEmail],
     sticky_proxy_id: int,
     sender_name: str | None,
     build_message: Callable[
@@ -109,30 +113,37 @@ async def _drain_account_bucket(
     if start_delay_sec > 0:
         await asyncio.sleep(start_delay_sec)
 
-    sent = failed = 0
-    gap = inbox_account_gap_sec()
-    for idx, tgt in enumerate(targets):
-        if idx > 0 and gap > 0:
-            await asyncio.sleep(gap + random.uniform(0, 0.4))
-        async with db_session() as session:
-            subject, body = await build_message(session, tgt)
-        to_addr = (tgt.email or "").strip()
-        ok, err = await _send_one_with_retry(
-            db_user_id=db_user_id,
-            account=account,
-            to_email=to_addr,
-            subject=subject,
-            body=body,
-            sender_name=sender_name,
-            sticky_proxy_id=sticky_proxy_id,
-        )
-        if ok:
-            sent += 1
-            await on_success(tgt, subject, (account.email or "").strip())
-        else:
-            failed += 1
-            await on_failure(tgt, err, account)
-    return sent, failed
+    async with db_session() as session:
+        subject, body = await build_message(session, tgt)
+    to_addr = (tgt.email or "").strip()
+    ok, err = await _send_one_with_retry(
+        db_user_id=db_user_id,
+        account=account,
+        to_email=to_addr,
+        subject=subject,
+        body=body,
+        sender_name=sender_name,
+        sticky_proxy_id=sticky_proxy_id,
+    )
+    if ok:
+        await on_success(tgt, subject, (account.email or "").strip())
+        return 1, 0
+    await on_failure(tgt, err, account)
+    return 0, 1
+
+
+def _should_continue_burst(tg_user_id: int) -> bool:
+    try:
+        from services.sending_state import get_sending_state
+
+        st = get_sending_state(tg_user_id)
+        if st is None:
+            return True
+        if st.is_stopping:
+            return False
+        return bool(st.is_running)
+    except Exception:
+        return True
 
 
 async def run_burst_mailing(
@@ -149,7 +160,8 @@ async def run_burst_mailing(
     on_failure: Callable[[OfferEmail, str, EmailAccount], Awaitable[bool]],
 ) -> Tuple[int, int, int | None, float]:
     """
-    Параллельно по ящикам + inbox stagger (не одновременный залп).
+    Волны: в каждой волне до N параллельных SMTP (N = число ящиков),
+    микро-stagger старта + короткая пауза между волнами (inbox-safe).
     """
     if not targets or not accounts:
         return 0, 0, None, 0.0
@@ -160,41 +172,54 @@ async def run_burst_mailing(
         raise RuntimeError("NO_ROTATING_PROXY")
 
     sticky_proxy_id = int(sticky_px.id)
-    shuffled = shuffle_accounts(accounts)
-    buckets = bucket_targets_by_account(targets, shuffled)
+    pairs = pair_targets_with_accounts(targets, accounts)
+    wave_size = len(list(accounts))
+    waves = split_into_waves(pairs, wave_size=wave_size)
+    wave_gap = burst_wave_gap_sec(len(waves))
     stagger_s = inbox_stagger_ms() / 1000.0
 
-    active = [acc for acc in shuffled if buckets.get(int(acc.id))]
+    sent = failed = 0
     t0 = time.perf_counter()
-    results = await asyncio.gather(
-        *[
-            _drain_account_bucket(
-                db_user_id=db_user_id,
-                account=acc,
-                targets=buckets.get(int(acc.id), []),
-                sticky_proxy_id=sticky_proxy_id,
-                sender_name=sender_name,
-                build_message=build_message,
-                on_success=on_success,
-                on_failure=on_failure,
-                start_delay_sec=(stagger_s * i) + random.uniform(0, stagger_s * 0.35),
-            )
-            for i, acc in enumerate(active)
-        ]
-    )
+    for wave_idx, wave in enumerate(waves):
+        if not _should_continue_burst(tg_user_id):
+            break
+        if wave_idx > 0 and wave_gap > 0:
+            await asyncio.sleep(wave_gap + random.uniform(0, wave_gap * 0.2))
+
+        results = await asyncio.gather(
+            *[
+                _send_pair(
+                    db_user_id=db_user_id,
+                    tgt=tgt,
+                    account=acc,
+                    sticky_proxy_id=sticky_proxy_id,
+                    sender_name=sender_name,
+                    build_message=build_message,
+                    on_success=on_success,
+                    on_failure=on_failure,
+                    start_delay_sec=(stagger_s * j) + random.uniform(0, stagger_s * 0.25),
+                )
+                for j, (tgt, acc) in enumerate(wave)
+            ],
+            return_exceptions=False,
+        )
+        for s, f in results:
+            sent += int(s)
+            failed += int(f)
+
     elapsed = time.perf_counter() - t0
-    sent = sum(r[0] for r in results)
-    failed = sum(r[1] for r in results)
     logger.info(
-        "[gag burst inbox] tg=%s sent=%s failed=%s targets=%s accounts=%s "
-        "proxy=%s stagger_ms=%s elapsed=%.2fs",
+        "[burst wave] tg=%s sent=%s failed=%s targets=%s accounts=%s waves=%s "
+        "proxy=%s stagger_ms=%s wave_gap=%.2fs elapsed=%.2fs",
         tg_user_id,
         sent,
         failed,
         len(targets),
-        len(active),
+        wave_size,
+        len(waves),
         sticky_proxy_id,
         inbox_stagger_ms(),
+        wave_gap,
         elapsed,
     )
     return sent, failed, sticky_proxy_id, elapsed

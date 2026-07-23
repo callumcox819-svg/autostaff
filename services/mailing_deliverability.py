@@ -78,13 +78,35 @@ def mailing_ehlo_name() -> str | None:
 
 
 def inbox_stagger_ms() -> int:
-    """Задержка старта каждого ящика — не «залп» с одной секунды (anti-spam pattern)."""
-    return max(0, min(800, int(os.getenv("INBOX_STAGGER_MS", "150"))))
+    """Микро-задержка старта каждого ящика внутри волны (не одновременный залп)."""
+    return max(0, min(400, int(os.getenv("INBOX_STAGGER_MS", "60"))))
 
 
 def inbox_account_gap_sec() -> float:
-    """Пауза между 2-м и 3-м письмом с одного Gmail (если адресов > ящиков)."""
-    return max(0.0, min(8.0, float(os.getenv("INBOX_ACCOUNT_GAP_SEC", "2.5"))))
+    """Пауза между волнами с одного Gmail (если адресов > ящиков)."""
+    return max(0.0, min(3.0, float(os.getenv("INBOX_ACCOUNT_GAP_SEC", "0.35"))))
+
+
+def burst_target_max_sec() -> float:
+    """Целевое время burst на всю очередь (адаптивный gap между волнами)."""
+    return max(2.0, min(60.0, float(os.getenv("BURST_TARGET_MAX_SEC", "10"))))
+
+
+def burst_wave_gap_sec(num_waves: int, *, estimated_wave_sec: float = 3.0) -> float:
+    """
+    Inbox-safe пауза между волнами.
+    При BURST_ADAPTIVE_GAP=1 укладывается в BURST_TARGET_MAX_SEC (по умолчанию 10с).
+    """
+    if num_waves <= 1:
+        return 0.0
+    base = inbox_account_gap_sec()
+    if not _env_on("BURST_ADAPTIVE_GAP", default="1"):
+        return base
+    budget = max(0.0, burst_target_max_sec() - estimated_wave_sec)
+    if budget <= 0:
+        return max(0.08, base)
+    adaptive = budget / max(1, num_waves - 1)
+    return max(0.08, min(1.5, min(base + 0.05, adaptive)))
 
 
 def inbox_max_body_chars() -> int:
@@ -162,11 +184,12 @@ def pick_rotating_subject(offer_title: str, *, user_template: str | None = None)
 def log_deliverability_profile(logger) -> None:
     logger.info(
         "Inbox placement: plain=%s minimal_hdr=%s no_links=%s "
-        "stagger_ms=%s acc_gap=%.1fs ehlo=%s",
+        "stagger_ms=%s wave_gap=%.2fs burst_target=%.0fs ehlo=%s",
         mailing_plain_only(),
         mailing_minimal_headers(),
         mailing_strip_link(),
         inbox_stagger_ms(),
         inbox_account_gap_sec(),
+        burst_target_max_sec(),
         mailing_ehlo_name() or "(default)",
     )

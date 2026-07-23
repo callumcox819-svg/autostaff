@@ -35,7 +35,7 @@ REPLY_SMTP_MAX_PROXIES = max(1, min(6, int(os.getenv("REPLY_SMTP_MAX_PROXIES", "
 MAIL_SMTP_TIMEOUT_SEC = max(20, min(90, int(os.getenv("MAIL_SMTP_TIMEOUT_SEC", "45"))))
 # Фаст + один ротирующий gateway: короче таймаут — быстрее волна (новый IP на retry).
 MAIL_FAST_SMTP_TIMEOUT_SEC = max(
-    12, min(45, int(os.getenv("MAIL_FAST_SMTP_TIMEOUT_SEC", "22")))
+    10, min(35, int(os.getenv("MAIL_FAST_SMTP_TIMEOUT_SEC", "18")))
 )
 MAIL_SMTP_MAX_PROXIES = max(1, min(12, int(os.getenv("MAIL_SMTP_MAX_PROXIES", "10"))))
 # Явный id ротирующего SOCKS5 в БД (опционально; иначе первый 🟢).

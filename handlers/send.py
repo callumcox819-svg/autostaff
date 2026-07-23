@@ -359,8 +359,10 @@ async def _start_sending_inner(
             status_msg,
             "⚡ <b>Рассылка</b>\n"
             f"В очереди: <b>{total_targets}</b> · ящиков: <b>{len(accounts)}</b>\n"
+            f"Цель: <b>2–10 с</b> (волны параллельно)\n"
             f"{px_detail}\n"
             f"SOCKS5 id=<b>{sticky_proxy_id}</b>\n"
+            f"Inbox: plain · без ссылок · уник. тема/текст\n"
             f"Успех: <b>{'IMAP Sent' if MAIL_VERIFY_SENT else 'SMTP 250+NOOP'}</b>",
             parse_mode="HTML",
         )

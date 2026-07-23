@@ -1,4 +1,4 @@
-"""Проверка SOCKS5 перед рассылкой и периодически во время /send."""
+"""Проверка прокси (SOCKS5 / HTTP) перед рассылкой и периодически во время /send."""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ from sqlalchemy import select
 
 from database import db_session
 from models import Proxy
-from proxy_manager import is_socks5_proxy
+from proxy_manager import is_mailing_proxy
 from services.proxy_verify import refresh_proxies_status
 
 logger = logging.getLogger(__name__)
@@ -43,7 +43,7 @@ class ProxyHealthSummary:
 
     def format_lines(self) -> str:
         return (
-            f"SOCKS5: <b>{self.total}</b> · 🟢 SMTP OK: <b>{self.ok}</b> · "
+            f"Прокси: <b>{self.total}</b> · 🟢 SMTP OK: <b>{self.ok}</b> · "
             f"🟡 неясно: <b>{self.unknown}</b> · 🔴 мёртв при рассылке: <b>{self.bad}</b>"
         )
 
@@ -52,16 +52,16 @@ async def summarize_proxy_health(session, user_id: int) -> ProxyHealthSummary:
     rows = list(
         (await session.execute(select(Proxy).where(Proxy.user_id == int(user_id)))).scalars().all()
     )
-    socks = [p for p in rows if is_socks5_proxy(p)]
+    eligible = [p for p in rows if is_mailing_proxy(p)]
     ok = unk = bad = 0
-    for p in socks:
+    for p in eligible:
         if p.is_active is True:
             ok += 1
         elif p.is_active is False:
             bad += 1
         else:
             unk += 1
-    return ProxyHealthSummary(len(socks), ok, unk, bad)
+    return ProxyHealthSummary(len(eligible), ok, unk, bad)
 
 
 async def run_proxy_health_check(session, user_id: int) -> ProxyHealthSummary:
@@ -77,18 +77,18 @@ async def run_proxy_health_check(session, user_id: int) -> ProxyHealthSummary:
 
 def mailing_may_start(summary: ProxyHealthSummary, *, fast: bool = False) -> Tuple[bool, str]:
     if summary.total <= 0:
-        return False, "Нет SOCKS5 в «Прокси»."
+        return False, "Нет прокси в «Прокси» (SOCKS5 или HTTP)."
     if fast:
         if summary.ok >= 1:
             return (
                 True,
                 summary.format_lines()
-                + "\n<i>⚡ Фаст: один 🟢 SOCKS5 на всю рассылку (полный SMTP-таймаут).</i>",
+                + "\n<i>⚡ Фаст: один 🟢 прокси на всю рассылку (полный SMTP-таймаут).</i>",
             )
         return (
             False,
             summary.format_lines()
-            + "\n\n❌ <b>Фаст рассыл</b> требует хотя бы один 🟢 SOCKS5 (SMTP+STARTTLS OK). "
+            + "\n\n❌ <b>Фаст рассыл</b> требует хотя бы один 🟢 прокси (SMTP+STARTTLS OK). "
             "Сейчас только 🟡/🔴 — выключите фаст или замените прокси.",
         )
     if summary.ok >= 1:
@@ -162,13 +162,13 @@ async def preflight_proxies_for_mailing(
     if fast and ok and not MAIL_FAST_PREFLIGHT_SKIP and sticky_proxy_id is not None:
         detail = (
             summary.format_lines()
-            + f"\n<i>⚡ Фаст: проверен 1 ротирующий SOCKS5 (id=<b>{sticky_proxy_id}</b>), "
+            + f"\n<i>⚡ Фаст: проверен 1 ротирующий прокси (id=<b>{sticky_proxy_id}</b>), "
             f"таймаут {MAIL_FAST_PREFLIGHT_TIMEOUT}с.</i>"
         )
     elif fast and ok and not MAIL_FAST_PREFLIGHT_SKIP:
         detail = (
             summary.format_lines()
-            + f"\n<i>⚡ Фаст: проверен 1 ротирующий SOCKS5, "
+            + f"\n<i>⚡ Фаст: проверен 1 ротирующий прокси, "
             f"таймаут {MAIL_FAST_PREFLIGHT_TIMEOUT}с.</i>"
         )
     return ok, summary, detail
@@ -214,7 +214,7 @@ async def mailing_proxy_watch_loop(
                         int(chat_id),
                         "⚠️ <b>Перепроверка прокси</b>\n"
                         f"{summary.format_lines()}\n\n"
-                        "<i>Рассылка продолжается — только по 🟢/🟡 SOCKS5 (🔴 пропускаются).</i>",
+                        "<i>Рассылка продолжается — только по 🟢/🟡 прокси (🔴 пропускаются).</i>",
                         parse_mode="HTML",
                     )
                 except Exception:

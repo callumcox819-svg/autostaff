@@ -148,7 +148,7 @@ except Exception:
             self.proxy = proxy
 
         async def __aenter__(self):
-            return self
+            raise RuntimeError("proxy_manager import failed — SMTP через прокси недоступен")
 
         async def __aexit__(self, exc_type, exc, tb):
             return False

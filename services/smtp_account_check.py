@@ -174,8 +174,12 @@ def _smtp_check_on_client(
 
 
 def _connect_smtp_via_socks(proxy: Proxy, host: str, port: int, *, timeout: float) -> smtplib.SMTP:
-    """Отдельное SOCKS-соединение без глобального PySocks-патча (можно параллелить)."""
+    """Отдельное соединение через SOCKS5/HTTP без глобального PySocks-патча."""
     import socks
+    from proxy_manager import is_mailing_proxy, socks_proxy_rdns, socks_proxy_type_for
+
+    if not is_mailing_proxy(proxy):
+        raise ValueError(f"Unsupported proxy type: {(proxy.type or '?')!r}")
 
     px_host = (proxy.host or "").strip()
     px_port = int(proxy.port or 0)
@@ -187,12 +191,12 @@ def _connect_smtp_via_socks(proxy: Proxy, host: str, port: int, *, timeout: floa
 
     sock = socks.socksocket()
     sock.set_proxy(
-        socks.SOCKS5,
+        socks_proxy_type_for(proxy),
         px_host,
         px_port,
         username=username,
         password=password,
-        rdns=True,
+        rdns=socks_proxy_rdns(proxy),
     )
     sock.settimeout(timeout)
     sock.connect((host, int(port)))
@@ -325,9 +329,9 @@ async def _load_user_proxies(session, user_id: int) -> List[Proxy]:
             .order_by(Proxy.id)
         )
     ).scalars().all()
-    from proxy_manager import is_socks5_proxy
+    from proxy_manager import is_mailing_proxy
 
-    return [p for p in rows if is_socks5_proxy(p)]
+    return [p for p in rows if is_mailing_proxy(p)]
 
 
 async def check_smtp_accounts_parallel(

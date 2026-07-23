@@ -275,22 +275,22 @@ async def _start_sending_inner(
             await _edit_status_text(status_msg, "⚠️ Рассылка уже запущена.")
             return
 
-        from proxy_manager import is_socks5_proxy
+        from proxy_manager import is_mailing_proxy
 
         all_px = (
             await session.execute(select(Proxy).where(Proxy.user_id == db_user_id))
         ).scalars().all()
-        if not any(is_socks5_proxy(p) for p in all_px):
+        if not any(is_mailing_proxy(p) for p in all_px):
             await _edit_status_text(
                 status_msg,
-                "❌ Нет SOCKS5. Добавьте ротирующий gateway в «Прокси».",
+                "❌ Нет прокси. Добавь SOCKS5 или HTTP в «Прокси».",
             )
             return
 
     try:
         await _edit_status_text(
             status_msg,
-            "⏳ Проверяю ротирующий SOCKS5…\n<i>~10 сек.</i>",
+            "⏳ Проверяю ротирующий прокси…\n<i>~10 сек.</i>",
             parse_mode="HTML",
         )
     except Exception:
@@ -329,7 +329,7 @@ async def _start_sending_inner(
     if not sticky_proxy_id:
         await _edit_status_text(
             status_msg,
-            "❌ Нет 🟢 ротирующего SOCKS5. Проверьте «Прокси».",
+            "❌ Нет 🟢 ротирующего прокси. Проверь «Прокси».",
             parse_mode="HTML",
         )
         return
@@ -361,7 +361,7 @@ async def _start_sending_inner(
             f"В очереди: <b>{total_targets}</b> · ящиков: <b>{len(accounts)}</b>\n"
             f"Цель: <b>2–10 с</b> (волны параллельно)\n"
             f"{px_detail}\n"
-            f"SOCKS5 id=<b>{sticky_proxy_id}</b>\n"
+            f"Прокси id=<b>{sticky_proxy_id}</b>\n"
             f"Inbox: plain · без ссылок · уник. тема/текст\n"
             f"Успех: <b>{'IMAP Sent' if MAIL_VERIFY_SENT else 'SMTP 250+NOOP'}</b>",
             parse_mode="HTML",

@@ -58,11 +58,52 @@ _SMTP_TEST_HOST = (os.getenv("SMTP_TEST_HOST") or "smtp.gmail.com").strip()
 _SMTP_TEST_PORT = int(os.getenv("SMTP_TEST_PORT") or "587")
 
 SOCKS5_TYPES = frozenset({"socks5", "socks5h"})
+HTTP_TYPES = frozenset({"http", "https"})
+
+
+def normalize_proxy_type(t: str | None) -> str:
+    t = (t or "socks5").strip().lower()
+    if t in ("socks", "sock5", "socksv5"):
+        return "socks5"
+    if t in ("socks5h",):
+        return "socks5h"
+    if t in ("socks5",):
+        return "socks5"
+    if t in ("http", "https"):
+        return "http"
+    if t.startswith("socks"):
+        return "socks5"
+    return "socks5"
+
+
+def proxy_type_name(proxy: Proxy) -> str:
+    return normalize_proxy_type(getattr(proxy, "proxy_type", None) or proxy.type)
 
 
 def is_socks5_proxy(proxy: Proxy) -> bool:
-    t = (getattr(proxy, "proxy_type", None) or proxy.type or "socks5").lower().strip()
+    t = proxy_type_name(proxy)
     return t in SOCKS5_TYPES or t.startswith("socks5")
+
+
+def is_http_proxy(proxy: Proxy) -> bool:
+    return proxy_type_name(proxy) in HTTP_TYPES
+
+
+def is_mailing_proxy(proxy: Proxy) -> bool:
+    """SOCKS5 или HTTP — оба подходят для SMTP через CONNECT."""
+    return is_socks5_proxy(proxy) or is_http_proxy(proxy)
+
+
+def socks_proxy_type_for(proxy: Proxy) -> int:
+    import socks
+
+    if is_http_proxy(proxy):
+        return socks.HTTP
+    return socks.SOCKS5
+
+
+def socks_proxy_rdns(proxy: Proxy) -> bool:
+    return is_socks5_proxy(proxy)
 
 
 async def choose_proxy_for_user(
@@ -72,20 +113,13 @@ async def choose_proxy_for_user(
     exclude_ids: set[int] | None = None,
 ) -> Optional[Proxy]:
     """
-    Возвращает один активный SOCKS5 прокси пользователя.
+    Возвращает один активный прокси пользователя (SOCKS5 или HTTP).
     """
     try:
         active_cond = or_(Proxy.is_active.is_(True), Proxy.is_active.is_(None))
 
         def _smtp_eligible(p: Proxy) -> bool:
-            if not is_socks5_proxy(p):
-                t = (getattr(p, "type", None) or "").strip().lower()
-                # В БД default=http, хотя прокси SOCKS5 — не отбрасываем пустой/мусорный type
-                if t in ("http", "https"):
-                    return False
-                if t and not t.startswith("socks"):
-                    return False
-            return True
+            return is_mailing_proxy(p)
 
         all_rows = list(
             (
@@ -129,15 +163,15 @@ async def choose_proxy_for_user(
 
 
 def apply_proxy_to_smtplib(proxy: Proxy) -> None:
-    """Только SOCKS5 → PySocks → smtplib."""
+    """SOCKS5 или HTTP → PySocks → smtplib."""
     global _SOCKET_GETADDRINFO_ORIG
 
     import socks
     import smtplib
 
-    if not is_socks5_proxy(proxy):
+    if not is_mailing_proxy(proxy):
         raise ValueError(
-            f"Поддерживается только SOCKS5, получен: {(proxy.type or '?')!r}"
+            f"Неподдерживаемый тип прокси: {(proxy.type or '?')!r} (нужен socks5 или http)"
         )
 
     host = (proxy.host or "").strip()
@@ -147,14 +181,16 @@ def apply_proxy_to_smtplib(proxy: Proxy) -> None:
 
     username = (proxy.username or "").strip() or None
     password = (proxy.password or "").strip() or None
+    kind = socks_proxy_type_for(proxy)
+    rdns = socks_proxy_rdns(proxy)
 
     socks.set_default_proxy(
-        socks.SOCKS5,
+        kind,
         host,
         port,
         username=username,
         password=password,
-        rdns=True,
+        rdns=rdns,
     )
 
     if _SOCKET_GETADDRINFO_ORIG is None:
@@ -176,7 +212,13 @@ def apply_proxy_to_smtplib(proxy: Proxy) -> None:
     if hasattr(smtplib.socket, "getaddrinfo"):
         smtplib.socket.getaddrinfo = _getaddrinfo_ipv4  # type: ignore[attr-defined]
 
-    logger.info("SMTP SOCKS5 applied: %s:%s rdns=True", host, port)
+    logger.info(
+        "SMTP proxy applied: %s %s:%s rdns=%s",
+        proxy_type_name(proxy),
+        host,
+        port,
+        rdns,
+    )
 
 
 async def test_smtp_tunnel_async(proxy: Proxy, *, timeout: int = 20) -> tuple[bool, str]:
@@ -186,9 +228,9 @@ async def test_smtp_tunnel_async(proxy: Proxy, *, timeout: int = 20) -> tuple[bo
 
 
 def test_smtp_tunnel_sync(proxy: Proxy, *, timeout: int = 20) -> tuple[bool, str]:
-    """Проверка как при рассылке: SOCKS5 → SMTP :587."""
-    if not is_socks5_proxy(proxy):
-        return False, "Только SOCKS5 прокси"
+    """Проверка как при рассылке: прокси → SMTP :587."""
+    if not is_mailing_proxy(proxy):
+        return False, f"Неподдерживаемый тип: {(proxy.type or '?')!r}"
 
     apply_proxy_to_smtplib(proxy)
     try:
@@ -276,6 +318,12 @@ class ProxySMTPContext:
         try:
             self._guard_token = smtp_proxy_guard_enter()
             apply_proxy_to_smtplib(self.proxy)
+            logger.info(
+                "ProxySMTPContext enter: %s %s:%s",
+                proxy_type_name(self.proxy),
+                self.proxy.host,
+                self.proxy.port,
+            )
         except Exception:
             _PROXY_LOCK.release()
             raise

@@ -1,4 +1,4 @@
-"""Проверка SOCKS5 прокси: туннель + SMTP (как при рассылке)."""
+"""Проверка прокси (SOCKS5 / HTTP): туннель + SMTP (как при рассылке)."""
 
 from __future__ import annotations
 
@@ -9,6 +9,11 @@ from typing import Any, Tuple
 from urllib.parse import urlsplit
 
 from models import Proxy
+from proxy_manager import (
+    HTTP_TYPES,
+    SOCKS5_TYPES,
+    normalize_proxy_type,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -18,23 +23,6 @@ PROXY_CHECK_RETRIES = max(1, min(4, int(os.getenv("PROXY_CHECK_RETRIES", "2"))))
 PROXY_CHECK_RETRY_PAUSE_SEC = max(
     0.5, min(5.0, float(os.getenv("PROXY_CHECK_RETRY_PAUSE_SEC", "2")))
 )
-
-_SOCKS5_SCHEMES = frozenset({"socks5", "socks5h"})
-
-
-def normalize_proxy_type(t: str | None) -> str:
-    t = (t or "socks5").strip().lower()
-    if t in ("socks", "sock5", "socksv5"):
-        return "socks5"
-    if t in ("socks5h",):
-        return "socks5h"
-    if t in ("socks5",):
-        return "socks5"
-    if t in ("http", "https"):
-        return "http"
-    if t.startswith("socks"):
-        return "socks5"
-    return "socks5"
 
 
 def proxy_to_dict(proxy: Proxy | dict[str, Any]) -> dict[str, Any]:
@@ -62,11 +50,11 @@ def build_proxy_url(proxy: Proxy | dict[str, Any]) -> str:
 
 
 def is_socks5_type(proxy_type: str) -> bool:
-    return normalize_proxy_type(proxy_type) in _SOCKS5_SCHEMES
+    return normalize_proxy_type(proxy_type) in SOCKS5_TYPES
 
 
-def _test_socks5_connect_sync(d: dict[str, Any], *, timeout: int = 12) -> Tuple[bool, str]:
-    """Быстрая проверка SOCKS5 через PySocks (тот же стек, что и рассылка)."""
+def _test_proxy_tunnel_sync(d: dict[str, Any], *, timeout: int = 12) -> Tuple[bool, str]:
+    """Быстрая проверка туннеля до smtp.gmail.com:587 (PySocks)."""
     import socks
 
     host = (d.get("host") or "").strip()
@@ -76,22 +64,25 @@ def _test_socks5_connect_sync(d: dict[str, Any], *, timeout: int = 12) -> Tuple[
 
     username = (d.get("username") or "").strip() or None
     password = (d.get("password") or "").strip() or None
+    ptype = normalize_proxy_type(d.get("type"))
+    kind = socks.HTTP if ptype in HTTP_TYPES else socks.SOCKS5
+    rdns = kind == socks.SOCKS5
 
-    # Только SMTP :587 — как рассылка. httpbin часто блокируют, не используем для статуса.
     thost, tport = "smtp.gmail.com", 587
     s = socks.socksocket()
     try:
         s.set_proxy(
-            socks.SOCKS5,
+            kind,
             host,
             port,
             username=username,
             password=password,
-            rdns=True,
+            rdns=rdns,
         )
         s.settimeout(float(timeout))
         s.connect((thost, int(tport)))
-        return True, f"SOCKS5 OK -> {thost}:{tport}"
+        label = "HTTP" if kind == socks.HTTP else "SOCKS5"
+        return True, f"{label} OK -> {thost}:{tport}"
     except Exception as e:
         return False, f"{type(e).__name__}: {e}"
     finally:
@@ -101,9 +92,11 @@ def _test_socks5_connect_sync(d: dict[str, Any], *, timeout: int = 12) -> Tuple[
             pass
 
 
-async def _test_socks5_handshake(proxy: Proxy | dict[str, Any], *, timeout: int = 12) -> Tuple[bool, str]:
+async def _test_proxy_tunnel_handshake(
+    proxy: Proxy | dict[str, Any], *, timeout: int = 12
+) -> Tuple[bool, str]:
     d = proxy_to_dict(proxy)
-    return await asyncio.to_thread(_test_socks5_connect_sync, d, timeout=timeout)
+    return await asyncio.to_thread(_test_proxy_tunnel_sync, d, timeout=timeout)
 
 
 def _proxy_row_from_dict(d: dict[str, Any]) -> Proxy:
@@ -124,10 +117,6 @@ async def test_smtp_tunnel(proxy: Proxy | dict[str, Any], *, timeout: int = 20) 
 
 
 def classify_proxy_check_result(ok: bool, info: str) -> bool | None:
-    """
-    Результат ручной/фоновой проверки: True = OK, None = неясно/ошибка сети.
-    Никогда False — «мёртвый» (🔴) только после реальной ошибки туннеля при рассылке.
-    """
     if ok:
         return True
     return None
@@ -155,7 +144,6 @@ def check_error_worth_retry(info: str) -> bool:
 
 
 def apply_proxy_check_to_row(row: Proxy, ok: bool, info: str) -> None:
-    """Проверка не отключает прокси — только 🟢 или оставляем/🟡."""
     classified = classify_proxy_check_result(ok, info)
     if classified is True:
         row.is_active = True
@@ -167,7 +155,6 @@ def apply_proxy_check_to_row(row: Proxy, ok: bool, info: str) -> None:
 
 
 def heal_proxy_rows_from_stale_check_markers(proxies: list[Proxy]) -> None:
-    """Снять старые 🔴, выставленные проверкой до правила «только рассылка»."""
     for row in proxies:
         if row.is_active is False and not is_mailing_marked_dead(row.last_error):
             row.is_active = None
@@ -177,26 +164,24 @@ async def _test_proxy_once(proxy: Proxy | dict[str, Any], *, timeout: int = 20) 
     """Одна попытка: SMTP+STARTTLS как при /send."""
     d = proxy_to_dict(proxy)
     ptype = normalize_proxy_type(d.get("type"))
-
-    if not is_socks5_type(ptype):
-        return False, "Только SOCKS5. HTTP/HTTPS не поддерживаются для рассылки."
+    if ptype not in SOCKS5_TYPES and ptype not in HTTP_TYPES:
+        return False, "Нужен socks5 или http прокси."
 
     smtp_timeout = max(20, int(timeout))
     smtp_ok, smtp_info = await test_smtp_tunnel(proxy, timeout=smtp_timeout)
     if smtp_ok:
         return True, smtp_info
 
-    socks_timeout = max(12, min(smtp_timeout, 20))
-    socks_ok, socks_info = await _test_socks5_handshake(proxy, timeout=socks_timeout)
-    if socks_ok:
+    tunnel_timeout = max(12, min(smtp_timeout, 20))
+    tunnel_ok, tunnel_info = await _test_proxy_tunnel_handshake(proxy, timeout=tunnel_timeout)
+    if tunnel_ok:
         return False, f"Туннель до SMTP есть, но EHLO/STARTTLS не прошёл: {smtp_info}"
-    return False, f"SMTP: {smtp_info} · туннель: {socks_info}"
+    return False, f"SMTP: {smtp_info} · туннель: {tunnel_info}"
 
 
 async def test_proxy(
     proxy: Proxy | dict[str, Any], *, timeout: int = 20, retries: int | None = None
 ) -> Tuple[bool, str]:
-    """Проверка с повторами — меньше ложных 🟡 из-за лага сети."""
     attempts = max(1, int(retries if retries is not None else PROXY_CHECK_RETRIES))
     last_info = ""
     for attempt in range(1, attempts + 1):
@@ -220,12 +205,12 @@ async def test_proxy(
 async def test_proxy_url(proxy_url: str, *, timeout: int = 20) -> Tuple[bool, str]:
     p = (proxy_url or "").strip()
     scheme = normalize_proxy_type(urlsplit(p).scheme or "socks5")
-    if not is_socks5_type(scheme):
-        return False, "Только socks5://"
+    if scheme not in SOCKS5_TYPES and scheme not in HTTP_TYPES:
+        return False, "Нужен socks5:// или http://"
     return await test_proxy(
         {
             "host": urlsplit(p).hostname or "",
-            "port": urlsplit(p).port or 1080,
+            "port": urlsplit(p).port or (8080 if scheme in HTTP_TYPES else 1080),
             "username": urlsplit(p).username,
             "password": urlsplit(p).password,
             "type": scheme,

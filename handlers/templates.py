@@ -19,7 +19,6 @@ from sqlalchemy import select
 from database import Session, db_session
 from models import EmailAccount
 from services.users import get_or_create_user
-from services.sender import send_email_via_account
 
 router = Router()
 

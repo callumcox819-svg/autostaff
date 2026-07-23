@@ -58,7 +58,7 @@ from services.offer_matching import (
     subject_is_informative,
 )
 from services.offer_storage import offer_effective_photo, offer_effective_price, offer_effective_title
-from services.smtp_proxy_send import send_email_via_account_with_proxy
+from services.smtp_proxy_send import send_email_via_account_with_proxy, user_has_active_mailing_proxy
 from services.translate import translate_to_ru, _strip_html
 
 # Email reply "presets" must use the same storage/UI as ⚡ Шаблоны (handlers/templates.py)
@@ -428,6 +428,28 @@ async def _load_convlink_for_reply(session, *, user_id: int, inbox_email: str, c
     ).scalars().first()
 
 
+async def _ensure_mailing_proxy_for_send(message_or_cb, tg_id: int) -> bool:
+    """Без прокси SMTP не стартует — ни рассылка, ни ответы."""
+    try:
+        async with Session() as session:
+            user = await get_or_create_user(session, tg_id)
+            if await user_has_active_mailing_proxy(session, int(user.id)):
+                return True
+    except Exception:
+        logger.exception("proxy preflight failed tg=%s", tg_id)
+        return False
+
+    text = "❌ Нет прокси. Добавь SOCKS5 или HTTP в ⚙️ → Прокси."
+    if isinstance(message_or_cb, CallbackQuery):
+        try:
+            await message_or_cb.answer(text, show_alert=True)
+        except Exception:
+            pass
+    else:
+        await message_or_cb.answer(text)
+    return False
+
+
 async def _bg_incoming_smtp(
     callback: CallbackQuery,
     user_id: int,
@@ -436,7 +458,9 @@ async def _bg_incoming_smtp(
     notify: ReplyNotifyCtx | None = None,
     notify_builder=None,
 ) -> bool:
-    """SMTP в фоне — polling не блокируется."""
+    """SMTP в фоне — polling не блокируется. Только через прокси."""
+    if not await _ensure_mailing_proxy_for_send(callback, user_id):
+        return False
     try:
         await callback.answer("⏳ Отправляю…", show_alert=False)
     except Exception:
@@ -495,7 +519,9 @@ async def _bg_message_smtp(
     notify: ReplyNotifyCtx | None = None,
     notify_builder=None,
 ) -> bool:
-    """SMTP из текстового ответа — в фоне."""
+    """SMTP из текстового ответа — в фоне. Только через прокси."""
+    if not await _ensure_mailing_proxy_for_send(message, user_id):
+        return False
     if bg_is_running(user_id, "smtp"):
         await message.answer("⏳ Отправка уже идёт…")
         return False

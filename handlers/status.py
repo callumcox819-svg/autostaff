@@ -19,7 +19,7 @@ router = Router()
 logger = logging.getLogger(__name__)
 
 _ERROR_HINTS = {
-    "PROXY_ERROR": "Ошибка SOCKS5-прокси (проверьте логин/порт в «Прокси»)",
+    "PROXY_ERROR": "Ошибка прокси (проверь логин/порт в «Прокси»)",
     "SMTP_TIMEOUT": "Таймаут SMTP через прокси — попробуйте другой прокси или увеличьте SMTP_TIMEOUT_SEC",
     "ACCOUNT_INVALID_CREDENTIALS": "Неверный пароль почты (нужен пароль приложения)",
     "ACCOUNT_WEB_LOGIN_REQUIRED": "Gmail просит войти в браузере — разблокируйте аккаунт",
@@ -45,7 +45,7 @@ def _humanize_send_error(raw: str) -> str:
     if len(detail) > 220:
         detail = detail[:220] + "…"
     if "no_active_proxy" in s.lower():
-        hint = "Нет активного SOCKS5 в БД (добавьте или «Проверить прокси»)"
+        hint = "Нет активного прокси в БД (добавь SOCKS5/HTTP или «Проверить прокси»)"
     if hint:
         return f"{hint}\n<code>{detail}</code>"
     return f"<code>{detail}</code>"

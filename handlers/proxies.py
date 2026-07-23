@@ -27,6 +27,7 @@ from services.proxy_verify import (
     test_proxy,
     refresh_proxies_status,
 )
+from proxy_manager import normalize_proxy_type
 from utils.bg_jobs import is_running as bg_is_running, start as bg_start
 
 router = Router()
@@ -89,30 +90,6 @@ def _is_probable_host(host: str) -> bool:
     return False
 
 
-def _normalize_proxy_type(t: str | None) -> str:
-    """Только SOCKS5 для рассылки."""
-    t = (t or "socks5").strip().lower()
-    if t in ("socks", "sock5", "socksv5"):
-        return "socks5"
-    if t in ("socks5h",):
-        return "socks5h"
-    if t in ("socks5",):
-        return "socks5"
-    if t in ("http", "https"):
-        return "http"
-    if t.startswith("socks"):
-        return "socks5"
-    return "socks5"
-
-
-def _reject_non_socks5(parsed: dict) -> Optional[str]:
-    pt = _normalize_proxy_type(parsed.get("type"))
-    if pt in ("http", "https"):
-        return "Поддерживается только SOCKS5. HTTP/HTTPS прокси не подходят для рассылки."
-    parsed["type"] = "socks5"
-    return None
-
-
 def _strip_comments(s: str) -> str:
     """убираем комментарии типа '... # comment'"""
     if not s:
@@ -158,7 +135,7 @@ def parse_proxy_string(raw: str) -> Optional[dict]:
         from urllib.parse import urlsplit
         try:
             u = urlsplit(raw)
-            scheme = _normalize_proxy_type(u.scheme)
+            scheme = normalize_proxy_type(u.scheme)
             host = u.hostname
             port = u.port
             from urllib.parse import unquote
@@ -207,7 +184,7 @@ def parse_proxy_string(raw: str) -> Optional[dict]:
                     "port": port_i,
                     "username": user or None,
                     "password": pwd or None,
-                    "type": _normalize_proxy_type(proto or "socks5"),
+                    "type": normalize_proxy_type(proto or "socks5"),
                 }
         except Exception:
             pass
@@ -280,7 +257,7 @@ def parse_proxy_string(raw: str) -> Optional[dict]:
             return None
         tail = parts[3:]
         proto = None
-        if len(tail) >= 2 and _normalize_proxy_type(tail[-1]) in ("socks5", "socks5h", "http", "https"):
+        if len(tail) >= 2 and normalize_proxy_type(tail[-1]) in ("socks5", "socks5h", "http", "https"):
             proto = tail[-1]
             pwd = ":".join(tail[:-1])
         else:
@@ -290,7 +267,7 @@ def parse_proxy_string(raw: str) -> Optional[dict]:
             "port": port_i,
             "username": user or None,
             "password": pwd or None,
-            "type": _normalize_proxy_type(proto or "socks5"),
+            "type": normalize_proxy_type(proto or "socks5"),
         }
 
     return None
@@ -370,7 +347,7 @@ def parse_proxy_block(text: str) -> Optional[dict]:
             "port": port_i,
             "username": (kv.get("username") or "").strip() or None,
             "password": (kv.get("password") or "").strip() or None,
-            "type": _normalize_proxy_type(kv.get("type")),
+            "type": normalize_proxy_type(kv.get("type")),
         }
 
     # Иначе попробуем найти строку прокси внутри блока (если человек вставил лишний текст)
@@ -454,7 +431,7 @@ async def render_proxy_menu(message_or_cb, telegram_id: int):
         f"🟢 SMTP OK: {ok_n} · 🟡 неясно/не проверен: {unk_n} · 🔴 мёртв при рассылке: {bad_n}\n\n"
         "<i>Проверка: SMTP+STARTTLS (до 2 попыток). "
         "🔴 только если туннель реально умер при /send — не из-за таймаута проверки.</i>\n"
-        "<i>Рассылка использует все SOCKS5, в т.ч. 🟡.</i>"
+        "<i>Рассылка использует все SOCKS5 и HTTP, в т.ч. 🟡.</i>"
     )
 
     kb = proxies_menu(proxies)
@@ -515,15 +492,16 @@ async def proxy_add_menu(callback: CallbackQuery, state: FSMContext):
 
     await state.set_state(ProxyAddStates.waiting_for_list)
     await callback.message.edit_text(
-        "📝 <b>Только SOCKS5</b> (HTTP не поддерживается).\n"
+        "📝 <b>SOCKS5 или HTTP</b> — оба типа подходят для рассылки.\n"
         "Пришли список прокси (по одному на строку) ИЛИ карточкой.\n\n"
         "<b>Примеры:</b>\n"
         "<code>socks5://user:pass@109.104.153.100:10811</code>\n"
+        "<code>http://user:pass@185.90.61.65:8080</code>\n"
         "<code>109.104.153.100:10811:user:pass:socks5</code>\n"
         "<code>user:pass@109.104.153.100:10811</code>\n"
         "<code>8PlwM16nj5ZDjKnE:8PlwM16nj5ZDjKnE@185.90.61.65:14439</code>\n\n"
         "<b>Или так (карточкой):</b>\n"
-        "<code>Тип прокси: socks5\nХост: 109.104.153.100\nПорт: 10811\nЛогин: user\nПароль: pass</code>\n\n"
+        "<code>Тип прокси: http\nХост: 109.104.153.100\nПорт: 8080\nЛогин: user\nПароль: pass</code>\n\n"
         "Каждый прокси будет проверен.\n",
         parse_mode="HTML",
     )
@@ -628,15 +606,6 @@ async def _proxy_add_work(
                 details.append(f"❌ `{preview}` — неправильный формат")
                 continue
 
-            err = _reject_non_socks5(parsed)
-            if err:
-                fail_count += 1
-                preview = original_text.replace("\n", " / ")
-                if len(preview) > 120:
-                    preview = preview[:120] + "…"
-                details.append(f"❌ `{preview}` — {err}")
-                continue
-
             try:
                 ok, info = await asyncio.wait_for(test_proxy(parsed, timeout=22), timeout=55)
             except asyncio.TimeoutError:
@@ -650,7 +619,7 @@ async def _proxy_add_work(
                 port=parsed["port"],
                 username=parsed.get("username"),
                 password=parsed.get("password"),
-                type="socks5",
+                type=normalize_proxy_type(parsed.get("type")),
                 is_active=True if ok else None,
                 last_error=None if ok else info,
             )
@@ -716,7 +685,7 @@ async def proxy_info(callback: CallbackQuery):
     if proxy.is_active is True:
         st_line = "🟢 SMTP OK (проверка или рассылка)"
     elif proxy.is_active is False and is_mailing_marked_dead(err):
-        st_line = "🔴 Мёртв при рассылке (SOCKS)"
+        st_line = "🔴 Мёртв при рассылке (туннель)"
     else:
         st_line = "🟡 Не проверен / проверка не прошла — в рассылке используется"
 
@@ -840,7 +809,7 @@ async def proxies_check_all(callback: CallbackQuery) -> None:
     try:
         await callback.message.edit_text(
             f"⏳ <b>Проверяю {len(proxies)} прокси…</b>\n\n"
-            "<i>SOCKS5 → SMTP smtp.gmail.com:587 (как при рассылке)\n"
+            "<i>Прокси → SMTP smtp.gmail.com:587 (как при рассылке)\n"
             "Не нажимайте кнопку повторно — займёт до ~45 сек.</i>",
             parse_mode="HTML",
         )

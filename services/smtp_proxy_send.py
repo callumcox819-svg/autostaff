@@ -11,7 +11,7 @@ from sqlalchemy import select as sa_select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models import EmailAccount, Proxy
-from proxy_manager import ProxySMTPContext, is_socks5_proxy
+from proxy_manager import ProxySMTPContext, is_mailing_proxy
 from services.sender import (
     is_definite_proxy_failure,
     is_smtp_timeout_error,
@@ -57,7 +57,7 @@ async def choose_required_proxy(
 ) -> Tuple[Optional[Proxy], Optional[str]]:
     """
     (proxy, None) — ок.
-    (None, NO_ACTIVE_PROXY) — в БД нет ни одного активного SOCKS5.
+    (None, NO_ACTIVE_PROXY) — в БД нет ни одного активного прокси (SOCKS5/HTTP).
     (None, None) — все доступные прокси уже пробовали в этом send (не «мёртвые»).
     """
     from proxy_manager import choose_proxy_for_user
@@ -71,17 +71,11 @@ async def choose_required_proxy(
 
 
 def _smtp_eligible_proxy_row(p: Proxy) -> bool:
-    if not is_socks5_proxy(p):
-        t = (getattr(p, "type", None) or "").strip().lower()
-        if t in ("http", "https"):
-            return False
-        if t and not t.startswith("socks"):
-            return False
-    return True
+    return is_mailing_proxy(p)
 
 
-async def _list_active_socks5_proxies(session: AsyncSession, user_id: int) -> List[Proxy]:
-    """SOCKS5 для рассылки: без 🔴 (is_active=False). 🟢 и 🟡 (None) — можно."""
+async def _list_active_mailing_proxies(session: AsyncSession, user_id: int) -> List[Proxy]:
+    """SOCKS5/HTTP для рассылки: без 🔴 (is_active=False). 🟢 и 🟡 (None) — можно."""
     rows = (
         await session.execute(
             sa_select(Proxy)
@@ -107,11 +101,22 @@ async def _list_active_socks5_proxies(session: AsyncSession, user_id: int) -> Li
 
 
 def _proxy_try_limit(*, fast: bool, proxy_count: int) -> int:
-    if fast:
-        return 1
     if proxy_count <= 0:
         return 0
+    if fast:
+        return min(proxy_count, REPLY_SMTP_MAX_PROXIES)
     return min(proxy_count, MAIL_SMTP_MAX_PROXIES)
+
+
+async def user_has_active_mailing_proxy(session: AsyncSession, user_id: int) -> bool:
+    """Есть ли хотя бы один SOCKS5/HTTP прокси для SMTP (🟢 или 🟡)."""
+    return bool(await _list_active_mailing_proxies(session, int(user_id)))
+
+
+NO_MAILING_PROXY = (
+    "PROXY_ERROR|no_active_proxy|"
+    "Нет прокси. Добавь SOCKS5 или HTTP в ⚙️ → Прокси."
+)
 
 
 async def pick_sticky_proxy_for_fast_mailing(
@@ -119,7 +124,7 @@ async def pick_sticky_proxy_for_fast_mailing(
     user_id: int,
 ) -> Optional[Proxy]:
     """Один 🟢 SOCKS5 (ротирующий gateway) на всю фаст-сессию."""
-    proxies = await _list_active_socks5_proxies(session, user_id)
+    proxies = await _list_active_mailing_proxies(session, user_id)
     if not proxies:
         return None
     if ROTATING_PROXY_ID is not None:
@@ -188,14 +193,14 @@ async def send_email_via_account_with_proxy(
     sticky_proxy_id: int | None = None,
     mailing_fast: bool = False,
 ) -> Tuple[bool, Optional[str], Optional[str]]:
-    proxies = await _list_active_socks5_proxies(session, user_id)
+    proxies = await _list_active_mailing_proxies(session, user_id)
     if not proxies:
-        return False, NO_ACTIVE_PROXY, None
+        return False, NO_MAILING_PROXY, None
 
     if sticky_proxy_id is not None:
         proxies = [p for p in proxies if int(p.id) == int(sticky_proxy_id)]
         if not proxies:
-            return False, NO_ACTIVE_PROXY, None
+            return False, NO_MAILING_PROXY, None
 
     order = _order_proxies_for_send(
         int(user_id),
@@ -271,7 +276,7 @@ async def send_email_via_account_with_proxy(
             return False, err, last_msgid
 
     hint = (
-        f"Ни один из {tried} SOCKS5 не достучался до Gmail SMTP "
+        f"Ни один из {tried} прокси не достучался до Gmail SMTP "
         f"(последняя: {last_err or 'timeout'}). "
         f"«Прокси» → проверить — нужно SMTP+STARTTLS OK."
     )
@@ -294,12 +299,12 @@ async def send_email_via_account_with_proxy_isolated(
     sticky_proxy_id: int | None = None,
 ) -> Tuple[bool, Optional[str], Optional[str]]:
     """
-    Параллельный фаст: каждый ящик — свой SOCKS5-сокет, без глобального _PROXY_LOCK.
-    Ротирующий SOCKS5: sticky_proxy_id = один gateway на всю /send (как в норм софте).
+    Параллельный фаст: каждый ящик — свой SOCKS5/HTTP-сокет, без глобального _PROXY_LOCK.
+    Ротирующий gateway: sticky_proxy_id = один прокси на всю /send.
     """
-    proxies = await _list_active_socks5_proxies(session, user_id)
+    proxies = await _list_active_mailing_proxies(session, user_id)
     if not proxies:
-        return False, NO_ACTIVE_PROXY, None
+        return False, NO_MAILING_PROXY, None
 
     if sticky_proxy_id is not None:
         order = _order_proxies_for_send(
@@ -309,7 +314,7 @@ async def send_email_via_account_with_proxy_isolated(
             sticky_proxy_id=int(sticky_proxy_id),
         )
         if not order:
-            return False, NO_ACTIVE_PROXY, None
+            return False, NO_MAILING_PROXY, None
     else:
         order = _order_proxies_for_send(
             int(user_id), proxies, fast=False, account_id=int(account.id)
@@ -387,12 +392,12 @@ async def send_email_via_account_with_proxy_isolated(
 
     if sticky_proxy_id is not None and tried <= 1:
         hint = (
-            f"SOCKS5 proxy_id={sticky_proxy_id} — нет ответа от Gmail SMTP "
+            f"Прокси proxy_id={sticky_proxy_id} — нет ответа от Gmail SMTP "
             f"({last_err or 'timeout'}). Повтор даст новый IP (ротация)."
         )
     else:
         hint = (
-            f"Ни один из {tried} SOCKS5 не достучался до Gmail SMTP "
+            f"Ни один из {tried} прокси не достучался до Gmail SMTP "
             f"(последняя: {last_err or 'timeout'})."
         )
     if is_smtp_timeout_error(last_err):
@@ -415,7 +420,7 @@ async def send_batch_via_account_with_proxy(
     if n == 0:
         return []
 
-    proxies = await _list_active_socks5_proxies(session, user_id)
+    proxies = await _list_active_mailing_proxies(session, user_id)
     if not proxies:
         return [(False, NO_ACTIVE_PROXY) for _ in items]
 

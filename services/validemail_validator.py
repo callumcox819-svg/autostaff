@@ -566,6 +566,25 @@ async def _validate_offers_old(
         eligible_o = int(stats.get("offers_eligible") or len(prepared))
         stats["offers_remaining"] = max(0, eligible_o - sellers_found)
 
+    async def _probe_email(seller_i: int, email: str, dom: str, api_key: str) -> None:
+        """Один адрес ValidEmail; домены — строго по приоритету, не пачкой."""
+        if found_by_idx[seller_i]:
+            return
+        em = (email or "").strip().lower()
+        if not em or "@" not in em:
+            return
+        results = await _run_batch(
+            [em],
+            seller_i=seller_i,
+            dom=(dom or "").strip().lower(),
+            api_key=api_key,
+        )
+        cv = await _consume_results(seller_i, results)
+        async with state_lock:
+            if stats is not None:
+                stats["combinations_valid"] = int(stats.get("combinations_valid") or 0) + cv
+            _refresh_stats()
+
     async def _validate_seller(i: int, api_key: str) -> None:
         row = prepared[i]
         async with state_lock:

@@ -19,6 +19,7 @@ from handlers.templates import load_templates, TemplateItem
 from handlers.incoming_mail import _bg_incoming_smtp, _reply_notify_build_async
 from services.users import get_or_create_user
 from models import IncomingMail
+from utils.ui_emoji import inline_button
 
 router = Router()
 logger = logging.getLogger(__name__)
@@ -42,7 +43,7 @@ def _templates_kb(
         rows.append([InlineKeyboardButton(text=label, callback_data=cb)])
 
     close_cb = f"mail_tmpl_close:m{int(mail_id)}" if mail_id else f"mail_tmpl_close:{acc_id}:{uid}"
-    rows.append([InlineKeyboardButton(text="Скрыть", callback_data=close_cb)])
+    rows.append([inline_button("hide", "Скрыть", callback_data=close_cb)])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 

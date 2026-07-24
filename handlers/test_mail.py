@@ -28,6 +28,7 @@ from services.user_settings import get_user_setting, set_user_setting
 from sqlalchemy import func, select
 from keyboards.main_menu import is_test_mail_trigger
 from utils.bg_jobs import is_running as bg_is_running, start as bg_start
+from utils.ui_emoji import html_emoji, inline_button
 
 router = Router()
 
@@ -93,23 +94,23 @@ def _menu_kb(*, has_recipients: bool) -> InlineKeyboardMarkup:
     rows: list[list[InlineKeyboardButton]] = []
     if has_recipients:
         rows.append(
-            [InlineKeyboardButton(text="▶️ Отправить на сохранённые", callback_data="test_mail:send")]
+            [inline_button("send", "Отправить на сохранённые", callback_data="test_mail:send")]
         )
     rows.append(
-        [InlineKeyboardButton(text="✏️ Указать получателей (до 4)", callback_data="test_mail:edit")]
+        [inline_button("edit", "Указать получателей (до 4)", callback_data="test_mail:edit")]
     )
     if has_recipients:
         rows.append(
-            [InlineKeyboardButton(text="🗑 Очистить список", callback_data="test_mail:clear")]
+            [inline_button("delete", "Очистить список", callback_data="test_mail:clear")]
         )
-    rows.append([InlineKeyboardButton(text="❌ Закрыть", callback_data="test_mail:close")])
+    rows.append([inline_button("close", "Закрыть", callback_data="test_mail:close")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 async def _menu_text(session, user: User) -> str:
     saved = await _load_saved_recipients(session, user)
     lines = [
-        "<b>🧪 Тест маил</b>",
+        f"<b>{html_emoji('test_mail')} Тест маил</b>",
         "",
         "Тема и текст — <b>1:1 как /send</b>: оффер из БД, умный пресет, тема = шаблон OFFER.",
         f"Получателей в списке: <b>{len(saved)}/{MAX_TEST_RECIPIENTS}</b>",

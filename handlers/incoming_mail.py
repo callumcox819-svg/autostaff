@@ -64,6 +64,7 @@ from services.translate import translate_to_ru, _strip_html
 # Email reply "presets" must use the same storage/UI as ⚡ Шаблоны (handlers/templates.py)
 from handlers.templates import load_templates, TemplateItem
 from utils.bg_jobs import is_running as bg_is_running, start as bg_start
+from utils.ui_emoji import back_inline, inline_button
 
 router = Router()
 
@@ -727,14 +728,7 @@ def _kb_preset_pick(
             cb = f"mail_tmpl_send:{i}:{acc_id}:{uid}"
         rows.append([InlineKeyboardButton(text=label, callback_data=cb)])
 
-    rows.append(
-        [
-            InlineKeyboardButton(
-                text="⬅️ Назад",
-                callback_data=f"mail_reply_mode:back:{acc_id}:{uid}",
-            )
-        ]
-    )
+    rows.append([back_inline(f"mail_reply_mode:back:{acc_id}:{uid}")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -745,13 +739,13 @@ def _kb_html_pick(acc_id: int, uid: str):
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
-                InlineKeyboardButton(text="🟢 GO", callback_data=f"mail_reply_html:go:{acc_id}:{uid}"),
-                InlineKeyboardButton(text="🟢 GO(new)", callback_data=f"mail_reply_html:go_new:{acc_id}:{uid}"),
+                inline_button("green", "GO", callback_data=f"mail_reply_html:go:{acc_id}:{uid}"),
+                inline_button("green", "GO(new)", callback_data=f"mail_reply_html:go_new:{acc_id}:{uid}"),
             ],
-            [InlineKeyboardButton(text="📣 PUSH", callback_data=f"mail_reply_html:push:{acc_id}:{uid}")],
-            [InlineKeyboardButton(text="💬 SMS", callback_data=f"mail_reply_html:sms:{acc_id}:{uid}")],
-            [InlineKeyboardButton(text="🔙 BACK", callback_data=f"mail_reply_html:back:{acc_id}:{uid}")],
-            [InlineKeyboardButton(text="🚫 Отмена", callback_data=f"mail_reply_mode:back:{acc_id}:{uid}")],
+            [inline_button("burst", "PUSH", callback_data=f"mail_reply_html:push:{acc_id}:{uid}")],
+            [inline_button("write", "SMS", callback_data=f"mail_reply_html:sms:{acc_id}:{uid}")],
+            [back_inline(f"mail_reply_html:back:{acc_id}:{uid}", text="BACK")],
+            [inline_button("cancel", "Отмена", callback_data=f"mail_reply_mode:back:{acc_id}:{uid}")],
         ]
     )
 
@@ -1098,7 +1092,7 @@ async def _send_generated_link_card_to_chat(
         from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
         price_kb = InlineKeyboardMarkup(
-            inline_keyboard=[[InlineKeyboardButton(text="💶 Цена", callback_data=f"offer_price:{offer_id}")]]
+            inline_keyboard=[[inline_button("edit", "Цена", callback_data=f"offer_price:{offer_id}")]]
         )
 
     p = (photo_url or "").strip()

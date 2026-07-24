@@ -43,6 +43,17 @@ _UNICODE_FALLBACK: dict[str, str] = {
     "search": "🔍",
     "burst": "⚡",
     "puzzle": "🧩",
+    "restore": "↩️",
+    "next": "➡️",
+    "prev": "◀️",
+    "wrench": "🛠",
+    "write": "✍️",
+    "compass": "🧭",
+    "cancel": "🚫",
+    "close": "❌",
+    "accounts": "📇",
+    "pin": "📌",
+    "check": "✅",
 }
 
 
@@ -145,6 +156,14 @@ def icon_button(key: str, *, callback_data: str, style: str | None = None) -> In
     """Компактная inline-кнопка только с premium-иконкой."""
     fb = unicode_fallback(key) or "•"
     return inline_button(key, fb, callback_data=callback_data, style=style)
+
+
+def back_inline(callback_data: str, text: str = "Назад") -> InlineKeyboardButton:
+    return inline_button("back", text, callback_data=callback_data)
+
+
+def back_kb(callback_data: str = "settings_open") -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[[back_inline(callback_data)]])
 
 
 def toggle_button(on: bool, caption: str, callback_data: str) -> InlineKeyboardButton:

@@ -23,6 +23,7 @@ from sqlalchemy import select, update, or_
 from database import Session, db_session
 from models import User, EmailAccount
 from keyboards.main_menu import is_quick_add_trigger
+from utils.ui_emoji import back_inline, html_emoji, icon_button, inline_button
 from utils.bg_jobs import is_running as bg_is_running, start as bg_start
 
 logger = logging.getLogger(__name__)
@@ -295,49 +296,43 @@ def accounts_menu_kb(
     for acc in accounts_page:
         st = (acc.status or "").strip().lower()
         if st == "active":
-            emoji = "🟢"
+            status_key = "green"
         elif st == "smtp_blocked":
-            emoji = "🟡"
+            status_key = "yellow"
         else:
-            emoji = "🔴"
-        text = f"{emoji} {acc.email}"
+            status_key = "red"
+        label_text = acc.email
 
-        email_btn = InlineKeyboardButton(
-            text=text,
+        email_btn = inline_button(
+            status_key,
+            label_text,
             callback_data=f"acc_info:{acc.id}:{page}:{status_filter}",
         )
 
-        delete_btn = InlineKeyboardButton(
-            text="🗑",
-            callback_data=f"acc_del:{acc.id}:{page}:{status_filter}",
-        )
+        delete_btn = icon_button("delete", callback_data=f"acc_del:{acc.id}:{page}:{status_filter}")
         if st == "smtp_blocked":
-            restore_btn = InlineKeyboardButton(
-                text="↩️",
-                callback_data=f"acc_restore:{acc.id}:{page}:{status_filter}",
-            )
+            restore_btn = icon_button("restore", callback_data=f"acc_restore:{acc.id}:{page}:{status_filter}")
             rows.append([email_btn, restore_btn, delete_btn])
         else:
             rows.append([email_btn, delete_btn])
 
-    # Навигация страниц
     nav: List[InlineKeyboardButton] = []
     if page > 1:
-        nav.append(InlineKeyboardButton(text="⬅️", callback_data=f"acc_page:{page-1}:{status_filter}"))
+        nav.append(inline_button("prev", "◀", callback_data=f"acc_page:{page-1}:{status_filter}"))
     nav.append(InlineKeyboardButton(text=f"{page}/{total_pages}", callback_data="noop"))
     if page < total_pages:
-        nav.append(InlineKeyboardButton(text="След. ➡️", callback_data=f"acc_page:{page+1}:{status_filter}"))
+        nav.append(inline_button("next", "Далее", callback_data=f"acc_page:{page+1}:{status_filter}"))
     rows.append(nav)
 
     rows.append(
-        [InlineKeyboardButton(text="🗑 Удалить все неактивные", callback_data="acc_delete_inactive")]
+        [inline_button("delete", "Удалить все неактивные", callback_data="acc_delete_inactive")]
     )
-    rows.append([InlineKeyboardButton(text="🗑 Удалить все почты", callback_data="acc_delete_all")])
+    rows.append([inline_button("delete", "Удалить все почты", callback_data="acc_delete_all")])
     rows.append(
-        [InlineKeyboardButton(text="🔍 Проверить статус почт", callback_data="acc_check_smtp")]
+        [inline_button("search", "Проверить статус почт", callback_data="acc_check_smtp")]
     )
 
-    rows.append([InlineKeyboardButton(text="⬅️ Назад", callback_data="settings_open")])
+    rows.append([back_inline("settings_open")])
 
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
@@ -368,15 +363,16 @@ async def render_accounts_menu(message_or_cb, telegram_id: int, page: int = 1, s
     page_accounts = accs[start:end]
 
     # Текст как на скрине
+    em = html_emoji("email")
     if total:
         text = (
-            "📬 <b>Настройки почтовых аккаунтов</b>\n\n"
+            f"{em} <b>Настройки почтовых аккаунтов</b>\n\n"
             f"Текущие аккаунты: <b>{total}</b> шт.\n\n"
             "Выберите действие:"
         )
     else:
         text = (
-            "📬 <b>Почтовые аккаунты</b>\n\n"
+            f"{em} <b>Почтовые аккаунты</b>\n\n"
             "У тебя пока нет добавленных аккаунтов.\n"
             "Формат для импорта: <code>email:app_password</code> (APP PASSWORD).\n"
             "Поддерживаются: Gmail, iCloud, GMX."
@@ -459,12 +455,9 @@ async def acc_delete_all_confirm(callback: CallbackQuery) -> None:
     kb = InlineKeyboardMarkup(
         inline_keyboard=[
             [
-                InlineKeyboardButton(
-                    text="✅ Да, удалить ВСЕ",
-                    callback_data="acc_delete_all_yes",
-                )
+                inline_button("ok", "Да, удалить ВСЕ", callback_data="acc_delete_all_yes"),
             ],
-            [InlineKeyboardButton(text="❌ Отмена", callback_data="settings_accounts")],
+            [inline_button("cancel", "Отмена", callback_data="settings_accounts")],
         ]
     )
     await callback.message.edit_text(
@@ -710,7 +703,7 @@ async def _quick_gmail_begin(message: Message, state: FSMContext) -> None:
     await state.set_state(AccountsQuickGmailStates.waiting_sender_name)
     kb = InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="⬅️ К списку аккаунтов", callback_data="settings_accounts")],
+            [back_inline("settings_accounts", text="К списку аккаунтов")],
         ]
     )
     await message.answer(

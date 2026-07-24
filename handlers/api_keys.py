@@ -32,6 +32,7 @@ from services.aqua_keys import (
 from services.aqua_network import AquaError, generate_api_base, generate_api_configured, verify_gag_auth
 from services.user_settings import set_user_setting
 from utils.secrets import clean_secret
+from utils.ui_emoji import back_inline, back_kb, html_emoji, inline_button
 
 router = Router(name="api_keys")
 
@@ -47,18 +48,16 @@ class ProfileState(StatesGroup):
 
 
 def _back_kb() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[[InlineKeyboardButton(text="⬅️ Назад", callback_data="settings_open")]]
-    )
+    return back_kb("settings_open")
 
 
 def profile_screen_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="✏️ Заполнить / изменить", callback_data="aqua_profile_create")],
-            [InlineKeyboardButton(text="🧭 Сервис", callback_data="aqua_service_pick")],
-            [InlineKeyboardButton(text="⬅️ Назад", callback_data="settings_open")],
-            [InlineKeyboardButton(text="🟢 Скрыть", callback_data="aqua_hide")],
+            [inline_button("edit", "Заполнить / изменить", callback_data="aqua_profile_create")],
+            [inline_button("compass", "Сервис", callback_data="aqua_service_pick")],
+            [back_inline("settings_open")],
+            [inline_button("hide", "Скрыть", callback_data="aqua_hide")],
         ]
     )
 
@@ -67,24 +66,24 @@ def service_picker_kb(current: str) -> InlineKeyboardMarkup:
     rows: list[list[InlineKeyboardButton]] = []
     for code in AQUA_SERVICE_CHOICES:
         label = aqua_service_label(code)
-        mark = "✅ " if aqua_service_matches(current, code) else ""
+        mark = f'{html_emoji("ok")} ' if aqua_service_matches(current, code) else ""
         rows.append([
             InlineKeyboardButton(
-                text=f"{mark}{label}",
+                text=f"{mark}{label}".strip(),
                 callback_data=f"aqua_service_set:{code}",
             )
         ])
-    rows.append([InlineKeyboardButton(text="⬅️ Назад", callback_data="aqua_show:profile")])
+    rows.append([back_inline("aqua_show:profile")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def key_screen_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="🛠 Установить ключ", callback_data="aqua_set:user_key")],
-            [InlineKeyboardButton(text="🔍 Проверить ключ", callback_data="aqua_test_keys")],
-            [InlineKeyboardButton(text="⬅️ Назад", callback_data="settings_open")],
-            [InlineKeyboardButton(text="🟢 Скрыть", callback_data="aqua_hide")],
+            [inline_button("wrench", "Установить ключ", callback_data="aqua_set:user_key")],
+            [inline_button("search", "Проверить ключ", callback_data="aqua_test_keys")],
+            [back_inline("settings_open")],
+            [inline_button("hide", "Скрыть", callback_data="aqua_hide")],
         ]
     )
 
@@ -106,9 +105,13 @@ async def _render_profile_screen(callback: CallbackQuery) -> None:
         addr = await get_user_profile_address(session, user)
         service = await get_user_aqua_service(session, user)
         complete = await user_profile_fields_complete(session, user)
-        status = "🟢 готов к генерации" if complete else "🟡 заполните все поля"
+        status = (
+            f"{html_emoji('green')} готов к генерации"
+            if complete
+            else f"{html_emoji('yellow')} заполните все поля"
+        )
         text = (
-            "👤 <b>Профиль</b>\n\n"
+            f"{html_emoji('profile')} <b>Профиль</b>\n\n"
             "Эти данные уходят в сгенерированную ссылку.\n\n"
             f"{_field_line('Название профиля', title)}\n"
             f"{_field_line('Имя получателя', buyer)}\n"
@@ -129,11 +132,13 @@ async def _render_key_screen(callback: CallbackQuery) -> None:
         user_key = await get_user_aqua_user_key_async(session, user)
     base_ok = generate_api_configured()
     base_show = generate_api_base() or "—"
+    ok = html_emoji("ok")
+    fail = html_emoji("fail")
     text = (
-        "🔑 <b>API-ключ</b>\n\n"
-        f"Статус: {'✅ задан' if user_key else '❌ не задан'}\n"
+        f"{html_emoji('key')} <b>API-ключ</b>\n\n"
+        f"Статус: {ok if user_key else fail} {'задан' if user_key else 'не задан'}\n"
         f"<code>{_show_full(user_key)}</code>\n\n"
-        f"Сервер: {'✅' if base_ok else '❌'}\n"
+        f"Сервер: {ok if base_ok else fail}\n"
         f"<code>{html.escape(base_show)}</code>"
     )
     await callback.message.edit_text(text, reply_markup=key_screen_kb(), parse_mode="HTML")
@@ -142,7 +147,7 @@ async def _render_key_screen(callback: CallbackQuery) -> None:
 
 @router.callback_query(F.data == "aqua_hide")
 async def aqua_hide(callback: CallbackQuery) -> None:
-    await callback.message.edit_text("✅ Скрыто.")
+    await callback.message.edit_text(f"{html_emoji('ok')} Скрыто.")
     await callback.answer()
 
 
@@ -166,7 +171,7 @@ async def aqua_service_pick(callback: CallbackQuery, state: FSMContext) -> None:
         user = await get_or_create_user(session, callback.from_user.id)
         service = await get_user_aqua_service(session, user)
     text = (
-        "🧭 <b>Сервис</b>\n\n"
+        f"{html_emoji('compass')} <b>Сервис</b>\n\n"
         f"Текущий: <b>{aqua_service_label(service)}</b>\n\n"
         "Выберите сервис для генерации ссылок и HTML-шаблонов:"
     )
@@ -205,7 +210,7 @@ async def aqua_profile_create(callback: CallbackQuery, state: FSMContext) -> Non
     await state.clear()
     await state.set_state(ProfileState.title)
     await callback.message.edit_text(
-        "✏️ <b>Профиль</b>\n\n"
+        f"{html_emoji('edit')} <b>Профиль</b>\n\n"
         f"Сейчас:\n"
         f"• Название: <code>{cur_title}</code>\n"
         f"• Имя получателя: <code>{cur_buyer}</code>\n"
@@ -214,7 +219,7 @@ async def aqua_profile_create(callback: CallbackQuery, state: FSMContext) -> Non
         "<i>Например: Anna</i>",
         parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup(
-            inline_keyboard=[[InlineKeyboardButton(text="⬅️ Отмена", callback_data="aqua_show:profile")]]
+            inline_keyboard=[[back_inline("aqua_show:profile", text="Отмена")]]
         ),
     )
     await callback.answer()
@@ -297,7 +302,7 @@ async def aqua_test_keys(callback: CallbackQuery) -> None:
 async def aqua_set_user_key_begin(callback: CallbackQuery, state: FSMContext) -> None:
     await state.set_state(KeysState.waiting_value)
     await callback.message.edit_text(
-        "✍️ <b>Личный API-ключ</b>\n\n"
+        f"{html_emoji('write')} <b>Личный API-ключ</b>\n\n"
         "Ваш <b>apikey</b> из панели GAG (например d1f491dc…).",
         reply_markup=_back_kb(),
         parse_mode="HTML",

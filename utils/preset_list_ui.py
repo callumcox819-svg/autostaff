@@ -7,6 +7,8 @@ from typing import List
 
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
+from utils.ui_emoji import back_inline, inline_button, html_emoji
+
 FOOTER_VARIABLES = "<b>Переменная:</b> <code>OFFER</code> / <code>{{OFFER}}</code>"
 FOOTER_SPINTAX = "<b>Спинтаксис:</b> <code>{a|b|c}</code>"
 
@@ -19,7 +21,7 @@ NOTE_REGULAR_PRESETS = (
 
 REGULAR_PRESETS_EMPTY_HINT = (
     "Пока нет пресетов.\n"
-    "Нажми «➕ Добавить пресет»: сначала имя для кнопки, затем текст письма."
+    "Нажми «Добавить пресет»: сначала имя для кнопки, затем текст письма."
 )
 
 
@@ -32,7 +34,10 @@ def render_text_presets_page(
     max_show: int = 40,
 ) -> str:
     if not texts:
-        hint = empty_hint or "Пока нет пресетов.\nНажми «➕ Добавить пресет» и отправь текст одним сообщением."
+        hint = empty_hint or (
+            "Пока нет пресетов.\n"
+            f"Нажми «{html_emoji('add')} Добавить пресет» и отправь текст одним сообщением."
+        )
         return f"{header_html}\n\n{hint}\n\n{FOOTER_VARIABLES}\n{FOOTER_SPINTAX}"
 
     lines: List[str] = [header_html, ""]
@@ -63,21 +68,21 @@ def text_presets_manage_kb(
 ) -> InlineKeyboardMarkup:
     rows: List[List[InlineKeyboardButton]] = [
         [
-            InlineKeyboardButton(text="➕ Добавить пресет", callback_data=add_cb),
-            InlineKeyboardButton(text="✏️ Изменить пресет", callback_data=edit_cb),
+            inline_button("add", "Добавить пресет", callback_data=add_cb),
+            inline_button("edit", "Изменить пресет", callback_data=edit_cb),
         ],
     ]
     if has_any:
         rows.append(
             [
-                InlineKeyboardButton(text="🗑 Удалить пресет", callback_data=del_cb),
-                InlineKeyboardButton(text="🗑 Удалить все", callback_data=del_all_cb),
+                inline_button("delete", "Удалить пресет", callback_data=del_cb),
+                inline_button("delete", "Удалить все", callback_data=del_all_cb),
             ]
         )
     rows.append(
         [
-            InlineKeyboardButton(text="🔙 Назад", callback_data=back_cb),
-            InlineKeyboardButton(text="♻️ Скрыть", callback_data=hide_cb),
+            back_inline(back_cb),
+            inline_button("hide", "Скрыть", callback_data=hide_cb),
         ]
     )
     return InlineKeyboardMarkup(inline_keyboard=rows)
@@ -122,7 +127,7 @@ def named_presets_pick_kb(
     for i, (title, _) in enumerate(items[:40]):
         label = (title or f"Пресет #{i + 1}").strip()[:40]
         rows.append([InlineKeyboardButton(text=label, callback_data=f"{action}:{i}")])
-    rows.append([InlineKeyboardButton(text="🔙 Назад", callback_data=back_cb)])
+    rows.append([back_inline(back_cb)])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -130,5 +135,5 @@ def text_presets_pick_kb(count: int, action: str, back_cb: str) -> InlineKeyboar
     rows: List[List[InlineKeyboardButton]] = []
     for i in range(min(count, 40)):
         rows.append([InlineKeyboardButton(text=f"Пресет #{i + 1}", callback_data=f"{action}:{i}")])
-    rows.append([InlineKeyboardButton(text="🔙 Назад", callback_data=back_cb)])
+    rows.append([back_inline(back_cb)])
     return InlineKeyboardMarkup(inline_keyboard=rows)

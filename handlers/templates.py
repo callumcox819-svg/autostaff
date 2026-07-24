@@ -19,6 +19,7 @@ from sqlalchemy import select
 from database import Session, db_session
 from models import EmailAccount
 from services.users import get_or_create_user
+from utils.ui_emoji import back_inline, html_emoji, inline_button, icon_button
 
 router = Router()
 
@@ -209,25 +210,19 @@ def templates_manage_kb(items: List[TemplateItem], back_cb: str = "settings_open
     for i, it in enumerate(items):
         kb.append(
             [
-                InlineKeyboardButton(
-                    text=f"✏️ {it.title[:30]}",
-                    callback_data=f"tmpl_edit:{i}",
-                ),
-                InlineKeyboardButton(
-                    text="🗑️",
-                    callback_data=f"tmpl_del:{i}",
-                ),
+                inline_button("edit", it.title[:30], callback_data=f"tmpl_edit:{i}"),
+                icon_button("delete", callback_data=f"tmpl_del:{i}"),
             ]
         )
-    kb.append([InlineKeyboardButton(text="⬅️ Назад", callback_data=back_cb)])
+    kb.append([back_inline(back_cb)])
     return InlineKeyboardMarkup(inline_keyboard=kb)
 
 
 def templates_delete_kb(idx: int) -> InlineKeyboardMarkup:
     kb = [
         [
-            InlineKeyboardButton(text="✅ Удалить", callback_data=f"tmpl_del_ok:{idx}"),
-            InlineKeyboardButton(text="❌ Отмена", callback_data="tmpl_del_cancel"),
+            inline_button("ok", "Удалить", callback_data=f"tmpl_del_ok:{idx}"),
+            inline_button("cancel", "Отмена", callback_data="tmpl_del_cancel"),
         ]
     ]
     return InlineKeyboardMarkup(inline_keyboard=kb)
@@ -243,8 +238,8 @@ class TmplAdd(StatesGroup):
 
 def _render_manage(items: List[TemplateItem]) -> str:
     if not items:
-        return "⚡️ <b>Шаблоны</b>\n\nПока шаблонов нет."
-    lines = ["⚡️ <b>Шаблоны</b>\n"]
+        return f"{html_emoji('presets')} <b>Шаблоны</b>\n\nПока шаблонов нет."
+    lines = [f"{html_emoji('presets')} <b>Шаблоны</b>\n"]
     for i, it in enumerate(items, start=1):
         lines.append(f"{i}. <b>{it.title}</b>")
     return "\n".join(lines)
@@ -271,19 +266,14 @@ async def _safe_edit_text(
             raise
 
 def _back_only_kb(back_cb: str) -> InlineKeyboardMarkup:
-    """Клавиатура только с кнопкой Назад."""
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="⬅️ Назад", callback_data=back_cb)],
-        ]
-    )
+    return InlineKeyboardMarkup(inline_keyboard=[[back_inline(back_cb)]])
 
 def _quick_templates_kb(items: List[TemplateItem], acc_id: int, uid: str) -> InlineKeyboardMarkup:
     kb: List[List[InlineKeyboardButton]] = []
     for i, it in enumerate(items):
         label = (it.text or it.title or "")[:40]
         kb.append([InlineKeyboardButton(text=label, callback_data=f"tmpl_send:{acc_id}:{uid}:{i}")])
-    kb.append([InlineKeyboardButton(text="⬅️ Назад", callback_data=f"tmpl_close:{acc_id}:{uid}")])
+    kb.append([back_inline(f"tmpl_close:{acc_id}:{uid}", text="Назад")])
     return InlineKeyboardMarkup(inline_keyboard=kb)
 
 
@@ -414,7 +404,11 @@ async def _restore_presets_list(message: Message, state_data: dict, tg_id: int) 
         message.bot,
         chat_id=int(chat_id),
         message_id=int(msg_id),
-        text=render_text_presets_page("🧾 <b>Ваши пресеты:</b>", texts, footer_note=NOTE_REGULAR_PRESETS),
+        text=render_text_presets_page(
+            f"{html_emoji('presets')} <b>Ваши пресеты:</b>",
+            texts,
+            footer_note=NOTE_REGULAR_PRESETS,
+        ),
         reply_markup=_regular_presets_kb(bool(texts)),
     )
 
@@ -430,7 +424,7 @@ async def _restore_smart_list(message: Message, state_data: dict, tg_id: int) ->
         chat_id=int(chat_id),
         message_id=int(msg_id),
         text=render_text_presets_page(
-            "📄 <b>Ваши умные пресеты:</b>",
+            f"{html_emoji('presets')} <b>Ваши умные пресеты:</b>",
             texts,
             footer_note=NOTE_SMART_PRESETS,
         ),
@@ -461,7 +455,7 @@ async def _send_presets_menu_message(message: Message, tg_id: int) -> None:
     pairs = _template_named_pairs(items)
     await message.answer(
         render_named_presets_page(
-            "🧾 <b>Ваши пресеты:</b>",
+            f"{html_emoji('presets')} <b>Ваши пресеты:</b>",
             pairs,
             empty_hint=REGULAR_PRESETS_EMPTY_HINT,
             footer_note=NOTE_REGULAR_PRESETS,
@@ -476,7 +470,7 @@ async def _send_smart_menu_message(message: Message, tg_id: int) -> None:
     texts = await load_smart_texts(tg_id)
     await message.answer(
         render_text_presets_page(
-            "📄 <b>Ваши умные пресеты:</b>",
+            f"{html_emoji('presets')} <b>Ваши умные пресеты:</b>",
             texts,
             footer_note=NOTE_SMART_PRESETS,
         ),
@@ -517,7 +511,7 @@ async def presets_menu(call: CallbackQuery, state: FSMContext) -> None:
     pairs = _template_named_pairs(items)
     await call.message.edit_text(
         render_named_presets_page(
-            "🧾 <b>Ваши пресеты:</b>",
+            f"{html_emoji('presets')} <b>Ваши пресеты:</b>",
             pairs,
             empty_hint=REGULAR_PRESETS_EMPTY_HINT,
             footer_note=NOTE_REGULAR_PRESETS,
@@ -552,7 +546,7 @@ async def tmpl_add_start(call: CallbackQuery, state: FSMContext) -> None:
     )
     await state.set_state(PresetAdd.name)
     prompt = await call.message.answer(
-        "➕ <b>Шаг 1/2.</b> Отправь <b>имя пресета</b> — оно будет на кнопке при ответе на письмо.\n\n"
+        f"{html_emoji('add')} <b>Шаг 1/2.</b> Отправь <b>имя пресета</b> — оно будет на кнопке при ответе на письмо.\n\n"
         "Пример: <code>новый пресет</code>",
         parse_mode="HTML",
     )
@@ -581,7 +575,7 @@ async def tmpl_add_name(message: Message, state: FSMContext) -> None:
     await state.update_data(preset_name=title)
     await state.set_state(PresetAdd.text)
     await message.answer(
-        "➕ <b>Шаг 2/2.</b> Отправь <b>текст пресета</b> — его получит адресат письма.\n"
+        f"{html_emoji('add')} <b>Шаг 2/2.</b> Отправь <b>текст пресета</b> — его получит адресат письма.\n"
         "Можно длинное сообщение целиком одним текстом.",
         parse_mode="HTML",
     )
@@ -596,7 +590,10 @@ async def tmpl_add_text(message: Message, state: FSMContext) -> None:
     title = str(data.get("preset_name") or "").strip()[:MAX_TITLE_LEN]
     if not title:
         await state.clear()
-        return await message.answer("Имя пресета потеряно. Нажми «➕ Добавить пресет» снова.")
+        return await message.answer(
+            f"Имя пресета потеряно. Нажми «{html_emoji('add')} Добавить пресет» снова.",
+            parse_mode="HTML",
+        )
     await state.clear()
 
     async with Session() as session:
@@ -616,7 +613,7 @@ async def tmpl_preset_del_pick(call: CallbackQuery) -> None:
         return await call.answer("Пусто")
     pairs = _template_named_pairs(items)
     await call.message.edit_text(
-        "🗑 Выбери пресет для удаления:",
+        f"{html_emoji('delete')} Выбери пресет для удаления:",
         reply_markup=named_presets_pick_kb(pairs, "tmpl_preset_del", "presets_menu"),
     )
     await call.answer()
@@ -647,7 +644,7 @@ async def tmpl_preset_edit_pick(call: CallbackQuery, state: FSMContext) -> None:
     await state.set_state(PresetEdit.idx)
     pairs = _template_named_pairs(items)
     await call.message.edit_text(
-        "✏️ Выбери пресет для изменения:",
+        f"{html_emoji('edit')} Выбери пресет для изменения:",
         reply_markup=named_presets_pick_kb(pairs, "tmpl_preset_edit", "presets_menu"),
     )
     await call.answer()
@@ -665,7 +662,7 @@ async def tmpl_preset_edit_choose(call: CallbackQuery, state: FSMContext) -> Non
     await state.set_state(PresetEdit.name)
     old = items[idx]
     await call.message.answer(
-        f"✏️ <b>Шаг 1/2.</b> Новое имя пресета (сейчас: <code>{escape(old.title)}</code>):",
+        f"{html_emoji('edit')} <b>Шаг 1/2.</b> Новое имя пресета (сейчас: <code>{escape(old.title)}</code>):",
         parse_mode="HTML",
     )
     await call.answer()
@@ -679,7 +676,7 @@ async def tmpl_preset_edit_name(message: Message, state: FSMContext) -> None:
     await state.update_data(preset_name=title)
     await state.set_state(PresetEdit.text)
     await message.answer(
-        "✏️ <b>Шаг 2/2.</b> Отправь новый текст письма для этого пресета:",
+        f"{html_emoji('edit')} <b>Шаг 2/2.</b> Отправь новый текст письма для этого пресета:",
         parse_mode="HTML",
     )
 
@@ -721,7 +718,7 @@ async def smart_presets_menu(call: CallbackQuery, state: FSMContext) -> None:
     texts = await load_smart_texts(tg_id)
     await call.message.edit_text(
         render_text_presets_page(
-            "📄 <b>Ваши умные пресеты:</b>",
+            f"{html_emoji('presets')} <b>Ваши умные пресеты:</b>",
             texts,
             footer_note=NOTE_SMART_PRESETS,
         ),
@@ -747,7 +744,7 @@ async def stmpl_add_start(call: CallbackQuery, state: FSMContext) -> None:
     )
     await state.set_state(SmartTmplAdd.text)
     prompt = await call.message.answer(
-        "➕ Отправь текст пресета одним сообщением.\n"
+        f"{html_emoji('add')} Отправь текст пресета одним сообщением.\n"
         "Можно <code>OFFER</code> и спинтаксис <code>{a|b|c}</code>.",
         parse_mode="HTML",
     )
@@ -788,7 +785,7 @@ async def stmpl_del_pick(call: CallbackQuery) -> None:
     if not items:
         return await call.answer("Пусто")
     await call.message.edit_text(
-        "🗑 Выбери пресет для удаления:",
+        f"{html_emoji('delete')} Выбери пресет для удаления:",
         reply_markup=text_presets_pick_kb(len(items), "stmpl_del", "smart_presets_menu"),
     )
     await call.answer()
@@ -818,7 +815,7 @@ async def stmpl_edit_pick(call: CallbackQuery, state: FSMContext) -> None:
     await state.update_data(_menu_chat_id=call.message.chat.id, _menu_msg_id=call.message.message_id)
     await state.set_state(SmartTmplEdit.idx)
     await call.message.edit_text(
-        "✏️ Выбери пресет для изменения:",
+        f"{html_emoji('edit')} Выбери пресет для изменения:",
         reply_markup=text_presets_pick_kb(len(items), "stmpl_edit", "smart_presets_menu"),
     )
     await call.answer()
@@ -834,7 +831,7 @@ async def stmpl_edit_choose(call: CallbackQuery, state: FSMContext) -> None:
         return await call.answer("Не найден", show_alert=True)
     await state.update_data(idx=idx)
     await state.set_state(SmartTmplEdit.text)
-    await call.message.answer("✏️ Отправь новый текст пресета одним сообщением.")
+    await call.message.answer(f"{html_emoji('edit')} Отправь новый текст пресета одним сообщением.", parse_mode="HTML")
     await call.answer()
 
 

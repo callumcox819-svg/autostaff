@@ -17,6 +17,7 @@ from typing import Optional, List, Tuple, Dict, Any
 
 from aiogram import Bot
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from utils.ui_emoji import inline_button
 from sqlalchemy import select as sa_select, or_ as sa_or, func
 from sqlalchemy.exc import OperationalError
 
@@ -987,11 +988,12 @@ def build_kb(
     translate_cb = f"mail_translate:{mail_id}" if mail_id else f"mail_translate_stub:{acc_id}:{uid}"
     link_cb = f"goo_mail:{mail_id}" if mail_id else f"goo_link:{acc_id}:{uid}"
     rows: List[List[InlineKeyboardButton]] = [
-        [InlineKeyboardButton(text="🌍 Перевести", callback_data=translate_cb)],
-        [InlineKeyboardButton(text="🔗 Создать ссылку", callback_data=link_cb)],
+        [inline_button("compass", "Перевести", callback_data=translate_cb)],
+        [inline_button("puzzle", "Создать ссылку", callback_data=link_cb)],
         [
-            InlineKeyboardButton(
-                text="📝 Написать ещё",
+            inline_button(
+                "write",
+                "Написать ещё",
                 callback_data=(
                     f"mail_reply_db:{int(mail_id)}"
                     if mail_id

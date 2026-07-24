@@ -18,6 +18,7 @@ from models import EmailAccount, SentEmail, OfferEmail, Offer, User
 from services.bot_roles import user_is_admin as is_admin, config_admin_ids
 from keyboards.main_menu import is_admin_trigger, main_menu_kb
 from middlewares.bot_access import invalidate_access_cache
+from utils.ui_emoji import back_inline, html_emoji, inline_button
 
 
 router = Router(name="admin_panel")
@@ -44,11 +45,11 @@ class AdminState(StatesGroup):
 def admin_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="📊 Статистика пользователей", callback_data="admin_user_stats")],
-            [InlineKeyboardButton(text="✅ Доступ к боту", callback_data="admin_allow")],
-            [InlineKeyboardButton(text="⛔ Забрать доступ", callback_data="admin_deny")],
-            [InlineKeyboardButton(text="👑 Админ-права (панель)", callback_data="admin_grant_admin")],
-            [InlineKeyboardButton(text="🔄 Рестарт", callback_data="admin_restart")],
+            [inline_button("status", "Статистика пользователей", callback_data="admin_user_stats")],
+            [inline_button("ok", "Доступ к боту", callback_data="admin_allow")],
+            [inline_button("fail", "Забрать доступ", callback_data="admin_deny")],
+            [inline_button("admin", "Админ-права (панель)", callback_data="admin_grant_admin")],
+            [inline_button("refresh", "Рестарт", callback_data="admin_restart")],
         ]
     )
 
@@ -58,14 +59,14 @@ async def open_admin(message: Message) -> None:
     if not await is_admin(message.from_user.id):
         await message.answer("⛔ У тебя нет доступа к админ-панели.")
         return
-    await message.answer("👑 <b>Админ-панель</b>", reply_markup=admin_kb())
+    await message.answer(f"{html_emoji('admin')} <b>Админ-панель</b>", reply_markup=admin_kb(), parse_mode="HTML")
 
 
 @router.callback_query(F.data == "admin_back")
 async def admin_back(callback: CallbackQuery, state: FSMContext) -> None:
     await state.clear()
     try:
-        await callback.message.edit_text("👑 <b>Админ-панель</b>", reply_markup=admin_kb())
+        await callback.message.edit_text(f"{html_emoji('admin')} <b>Админ-панель</b>", reply_markup=admin_kb(), parse_mode="HTML")
     except TelegramBadRequest as e:
         # Telegram ругается, если мы пытаемся "перерисовать" то же самое сообщение
         if "message is not modified" not in str(e):
@@ -84,7 +85,7 @@ async def admin_allow_begin(callback: CallbackQuery, state: FSMContext) -> None:
         "<i>Кнопки «👑 Админ-панель» не будет — для этого раздел «👑 Админ-права».</i>\n\n"
         "Отправь Telegram ID пользователя.",
         parse_mode="HTML",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⬅️ Назад", callback_data="admin_back")]]),
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[[back_inline("admin_back")]]),
     )
     await callback.answer()
 
@@ -120,7 +121,7 @@ async def admin_allow_finish(message: Message, state: FSMContext) -> None:
             f"⚠️ Не удалось написать пользователю <code>{tid}</code> — пусть нажмёт /start.",
             parse_mode="HTML",
         )
-    await message.answer("👑 <b>Админ-панель</b>", reply_markup=admin_kb())
+    await message.answer(f"{html_emoji('admin')} <b>Админ-панель</b>", reply_markup=admin_kb(), parse_mode="HTML")
 
 
 @router.callback_query(F.data == "admin_deny")
@@ -131,7 +132,7 @@ async def admin_deny_begin(callback: CallbackQuery, state: FSMContext) -> None:
     await state.set_state(AdminState.waiting_deny)
     await callback.message.edit_text(
         "⛔ <b>Удалить доступ</b>\n\nОтправь Telegram ID пользователя.",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⬅️ Назад", callback_data="admin_back")]]),
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[[back_inline("admin_back")]]),
     )
     await callback.answer()
 
@@ -154,7 +155,7 @@ async def admin_deny_finish(message: Message, state: FSMContext) -> None:
     invalidate_access_cache(tid)
     await state.clear()
     await message.answer(f"⛔ Доступ удалён: <code>{tid}</code>")
-    await message.answer("👑 <b>Админ-панель</b>", reply_markup=admin_kb())
+    await message.answer(f"{html_emoji('admin')} <b>Админ-панель</b>", reply_markup=admin_kb(), parse_mode="HTML")
 
 @router.callback_query(F.data == "admin_user_stats")
 async def admin_stats_menu(callback: CallbackQuery, state: FSMContext) -> None:
@@ -176,8 +177,8 @@ async def admin_stats_menu(callback: CallbackQuery, state: FSMContext) -> None:
         text += "Пока нет пользователей в БД."
     kb = InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="🔎 Проверить", callback_data="admin_user_stats_check")],
-            [InlineKeyboardButton(text="⬅️ Назад", callback_data="admin_back")],
+            [inline_button("search", "Проверить", callback_data="admin_user_stats_check")],
+            [back_inline("admin_back")],
         ]
     )
     await callback.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
@@ -192,7 +193,7 @@ async def admin_stats_begin(callback: CallbackQuery, state: FSMContext) -> None:
     await state.set_state(AdminState.waiting_stats)
     await callback.message.edit_text(
         "📊 <b>Статистика пользователя</b>\n\nОтправь Telegram ID пользователя.",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⬅️ Назад", callback_data="admin_user_stats")]]),
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[[back_inline("admin_user_stats")]]),
         parse_mode="HTML",
     )
     await callback.answer()
@@ -229,7 +230,7 @@ async def admin_stats_finish(message: Message, state: FSMContext) -> None:
         f"📧 Валидных email: <b>{validated}</b>\n"
         f"✉️ Отправлено (антидубль): <b>{sent_count}</b>",
     )
-    await message.answer("👑 <b>Админ-панель</b>", reply_markup=admin_kb())
+    await message.answer(f"{html_emoji('admin')} <b>Админ-панель</b>", reply_markup=admin_kb(), parse_mode="HTML")
 
 
 @router.callback_query(F.data == "admin_grant_admin")
@@ -251,9 +252,9 @@ async def admin_admins_menu(callback: CallbackQuery, state: FSMContext) -> None:
         text += "Админов в БД пока нет (кроме тех, кто в config.ADMIN_IDS)."
     kb = InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="➕ Выдать", callback_data="admin_admin_grant_begin")],
-            [InlineKeyboardButton(text="➖ Забрать", callback_data="admin_admin_revoke_begin")],
-            [InlineKeyboardButton(text="⬅️ Назад", callback_data="admin_back")],
+            [inline_button("add", "Выдать", callback_data="admin_admin_grant_begin")],
+            [inline_button("delete", "Забрать", callback_data="admin_admin_revoke_begin")],
+            [back_inline("admin_back")],
         ]
     )
     await callback.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
@@ -268,7 +269,7 @@ async def admin_grant_admin_begin(callback: CallbackQuery, state: FSMContext) ->
     await state.set_state(AdminState.waiting_grant_admin)
     await callback.message.edit_text(
         "➕ <b>Выдать админ права</b>\n\nОтправь Telegram ID пользователя.",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⬅️ Назад", callback_data="admin_grant_admin")]]),
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[[back_inline("admin_grant_admin")]]),
         parse_mode="HTML",
     )
     await callback.answer()
@@ -282,7 +283,7 @@ async def admin_revoke_admin_begin(callback: CallbackQuery, state: FSMContext) -
     await state.set_state(AdminState.waiting_revoke_admin)
     await callback.message.edit_text(
         "➖ <b>Забрать админ права</b>\n\nОтправь Telegram ID пользователя.",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⬅️ Назад", callback_data="admin_grant_admin")]]),
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[[back_inline("admin_grant_admin")]]),
         parse_mode="HTML",
     )
     await callback.answer()

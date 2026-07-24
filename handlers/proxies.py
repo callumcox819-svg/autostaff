@@ -102,6 +102,74 @@ def _strip_comments(s: str) -> str:
     return s
 
 
+_PROXY_SCHEME_TOKENS = frozenset({"socks5", "socks5h", "socks4", "socks4a", "http", "https"})
+
+
+def _is_proxy_scheme_token(token: str) -> bool:
+    return normalize_proxy_type(token) in _PROXY_SCHEME_TOKENS
+
+
+def _parse_colon_parts(parts: list[str], *, default_type: str = "socks5") -> Optional[dict]:
+    """host:port[:user[:pass[:type]]] — пароль может содержать ':'."""
+    parts = [p.strip() for p in parts if p is not None and str(p).strip() != ""]
+    if len(parts) == 2:
+        host, port = parts
+        if not _is_probable_host(host):
+            return None
+        try:
+            port_i = int(port)
+        except ValueError:
+            return None
+        return {
+            "host": host,
+            "port": port_i,
+            "username": None,
+            "password": None,
+            "type": normalize_proxy_type(default_type),
+        }
+
+    if len(parts) == 4:
+        host, port, user, pwd = parts
+        if not _is_probable_host(host):
+            return None
+        try:
+            port_i = int(port)
+        except ValueError:
+            return None
+        return {
+            "host": host,
+            "port": port_i,
+            "username": user or None,
+            "password": pwd or None,
+            "type": normalize_proxy_type(default_type),
+        }
+
+    if len(parts) >= 4:
+        host, port, user = parts[0], parts[1], parts[2]
+        if not _is_probable_host(host):
+            return None
+        try:
+            port_i = int(port)
+        except ValueError:
+            return None
+        tail = parts[3:]
+        proto = None
+        if len(tail) >= 2 and normalize_proxy_type(tail[-1]) in _PROXY_SCHEME_TOKENS:
+            proto = tail[-1]
+            pwd = ":".join(tail[:-1])
+        else:
+            pwd = ":".join(tail)
+        return {
+            "host": host,
+            "port": port_i,
+            "username": user or None,
+            "password": pwd or None,
+            "type": normalize_proxy_type(proto or default_type),
+        }
+
+    return None
+
+
 # ======================
 #  Парсер строки/блока прокси
 # ======================
@@ -131,16 +199,39 @@ def parse_proxy_string(raw: str) -> Optional[dict]:
     if not raw:
         return None
 
+    # http:host:port:user:pass (без //) или socks5:host:port:...
+    first_colon = raw.find(":")
+    if first_colon > 0 and not raw.lower().startswith(("http://", "https://", "socks5://", "socks4://")):
+        scheme_hint = raw[:first_colon]
+        if _is_proxy_scheme_token(scheme_hint):
+            scheme = normalize_proxy_type(scheme_hint)
+            rest_parts = [p.strip() for p in raw[first_colon + 1 :].split(":")]
+            parsed = _parse_colon_parts(rest_parts, default_type=scheme)
+            if parsed:
+                parsed["type"] = scheme
+                return parsed
+
     # ---------- 1) URL формат ----------
     if "://" in raw:
-        from urllib.parse import urlsplit
+        from urllib.parse import urlsplit, unquote
+
+        scheme_part, _, rest = raw.partition("://")
+        scheme = normalize_proxy_type(scheme_part)
+        # http://host:port:user:pass — без @ (Loma и др.)
+        if _is_proxy_scheme_token(scheme) and "@" not in rest:
+            colon_parsed = _parse_colon_parts(
+                [p.strip() for p in rest.split(":")],
+                default_type=scheme,
+            )
+            if colon_parsed:
+                colon_parsed["type"] = scheme
+                return colon_parsed
+
         try:
             u = urlsplit(raw)
             scheme = normalize_proxy_type(u.scheme)
             host = u.hostname
             port = u.port
-            from urllib.parse import unquote
-
             user = unquote(u.username) if u.username else None
             pwd = unquote(u.password) if u.password else None
             if not host or not port or not _is_probable_host(host):
@@ -210,73 +301,10 @@ def parse_proxy_string(raw: str) -> Optional[dict]:
             pass
 
     # ---------- 3) через ':' ----------
-    parts = raw.split(":")
-    parts = [p.strip() for p in parts if p is not None]
-
-    # ip:port
-    if len(parts) == 2:
-        host, port = parts
-        if not _is_probable_host(host):
-            return None
-        try:
-            port_i = int(port)
-        except ValueError:
-            return None
-        return {
-            "host": host,
-            "port": port_i,
-            "username": None,
-            "password": None,
-            "type": "socks5",
-        }
-
-    # ip:port:user:pass
-    if len(parts) == 4:
-        host, port, user, pwd = parts
-        if not _is_probable_host(host):
-            return None
-        try:
-            port_i = int(port)
-        except ValueError:
-            return None
-        return {
-            "host": host,
-            "port": port_i,
-            "username": user or None,
-            "password": pwd or None,
-            "type": "socks5",
-        }
-
-    # ip:port:user:pass[:type] — пароль может содержать ':'
-    if len(parts) >= 4:
-        host, port, user = parts[0], parts[1], parts[2]
-        if not _is_probable_host(host):
-            return None
-        try:
-            port_i = int(port)
-        except ValueError:
-            return None
-        tail = parts[3:]
-        proto = None
-        if len(tail) >= 2 and normalize_proxy_type(tail[-1]) in (
-            "socks5",
-            "socks5h",
-            "socks4",
-            "socks4a",
-            "http",
-            "https",
-        ):
-            proto = tail[-1]
-            pwd = ":".join(tail[:-1])
-        else:
-            pwd = ":".join(tail)
-        return {
-            "host": host,
-            "port": port_i,
-            "username": user or None,
-            "password": pwd or None,
-            "type": normalize_proxy_type(proto or "socks5"),
-        }
+    parts = [p.strip() for p in raw.split(":") if p is not None]
+    parsed = _parse_colon_parts(parts, default_type="socks5")
+    if parsed:
+        return parsed
 
     return None
 
@@ -505,7 +533,10 @@ async def proxy_add_menu(callback: CallbackQuery, state: FSMContext):
         "<b>Примеры:</b>\n"
         "<code>socks5://user:pass@109.104.153.100:10811</code>\n"
         "<code>http://user:pass@185.90.61.65:8080</code>\n"
+        "<code>http://proxy.example.com:8080:user:pass</code>\n"
+        "<code>http:proxy.example.com:8080:user:pass</code>\n"
         "<code>109.104.153.100:10811:user:pass:socks5</code>\n"
+        "<code>109.104.153.100:8080:user:pass:http</code>\n"
         "<code>user:pass@109.104.153.100:10811</code>\n"
         "<code>8PlwM16nj5ZDjKnE:8PlwM16nj5ZDjKnE@185.90.61.65:14439</code>\n\n"
         "<b>Или так (карточкой):</b>\n"

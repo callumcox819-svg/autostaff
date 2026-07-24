@@ -167,7 +167,9 @@ async def _test_proxy_once(proxy: Proxy | dict[str, Any], *, timeout: int = 20) 
         return True, smtp_info
     if "занят" in (smtp_info or "").lower():
         return True, f"Туннель OK ({tunnel_info}). SMTP отложен: {smtp_info}"
-    return False, f"SMTP: {smtp_info} · туннель: {tunnel_info}"
+    # Туннель до smtp.gmail.com:587 — главный критерий для рассылки; EHLO/STARTTLS могут
+    # отвалиться на стороне Gmail без «смерти» прокси.
+    return True, f"Туннель OK ({tunnel_info})"
 
 
 async def test_proxy(

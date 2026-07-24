@@ -200,7 +200,13 @@ def parse_proxy_string(raw: str) -> Optional[dict]:
     if not raw:
         return None
 
-    # user:pass@host:port — до префикса type: (иначе luxsocks:… путается с socks5)
+    # ---------- URL формат (раньше @ — иначе ломается socks5://user:pass@host) ----------
+    if "://" in raw:
+        parsed_url = _parse_proxy_url_format(raw)
+        if parsed_url:
+            return parsed_url
+
+    # user:pass@host:port
     if "@" in raw:
         parsed_at = _parse_proxy_at_formats(raw)
         if parsed_at:
@@ -218,47 +224,46 @@ def parse_proxy_string(raw: str) -> Optional[dict]:
                 parsed["type"] = scheme
                 return parsed
 
-    # ---------- 1) URL формат ----------
-    if "://" in raw:
-        from urllib.parse import urlsplit, unquote
-
-        scheme_part, _, rest = raw.partition("://")
-        scheme = normalize_proxy_type(scheme_part)
-        # http://host:port:user:pass — без @ (Loma и др.)
-        if _is_proxy_scheme_token(scheme_part) and "@" not in rest:
-            colon_parsed = _parse_colon_parts(
-                [p.strip() for p in rest.split(":")],
-                default_type=scheme,
-            )
-            if colon_parsed:
-                colon_parsed["type"] = scheme
-                return colon_parsed
-
-        try:
-            u = urlsplit(raw)
-            scheme = normalize_proxy_type(u.scheme)
-            host = u.hostname
-            port = u.port
-            user = unquote(u.username) if u.username else None
-            pwd = unquote(u.password) if u.password else None
-            if not host or not port or not _is_probable_host(host):
-                return None
-            return {
-                "host": host,
-                "port": int(port),
-                "username": user,
-                "password": pwd,
-                "type": scheme,
-            }
-        except Exception as e:
-            logger.warning("URL proxy parse failed for '%s': %s", raw, e)
-            return None
-
     parsed_colon = _parse_proxy_colon_only(raw)
     if parsed_colon:
         return parsed_colon
 
     return None
+
+
+def _parse_proxy_url_format(raw: str) -> Optional[dict]:
+    from urllib.parse import urlsplit, unquote
+
+    scheme_part, _, rest = raw.partition("://")
+    scheme = normalize_proxy_type(scheme_part)
+    if _is_proxy_scheme_token(scheme_part) and "@" not in rest:
+        colon_parsed = _parse_colon_parts(
+            [p.strip() for p in rest.split(":")],
+            default_type=scheme,
+        )
+        if colon_parsed:
+            colon_parsed["type"] = scheme
+            return colon_parsed
+
+    try:
+        u = urlsplit(raw)
+        scheme = normalize_proxy_type(u.scheme)
+        host = u.hostname
+        port = u.port
+        user = unquote(u.username) if u.username else None
+        pwd = unquote(u.password) if u.password else None
+        if not host or not port or not _is_probable_host(host):
+            return None
+        return {
+            "host": host,
+            "port": int(port),
+            "username": user,
+            "password": pwd,
+            "type": scheme,
+        }
+    except Exception as e:
+        logger.warning("URL proxy parse failed for '%s': %s", raw, e)
+        return None
 
 
 def _parse_proxy_at_formats(raw: str) -> Optional[dict]:

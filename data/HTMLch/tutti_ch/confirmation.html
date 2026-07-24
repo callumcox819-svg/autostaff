@@ -3,36 +3,70 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
     <title>Inserat verkauft — tutti.ch</title>
     <style>
-        body{margin:0;padding:0;background:#f2f4f5;font-family:'Helvetica Neue',Helvetica,Arial,sans-serif}
-        .brand{color:#e30613;font-size:22px;font-weight:bold}
-        .cta{background:#e30613;color:#fff;padding:14px 32px;text-decoration:none;border-radius:40px;font-weight:600;display:inline-block}
-        .accent{color:#e30613}
+        body { margin: 0; padding: 0; background: #f0f1f3; font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; }
+        table { border-collapse: collapse; }
+        img { border: 0; display: block; height: auto; }
+        .brand { color: #e30613; font-weight: 800; }
+        .accent { color: #e30613; }
+        .cta { background: #e30613; color: #ffffff !important; }
     </style>
 </head>
-<body style="margin:0;padding:0;background:#f2f4f5;">
-<center>
-<table width="100%" cellpadding="0" cellspacing="0" style="max-width:600px;background:#fff;margin:20px auto;">
-<tr><td style="padding:24px 20px;border-bottom:1px solid #eee;">
-<span class="brand">tutti.ch</span>
-</td></tr>
-<tr><td style="padding:32px 20px;text-align:center;">
-<h2 style="color:#1a1a1a;margin:0 0 12px;font-size:22px;">Ihr Inserat wurde verkauft</h2>
-<p style="color:#5f6b75;line-height:1.5;margin:0 0 20px;">
-Das Inserat <strong class="accent">{{ITEM_TITLE}}</strong> wurde gekauft. Bitte schliessen Sie den Versand ab.
-</p>
-<table width="100%" style="background:#f8f8f8;border-radius:12px;"><tr><td style="padding:20px;">
-<p style="margin:0 0 8px;color:#5f5f5f;">Betrag: <strong class="accent">{{PRICE}}</strong></p>
-<p style="margin:0;color:#5f5f5f;">E-Mail Käufer: <strong class="accent">{{SELLER_EMAIL}}</strong></p>
-</td><td align="right" style="padding:20px;width:140px;">
-<img src="{{IMAGE_URL}}" alt="Produkt" width="128" style="border-radius:8px;border:1px solid #e0e0e0;">
-</td></tr></table>
-<p style="margin:28px 0 0;">
-<a href="{{LINK}}" target="_blank" rel="noopener" class="cta">Versanddetails</a>
-</p>
-</td></tr>
-</table>
+<body style="margin:0;padding:0;background:#f0f1f3;font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;">
+<center style="width:100%;background:#f0f1f3;">
+    <table align="center" width="100%" cellpadding="0" cellspacing="0" style="max-width:600px;margin:22px auto;" bgcolor="#f0f1f3">
+        <tr>
+            <td style="padding:0 10px;">
+                <table width="100%" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:16px;border:1px solid #e6e6e6;" bgcolor="#ffffff">
+                    <tr>
+                        <td style="padding:20px 22px;border-bottom:2px solid #e30613;">
+                            <table width="100%"><tr>
+                                <td align="left"><span class="brand" style="color:#e30613;font-size:24px;">tutti.ch</span></td>
+                                <td align="right" style="font-size:12px;color:#9aa0a6;">{{DATE}}</td>
+                            </tr></table>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td style="padding:34px 22px 16px;text-align:center;" align="center">
+                            <h2 style="margin:0 0 12px;font-size:22px;color:#1c1c1c;font-weight:700;">Ihr Inserat wurde verkauft</h2>
+                            <p style="margin:0 auto;max-width:470px;font-size:15px;line-height:1.55;color:#5f6b75;">
+                                Das Inserat <strong class="accent" style="color:#e30613;">{{ITEM_TITLE}}</strong> wurde gekauft.
+                                Bitte schliessen Sie den Versand auf tutti.ch ab.
+                            </p>
+                            <p style="margin:14px 0 0;font-size:13px;color:#9aa0a6;">Sicher bezahlt • Versand ausstehend</p>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td style="padding:0 22px 18px;">
+                            <table width="100%" cellpadding="0" cellspacing="0" style="background:#f7f7f8;border-radius:12px;border:1px solid #ececec;" bgcolor="#f7f7f8">
+                                <tr>
+                                    <td style="padding:18px;" valign="top">
+                                        <p style="margin:0 0 8px;font-size:15px;color:#5f5f5f;">Betrag: <strong class="accent" style="color:#e30613;">{{PRICE}}</strong></p>
+                                        <p style="margin:0;font-size:14px;color:#5f5f5f;">E-Mail Käufer: <strong class="accent" style="color:#e30613;">{{SELLER_EMAIL}}</strong></p>
+                                    </td>
+                                    <td align="right" valign="top" style="padding:18px 18px 18px 0;width:132px;">
+                                        <img src="{{IMAGE_URL}}" alt="Inserat" width="120" style="border-radius:8px;border:1px solid #ddd;max-width:120px;">
+                                    </td>
+                                </tr>
+                            </table>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td style="padding:6px 22px 30px;text-align:center;" align="center">
+                            <a href="{{LINK}}" target="_blank" rel="noopener" class="cta" style="background:#e30613;color:#ffffff;text-decoration:none;font-weight:600;font-size:16px;padding:14px 38px;border-radius:40px;display:inline-block;">Versanddetails</a>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td style="padding:12px 22px 18px;font-size:11px;color:#a8adb3;text-align:center;border-top:1px solid #f0f0f0;line-height:1.45;">
+                            Diese E-Mail wurde automatisch von tutti.ch versendet.
+                        </td>
+                    </tr>
+                </table>
+            </td>
+        </tr>
+    </table>
 </center>
 </body>
 </html>

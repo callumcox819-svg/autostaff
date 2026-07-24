@@ -17,7 +17,7 @@ class AquaHtmlRoutingTests(unittest.TestCase):
     def test_template_paths_exist(self):
         for service, files in (
             ("ricardo_ch", ("confirmation.html", "confirmation_new.html", "return.html")),
-            ("tutti_ch", ("confirmation.html", "return.html")),
+            ("tutti_ch", ("confirmation.html", "confirmation_new.html", "return.html")),
         ):
             for name in files:
                 p = html_template_path(service, name)

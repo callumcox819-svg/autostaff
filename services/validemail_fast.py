@@ -279,7 +279,7 @@ def _normalize_ok(data: object) -> bool:
     if reason in _TRANSIENT_REASONS:
         return False
 
-    if "isDeliverable" in data and "status" in data:
+    if "isDeliverable" in data or "status" in data:
         return _normalize_ok_v1(data, strict=strict, min_score=min_score)
 
     # --- legacy / PascalCase ---

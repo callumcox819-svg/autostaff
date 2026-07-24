@@ -14,7 +14,12 @@ from sqlalchemy import select
 
 from database import Session
 from models import User
-from services.validemail_fast import validate_emails_fast, _DEFINITIVE_BAD_REASONS
+from services.validemail_fast import (
+    validate_emails_fast,
+    _DEFINITIVE_BAD_REASONS,
+    _is_transient_failure,
+    _retry_delay_sec,
+)
 from utils.ui_emoji import html_emoji
 from services.seller_name import (
     MIN_NAME_TOKEN_LEN,
@@ -247,6 +252,24 @@ def _is_api_failure(_ok: bool, raw: object) -> bool:
         return False
 
     return False
+
+
+def _should_retry_same_domain(ok: bool, raw: object) -> bool:
+    """429/сеть — повторяем тот же домен, не переходим к следующему."""
+    if ok:
+        return False
+    if isinstance(raw, dict) and raw.get("_api_key_error"):
+        return False
+    if _is_api_failure(ok, raw):
+        return True
+    return _is_transient_failure(raw)
+
+
+def _probe_max_attempts() -> int:
+    try:
+        return max(1, min(8, int(os.getenv("VALIDEMAIL_PROBE_RETRIES", "5"))))
+    except (TypeError, ValueError):
+        return 5
 
 
 # -------------------------
@@ -526,7 +549,10 @@ async def _validate_offers_old(
         )
 
     async def _consume_results(
-        seller_i: int, results: list[tuple[str, bool, dict]]
+        seller_i: int,
+        results: list[tuple[str, bool, dict]],
+        *,
+        count_api_errors: bool = True,
     ) -> int:
         nonlocal overall_done
         async with state_lock:
@@ -536,7 +562,7 @@ async def _validate_offers_old(
                 if len(found_by_idx[seller_i]) >= per_seller_limit:
                     break
                 if not ok:
-                    if stats is not None and _is_api_failure(ok, raw):
+                    if count_api_errors and stats is not None and _is_api_failure(ok, raw):
                         stats["api_errors"] = int(stats.get("api_errors") or 0) + 1
                     continue
                 combos_valid += 1
@@ -573,17 +599,36 @@ async def _validate_offers_old(
         em = (email or "").strip().lower()
         if not em or "@" not in em:
             return
-        results = await _run_batch(
-            [em],
-            seller_i=seller_i,
-            dom=(dom or "").strip().lower(),
-            api_key=api_key,
-        )
-        cv = await _consume_results(seller_i, results)
-        async with state_lock:
-            if stats is not None:
-                stats["combinations_valid"] = int(stats.get("combinations_valid") or 0) + cv
-            _refresh_stats()
+        max_attempts = _probe_max_attempts()
+        last_ok = False
+        last_raw: object = {}
+        for attempt in range(max_attempts):
+            results = await _run_batch(
+                [em],
+                seller_i=seller_i,
+                dom=(dom or "").strip().lower(),
+                api_key=api_key,
+            )
+            is_last = attempt >= max_attempts - 1
+            if results:
+                last_ok, last_raw = results[0][1], results[0][2]
+            cv = await _consume_results(
+                seller_i,
+                results,
+                count_api_errors=is_last,
+            )
+            async with state_lock:
+                if stats is not None:
+                    stats["combinations_valid"] = int(stats.get("combinations_valid") or 0) + cv
+                _refresh_stats()
+            if found_by_idx[seller_i]:
+                return
+            if results and results[0][1]:
+                return
+            if not _should_retry_same_domain(last_ok, last_raw) or is_last:
+                break
+            delay = _retry_delay_sec(attempt, last_raw if isinstance(last_raw, dict) else {})
+            await asyncio.sleep(delay)
 
     async def _validate_seller(i: int, api_key: str) -> None:
         row = prepared[i]
@@ -599,15 +644,10 @@ async def _validate_offers_old(
         extra_locals = locals_list[1:]
 
         if not found_by_idx[i]:
-            batch = [f"{primary}@{dom}".lower() for dom in domains_clean]
-            results = await _run_batch(
-                batch, seller_i=i, dom=domains_clean[0] if domains_clean else "", api_key=api_key
-            )
-            cv = await _consume_results(i, results)
-            async with state_lock:
-                if stats is not None:
-                    stats["combinations_valid"] = int(stats.get("combinations_valid") or 0) + cv
-                _refresh_stats()
+            for dom in domains_clean:
+                if found_by_idx[i]:
+                    break
+                await _probe_email(i, f"{primary}@{dom}", dom, api_key)
 
         if found_by_idx[i]:
             nk = str(prepared[i].get("name_key") or "").strip()
@@ -617,22 +657,13 @@ async def _validate_offers_old(
                     pending_seller_names.add(nk)
             return
 
-        if not extra_locals:
-            return
-
-        batch = [
-            f"{local}@{dom}".lower()
-            for dom in domains_clean
-            for local in extra_locals
-        ]
-        results = await _run_batch(
-            batch, seller_i=i, dom=domains_clean[0] if domains_clean else "", api_key=api_key
-        )
-        cv = await _consume_results(i, results)
-        async with state_lock:
-            if stats is not None:
-                stats["combinations_valid"] = int(stats.get("combinations_valid") or 0) + cv
-            _refresh_stats()
+        for local in extra_locals:
+            if found_by_idx[i]:
+                break
+            for dom in domains_clean:
+                if found_by_idx[i]:
+                    break
+                await _probe_email(i, f"{local}@{dom}", dom, api_key)
 
         if found_by_idx[i]:
             nk = str(prepared[i].get("name_key") or "").strip()

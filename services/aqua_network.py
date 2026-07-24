@@ -168,6 +168,7 @@ async def generate_aqua_link_no_parse(
     image: str | None = None,
     balance_checker: bool = False,
     timeout_sec: float = 30.0,
+    domain: int | None = None,
 ) -> str:
     """POST {GAG_API_BASE}/generate — ссылка по названию/цене/фото."""
     _ = team_api_key
@@ -195,7 +196,7 @@ async def generate_aqua_link_no_parse(
         "address": addr,
         "service": service,
         "balanceChecker": _balance_checker_flag(balance_checker),
-        "domain": _generate_domain_num(),
+        "domain": max(1, min(8, int(domain))) if domain is not None else _generate_domain_num(),
         "version": _link_version(),
     }
     if img.lower().startswith(("http://", "https://")):
@@ -250,6 +251,7 @@ async def generate_aqua_link(
     balance_checker: bool = False,
     prefer_parse: bool = True,
     timeout_sec: float = 30.0,
+    domain: int | None = None,
 ) -> str:
     _ = (listing_url, prefer_parse, team_api_key)
     resolved_img = (image or "").strip()
@@ -267,4 +269,5 @@ async def generate_aqua_link(
         image=resolved_img or image,
         balance_checker=balance_checker,
         timeout_sec=timeout_sec,
+        domain=domain,
     )

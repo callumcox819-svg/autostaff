@@ -16,23 +16,28 @@ from services.aqua_keys import (
     AQUA_PROFILE_ADDRESS_KEY,
     AQUA_PROFILE_NAME_KEY,
     AQUA_PROFILE_TITLE_KEY,
+    AQUA_GENERATE_DOMAIN_KEY,
     AQUA_SERVICE_CHOICES,
     AQUA_SERVICE_KEY,
     AQUA_USER_API_KEY_SETTING,
+    GENERATE_DOMAIN_CHOICES,
     aqua_service_label,
     aqua_service_matches,
+    generate_domain_label,
     get_user_aqua_service,
+    get_user_generate_domain,
     get_user_aqua_user_key_async,
     get_user_profile_address,
     get_user_profile_buyer_name,
     get_user_profile_title,
     normalize_aqua_api_key,
+    normalize_aqua_service,
     user_profile_fields_complete,
 )
 from services.aqua_network import AquaError, generate_api_base, generate_api_configured, verify_gag_auth
 from services.user_settings import set_user_setting
 from utils.secrets import clean_secret
-from utils.ui_emoji import html_emoji, inline_button, back_inline, menu_path, toast, msg_fail, msg_ok, msg_wait, msg_warn
+from utils.ui_emoji import html_emoji, inline_button, back_inline, menu_path, toast, msg_fail, msg_ok, msg_wait, msg_warn, unicode_fallback
 
 router = Router(name="api_keys")
 
@@ -56,17 +61,33 @@ def profile_screen_kb() -> InlineKeyboardMarkup:
         inline_keyboard=[
             [inline_button("edit", "Заполнить / изменить", callback_data="aqua_profile_create")],
             [inline_button("compass", "Сервис", callback_data="aqua_service_pick")],
+            [inline_button("link", "Домен GAG", callback_data="aqua_domain_pick")],
             [back_inline("settings_open")],
             [inline_button("hide", "Скрыть", callback_data="aqua_hide")],
         ]
     )
 
 
+def domain_picker_kb(current: int) -> InlineKeyboardMarkup:
+    cur = str(int(current))
+    rows: list[list[InlineKeyboardButton]] = []
+    for code, label in GENERATE_DOMAIN_CHOICES:
+        mark = f"{unicode_fallback('ok')} " if code == cur else ""
+        rows.append([
+            InlineKeyboardButton(
+                text=f"{mark}{label}".strip(),
+                callback_data=f"aqua_domain_set:{code}",
+            )
+        ])
+    rows.append([back_inline("aqua_show:profile")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
 def service_picker_kb(current: str) -> InlineKeyboardMarkup:
     rows: list[list[InlineKeyboardButton]] = []
     for code in AQUA_SERVICE_CHOICES:
         label = aqua_service_label(code)
-        mark = f'{html_emoji("ok")} ' if aqua_service_matches(current, code) else ""
+        mark = f"{unicode_fallback('ok')} " if aqua_service_matches(current, code) else ""
         rows.append([
             InlineKeyboardButton(
                 text=f"{mark}{label}".strip(),
@@ -100,11 +121,17 @@ def _field_line(label: str, value: str) -> str:
 async def _render_profile_screen(callback: CallbackQuery) -> None:
     async with Session() as session:
         user = await get_or_create_user(session, callback.from_user.id)
+        raw_svc = (await get_user_setting(session, user, AQUA_SERVICE_KEY) or "").strip()
+        if not normalize_aqua_service(raw_svc):
+            default_svc = normalize_aqua_service(AQUA_DEFAULT_SERVICE) or AQUA_DEFAULT_SERVICE
+            await set_user_setting(session, user, AQUA_SERVICE_KEY, default_svc)
         title = await get_user_profile_title(session, user)
         buyer = await get_user_profile_buyer_name(session, user)
         addr = await get_user_profile_address(session, user)
         service = await get_user_aqua_service(session, user)
+        domain_n = await get_user_generate_domain(session, user)
         complete = await user_profile_fields_complete(session, user)
+        await session.commit()
         status = (
             f"{html_emoji('green')} готов к генерации"
             if complete
@@ -116,7 +143,8 @@ async def _render_profile_screen(callback: CallbackQuery) -> None:
             f"{_field_line('Название профиля', title)}\n"
             f"{_field_line('Имя получателя', buyer)}\n"
             f"{_field_line('Адрес доставки', addr)}\n"
-            f"{_field_line('Сервис', aqua_service_label(service))}\n\n"
+            f"{_field_line('Сервис', aqua_service_label(service))}\n"
+            f"{_field_line('Домен GAG', generate_domain_label(domain_n))}\n\n"
             f"Статус: {status}"
         )
     try:
@@ -181,6 +209,40 @@ async def aqua_service_pick(callback: CallbackQuery, state: FSMContext) -> None:
         parse_mode="HTML",
     )
     await callback.answer()
+
+
+@router.callback_query(F.data == "aqua_domain_pick")
+async def aqua_domain_pick(callback: CallbackQuery, state: FSMContext) -> None:
+    await state.clear()
+    async with Session() as session:
+        user = await get_or_create_user(session, callback.from_user.id)
+        domain_n = await get_user_generate_domain(session, user)
+    text = (
+        f"{html_emoji('link')} <b>Домен GAG</b>\n\n"
+        f"Текущий: <b>{generate_domain_label(domain_n)}</b> "
+        f"(<code>domain={domain_n}</code> в API)\n\n"
+        "Какой домен использовать при генерации ссылок:"
+    )
+    await callback.message.edit_text(
+        text,
+        reply_markup=domain_picker_kb(domain_n),
+        parse_mode="HTML",
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("aqua_domain_set:"))
+async def aqua_domain_set(callback: CallbackQuery, state: FSMContext) -> None:
+    code = (callback.data or "").split(":", 1)[1].strip()
+    if code not in {c for c, _ in GENERATE_DOMAIN_CHOICES}:
+        return await callback.answer("Неизвестный домен", show_alert=True)
+    async with Session() as session:
+        user = await get_or_create_user(session, callback.from_user.id)
+        await set_user_setting(session, user, AQUA_GENERATE_DOMAIN_KEY, code)
+        await session.commit()
+    await state.clear()
+    await callback.answer(generate_domain_label(int(code)))
+    await _render_profile_screen(callback)
 
 
 @router.callback_query(F.data.startswith("aqua_service_set:"))

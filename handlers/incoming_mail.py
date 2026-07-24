@@ -36,6 +36,7 @@ from services.aqua_keys import (
     get_user_aqua_api_keys_async,
     get_user_aqua_profile_display,
     get_user_aqua_service,
+    get_user_generate_domain,
     get_user_profile_address,
     get_user_profile_buyer_name,
     is_valid_aqua_service,
@@ -134,6 +135,7 @@ async def _aqua_generate_link(
 
         offer = await find_offer_by_link(session, user_id=int(user.id), ad_url=listing_url)
     resolved_image = await resolve_aqua_image_url(session, user, offer, image)
+    domain_n = await get_user_generate_domain(session, user)
     return await generate_aqua_link(
         user_api_key=user_key,
         team_api_key=team_key,
@@ -144,6 +146,7 @@ async def _aqua_generate_link(
         name=title,
         price=price,
         image=resolved_image,
+        domain=domain_n,
     )
 
 

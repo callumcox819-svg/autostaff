@@ -29,6 +29,7 @@ from services.aqua_keys import (
     aqua_service_for_html_dir,
     aqua_service_label,
     get_user_aqua_service,
+    is_valid_aqua_service,
 )
 from config import config
 
@@ -225,7 +226,7 @@ async def _spoof_name_menu_payload(tg_user_id: int) -> tuple[str, InlineKeyboard
     async with db_session() as session:
         user = await get_or_create_user(session, tg_user_id)
         service = await get_user_aqua_service(session, user)
-        if not service:
+        if not is_valid_aqua_service(service):
             return None
         key = _html_nick_key_for_service(service)
         cur = (await get_user_setting(session, user, key) or "").strip()
@@ -291,8 +292,8 @@ async def spoof_name_menu(callback: CallbackQuery, state: FSMContext) -> None:
 async def spoof_name_set(callback: CallbackQuery, state: FSMContext) -> None:
     async with Session() as session:
         user = await get_or_create_user(session, callback.from_user.id)
-        service = (await get_user_setting(session, user, AQUA_SERVICE_KEY) or "").strip()
-        if not service:
+        service = await get_user_aqua_service(session, user)
+        if not is_valid_aqua_service(service):
             return await callback.answer("Сначала выберите сервис в профиле", show_alert=True)
     await state.set_state(SpoofNameState.waiting_name)
     await state.update_data(

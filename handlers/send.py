@@ -159,19 +159,23 @@ async def _record_successful_send(
 async def _build_message_for_target(
     session: AsyncSession, tg_user_id: int, tgt: OfferEmail
 ) -> Tuple[str, str]:
-    """Случайный умный пресет / первое смс на каждый адрес (ротация текстов)."""
-    offer: Offer | None = getattr(tgt, "offer", None)
+    """Умный пресет + тема с OFFER = название товара из оффера в очереди."""
+    from services.offer_storage import offer_effective_title, offer_for_mailing_target
 
-    from services.offer_storage import offer_effective_title
-
+    offer = await offer_for_mailing_target(session, tgt)
     item_title = offer_effective_title(offer)
-    price = (getattr(offer, "price", "") or "").strip()
-    link = (getattr(offer, "link", "") or "").strip()
-    image_url = (getattr(offer, "photo", "") or "").strip()
+    price = (getattr(offer, "price", "") or "").strip() if offer else ""
+    link = (getattr(offer, "link", "") or "").strip() if offer else ""
+    image_url = (getattr(offer, "photo", "") or "").strip() if offer else ""
 
     user = await get_or_create_user(session, tg_user_id)
     buyer_name = ((await get_user_setting(session, user, AQUA_PROFILE_NAME_KEY)) or "").strip()
     address = ((await get_user_setting(session, user, AQUA_PROFILE_ADDRESS_KEY)) or "").strip()
+
+    from services.mailing_deliverability import finalize_inbox_mail
+    from services.subject_offer import global_mailing_subject
+
+    subject = global_mailing_subject(item_title or "")
 
     ctx = {
         "ITEM_TITLE": item_title,
@@ -185,24 +189,24 @@ async def _build_message_for_target(
     try:
         from handlers.templates import pick_random_smart_preset
 
-        base_text = await pick_random_smart_preset(tg_user_id, item_title)
+        base_text = await pick_random_smart_preset(
+            tg_user_id, item_title, salt=int(getattr(tgt, "id", 0) or 0)
+        )
     except Exception:
         base_text = ""
     if not (base_text or "").strip():
-        base_text = (
-            "Grüezi! Ist der Artikel noch verfügbar? " + (item_title or "OFFER")
-        ).strip()
+        import random
+
+        from services.mailing_defaults import MAILING_FALLBACK_BODIES
+        from services.spintax import expand_spintax
+
+        base_text = expand_spintax(random.choice(MAILING_FALLBACK_BODIES))
 
     body = apply_placeholders(base_text, link=link, ctx=ctx)
     from services.offer_text import finalize_mailing_body
 
     body = finalize_mailing_body(body, item_title)
 
-    from services.subject_offer import SUBJECT_TEMPLATE_SETTING
-    from services.mailing_deliverability import finalize_inbox_mail, pick_rotating_subject
-
-    user_tpl = (await get_user_setting(session, user, SUBJECT_TEMPLATE_SETTING) or "").strip()
-    subject = pick_rotating_subject(item_title or "", user_template=user_tpl or None)
     subject, body = finalize_inbox_mail(subject, body)
     return subject, body
 
@@ -373,6 +377,10 @@ async def _start_sending_inner(
     asyncio.create_task(
         _burst_sending_loop(bot=bot, chat_id=chat_id, tg_user_id=tg_user_id)
     )
+
+    from services.mailing_deliverability import log_deliverability_profile
+
+    log_deliverability_profile(logger)
 
 
 async def _handle_send_failure(

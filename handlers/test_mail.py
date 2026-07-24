@@ -37,12 +37,8 @@ TEST_MAIL_RECIPIENTS_KEY = "test_mail_recipients"
 MAX_TEST_RECIPIENTS = 4
 TEST_SEND_DELAY_SEC = 2.0
 
-# Запасные DE-тексты (ASCII → 7bit), если пресетов нет
-_CH_FALLBACK_BODIES = [
-    "Grüezi! Ist der Artikel noch verfügbar? Besten Dank.",
-    "Guten Tag, ich interessiere mich für Ihr Inserat. Ist es noch zu haben?",
-    "Hallo, ich würde gerne wissen, ob Sie das noch verkaufen. Freundliche Grüsse.",
-]
+from services.mailing_defaults import MAILING_FALLBACK_BODIES
+from services.spintax import expand_spintax
 
 class TestMailStates(StatesGroup):
     waiting_recipients = State()
@@ -290,9 +286,10 @@ async def _build_test_message(
         ).first()
         item_title = (row[0] if row else "") or "OFFER"
 
-    from services.subject_offer import mailing_subject_for_user
+    from services.mailing_deliverability import finalize_inbox_mail
+    from services.subject_offer import global_mailing_subject
 
-    subject = await mailing_subject_for_user(session, user, item_title)
+    subject = global_mailing_subject(item_title or "")
 
     price = (getattr(offer, "price", "") or "").strip() if offer else ""
     link = (getattr(offer, "link", "") or "").strip() if offer else ""
@@ -309,16 +306,15 @@ async def _build_test_message(
         "IMAGE_URL": image_url,
     }
 
-    base_text = await pick_random_smart_preset(tg_id, item_title)
+    base_text = await pick_random_smart_preset(tg_id, item_title, salt=random.randint(0, 10_000))
     if not (base_text or "").strip():
-        base_text = random.choice(_CH_FALLBACK_BODIES)
-        if item_title and item_title != "OFFER":
-            base_text = f"{base_text} ({item_title})"
+        base_text = expand_spintax(random.choice(MAILING_FALLBACK_BODIES))
 
     body = apply_placeholders(base_text, link=link, ctx=ctx)
     from services.offer_text import finalize_mailing_body
 
     body = finalize_mailing_body(body, item_title)
+    subject, body = finalize_inbox_mail(subject, body)
     return subject, body, item_title
 
 

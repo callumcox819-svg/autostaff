@@ -13,7 +13,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import db_session
 from models import EmailAccount, OfferEmail
-from services.mailing_deliverability import burst_wave_gap_sec, inbox_stagger_ms
+from services.mailing_deliverability import burst_wave_gap_sec, inbox_stagger_ms, log_deliverability_profile
+from services.mailing_rotation import (
+    last_sent_ts_by_account,
+    order_accounts_for_burst,
+    pair_targets_with_accounts,
+)
 from services.mailing_send import send_mailing_one_parallel
 from services.sender import normalize_send_error
 from services.smtp_proxy_send import pick_sticky_proxy_for_fast_mailing
@@ -25,24 +30,15 @@ BURST_RETRY_PAUSE_SEC = max(
     0.0, min(1.0, float(os.getenv("BURST_RETRY_PAUSE_SEC", "0.06")))
 )
 BURST_PER_LETTER_TIMEOUT_SEC = max(
-    12, min(60, int(os.getenv("BURST_PER_LETTER_TIMEOUT_SEC", "28")))
+    12, min(60, int(os.getenv("BURST_PER_LETTER_TIMEOUT_SEC", "24")))
 )
 
 
 def shuffle_accounts(accounts: Sequence[EmailAccount]) -> List[EmailAccount]:
+    """Совместимость: случайный порядок (prefer order_accounts_for_burst)."""
     out = list(accounts)
     random.shuffle(out)
     return out
-
-
-def pair_targets_with_accounts(
-    targets: Sequence[OfferEmail],
-    accounts: Sequence[EmailAccount],
-) -> List[Tuple[OfferEmail, EmailAccount]]:
-    acc_list = shuffle_accounts(accounts)
-    if not acc_list:
-        return []
-    return [(tgt, acc_list[i % len(acc_list)]) for i, tgt in enumerate(targets)]
 
 
 def split_into_waves(
@@ -168,14 +164,22 @@ async def run_burst_mailing(
 
     async with db_session() as session:
         sticky_px = await pick_sticky_proxy_for_fast_mailing(session, int(db_user_id))
+        last_sent = await last_sent_ts_by_account(session, int(db_user_id))
     if not sticky_px:
         raise RuntimeError("NO_ROTATING_PROXY")
 
+    log_deliverability_profile(logger)
+
     sticky_proxy_id = int(sticky_px.id)
-    pairs = pair_targets_with_accounts(targets, accounts)
-    wave_size = len(list(accounts))
+    acc_ordered = order_accounts_for_burst(list(accounts), last_sent=last_sent)
+    pairs = pair_targets_with_accounts(targets, acc_ordered)
+    wave_size = max(1, len(acc_ordered))
     waves = split_into_waves(pairs, wave_size=wave_size)
-    wave_gap = burst_wave_gap_sec(len(waves))
+    est_wave = min(
+        float(BURST_PER_LETTER_TIMEOUT_SEC) * 0.45,
+        8.0,
+    )
+    wave_gap = burst_wave_gap_sec(len(waves), estimated_wave_sec=est_wave)
     stagger_s = inbox_stagger_ms() / 1000.0
 
     sent = failed = 0

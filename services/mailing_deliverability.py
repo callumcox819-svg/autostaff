@@ -35,6 +35,16 @@ CH_INBOX_SUBJECT_PRESETS: tuple[str, ...] = (
     "Interesse an OFFER",
     "OFFER – noch da?",
     "Frage zu OFFER",
+    "Anfrage: OFFER",
+    "OFFER – noch aktuell?",
+    "Kurze Anfrage zu OFFER",
+)
+
+_INBOX_OPENERS: tuple[str, ...] = (
+    "",
+    "Grüezi!\n\n",
+    "Guten Tag,\n\n",
+    "Hallo,\n\n",
 )
 
 # Лёгкая уникализация тела (каждое письмо чуть отличается)
@@ -123,7 +133,7 @@ def strip_links_from_body(body: str) -> str:
 
 def sanitize_subject_for_inbox(subject: str) -> str:
     s = (subject or "").replace("\r\n", " ").replace("\n", " ").strip()
-    s = FAKE_REPLY_SUBJ_RE.sub("", s).strip()
+    # Re: OFFER из GLOBAL_SUBJECT_TEMPLATE не снимаем — осознанный префикс для инбокса.
     s = re.sub(r"^\s*betreff\s*:\s*", "", s, flags=re.I).strip()
     s = re.sub(r"\s+", " ", s)
     if len(s) > 78:
@@ -145,14 +155,17 @@ def sanitize_body_for_inbox(body: str) -> str:
 
 
 def add_inbox_body_variation(body: str) -> str:
-    """Микро-уникализация — разные подписи, не один шаблон на 100 адресов."""
+    """Микро-уникализация — разные подписи и приветствия."""
     b = (body or "").strip()
+    opener = random.choice(_INBOX_OPENERS)
+    if opener and not b.lower().startswith(("grüezi", "guten tag", "hallo", "hello")):
+        b = f"{opener.strip()}\n\n{b}" if opener.strip() else b
     closing = random.choice(_INBOX_CLOSINGS)
     if not closing:
-        return b
+        return b.strip()
     if closing.lower() in b.lower()[-40:]:
-        return b
-    return f"{b}\n\n{closing}"
+        return b.strip()
+    return f"{b}\n\n{closing}".strip()
 
 
 def apply_mailing_body_policy(body: str) -> str:
@@ -171,14 +184,18 @@ def finalize_inbox_mail(subject: str, body: str) -> tuple[str, str]:
 
 
 def pick_rotating_subject(offer_title: str, *, user_template: str | None = None) -> str:
-    from services.subject_offer import render_subject_with_offer
+    from services.subject_offer import global_subject_template, render_subject_with_offer
 
-    if (user_template or "").strip():
-        raw = render_subject_with_offer(user_template, offer_title)
+    pool: list[str] = list(CH_INBOX_SUBJECT_PRESETS)
+    ut = (user_template or "").strip()
+    if ut:
+        pool = [ut]
     else:
-        tpl = random.choice(CH_INBOX_SUBJECT_PRESETS)
-        raw = render_subject_with_offer(tpl, offer_title)
-    return sanitize_subject_for_inbox(raw)
+        gt = (global_subject_template() or "").strip()
+        if gt:
+            pool.append(gt)
+    tpl = random.choice(pool)
+    return render_subject_with_offer(tpl, offer_title)
 
 
 def log_deliverability_profile(logger) -> None:

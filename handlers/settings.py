@@ -616,49 +616,23 @@ async def ref_open_commands(callback: CallbackQuery, state: FSMContext):
 @router.callback_query(F.data == "themes_menu")
 async def themes_menu(callback: CallbackQuery, state: FSMContext):
     await state.clear()
-    from services.subject_offer import MAILING_SUBJECT_PRESETS, global_subject_template
+    from html import escape
 
-    async with Session() as session:
-        user = await get_or_create_user(session, callback.from_user.id)
-        cur = (await get_user_setting(session, user, SUBJECT_TEMPLATE_KEY) or "").strip()
+    from services.subject_offer import global_subject_template, render_subject_with_offer
 
-    effective = cur or global_subject_template()
-    preset_rows: list[list[InlineKeyboardButton]] = []
-    row: list[InlineKeyboardButton] = []
-    for key, label in MAILING_SUBJECT_PRESETS:
-        mark = "🟩 " if label == effective else ""
-        row.append(
-            InlineKeyboardButton(
-                text=f"{mark}{label}",
-                callback_data=f"themes_preset:{key}",
-            )
-        )
-        if len(row) == 2:
-            preset_rows.append(row)
-            row = []
-    if row:
-        preset_rows.append(row)
-
-    kb = InlineKeyboardMarkup(
-        inline_keyboard=[
-            *preset_rows,
-            [inline_button("edit", "Свой шаблон", callback_data="themes_edit")],
-            [inline_button("delete", "Сброс (по умолчанию)", callback_data="themes_clear")],
-            _back_kb("settings_open").inline_keyboard[0],
-        ]
-    )
-    cur_show = effective
-    example_title = "Pöytäliina"
-    from services.subject_offer import render_subject_with_offer
-
-    preview = render_subject_with_offer(cur_show, example_title)
+    tpl = global_subject_template()
+    preview = render_subject_with_offer(tpl, "Velo Zürich")
     txt = (
         f"{html_emoji('pin')} <b>Тема рассылки (/send)</b>\n\n"
-        "Глобально для <b>всех</b> (как happy88: по умолчанию только название товара).\n"
-        "<code>OFFER</code> = название товара.\n\n"
-        f"Шаблон: <code>{cur_show}</code>\n"
-        f"Пример: <code>{preview}</code>\n\n"
-        "<i>GLOBAL_SUBJECT_TEMPLATE в .env. Длинные ложные Re:… хуже для инбокса.</i>"
+        "Один шаблон для <b>всех пользователей</b>.\n"
+        "<code>OFFER</code> или <code>{{OFFER}}</code> — название товара из валид. объявления.\n\n"
+        f"Шаблон: <code>{escape(tpl)}</code>\n"
+        f"Пример: <code>{escape(preview)}</code>\n\n"
+        "Меняется только на сервере: <code>GLOBAL_SUBJECT_TEMPLATE</code> в Railway / .env\n"
+        "(по умолчанию <code>Re: OFFER</code>)."
+    )
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[_back_kb("settings_open").inline_keyboard[0]],
     )
     await _safe_send(callback.message.edit_text(txt, reply_markup=kb, parse_mode="HTML"))
     await callback.answer()
@@ -666,91 +640,38 @@ async def themes_menu(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data.startswith("themes_preset:"))
 async def themes_preset_set(callback: CallbackQuery, state: FSMContext) -> None:
-    from services.subject_offer import MAILING_SUBJECT_PRESETS
-
-    key = (callback.data or "").split(":", 1)[-1].strip()
-    tpl = ""
-    for k, label in MAILING_SUBJECT_PRESETS:
-        if k == key:
-            tpl = label
-            break
-    if not tpl:
-        return await callback.answer("Неизвестный шаблон", show_alert=True)
-
-    async with Session() as session:
-        user = await get_or_create_user(session, callback.from_user.id)
-        await set_user_setting(session, user, SUBJECT_TEMPLATE_KEY, tpl)
-        await session.commit()
-
-    await callback.answer(f"{html_emoji('ok')} {tpl}")
+    await callback.answer(
+        "Тема рассылки задаётся глобально: GLOBAL_SUBJECT_TEMPLATE на сервере.",
+        show_alert=True,
+    )
     await themes_menu(callback, state)
 
 @router.callback_query(F.data == "themes_edit")
 async def themes_edit(callback: CallbackQuery, state: FSMContext):
     await state.clear()
-    await state.set_state(_SettingsInput.subject_template)
-    await _safe_send(callback.message.edit_text(
-        f"{html_emoji('pin')} <b>Тема рассылки</b>\n\n"
-        "Отправь шаблон с <code>OFFER</code> (название товара).\n"
-        "Примеры: <code>Re: OFFER</code>, <code>Tuote: OFFER</code>\n"
-        "Сброс — отправь <code>-</code>.",
-        reply_markup=_back_kb("themes_menu"),
-        parse_mode="HTML",
-    ))
-    await callback.answer()
+    await callback.answer(
+        "Тема рассылки — только GLOBAL_SUBJECT_TEMPLATE на сервере (Railway).",
+        show_alert=True,
+    )
+    await themes_menu(callback, state)
 
 
 @router.message(_SettingsInput.subject_template)
 async def themes_set(message: Message, state: FSMContext):
-    val = (message.text or "").strip()
-    if val == "-":
-        val = ""
-    async with Session() as session:
-        user = await get_or_create_user(session, message.from_user.id)
-        await set_user_setting(session, user, SUBJECT_TEMPLATE_KEY, val)
-        await session.commit()
     await state.clear()
-    await _themes_menu_after_save(message, state, val)
-
-
-async def _themes_menu_after_save(message: Message, state: FSMContext, cur_show: str) -> None:
-    from services.subject_offer import MAILING_SUBJECT_PRESETS, global_subject_template, render_subject_with_offer
-
-    effective = cur_show or global_subject_template()
-    preset_rows: list[list[InlineKeyboardButton]] = []
-    row: list[InlineKeyboardButton] = []
-    for key, label in MAILING_SUBJECT_PRESETS:
-        mark = "🟩 " if label == effective else ""
-        row.append(
-            InlineKeyboardButton(text=f"{mark}{label}", callback_data=f"themes_preset:{key}")
-        )
-        if len(row) == 2:
-            preset_rows.append(row)
-            row = []
-    if row:
-        preset_rows.append(row)
-    kb = InlineKeyboardMarkup(
-        inline_keyboard=[
-            *preset_rows,
-            [inline_button("edit", "Свой шаблон", callback_data="themes_edit")],
-            [inline_button("delete", "Сброс (по умолчанию)", callback_data="themes_clear")],
-            _back_kb("settings_open").inline_keyboard[0],
-        ]
+    await message.answer(
+        f"{html_emoji('info')} Тема рассылки задаётся глобально: "
+        "<code>GLOBAL_SUBJECT_TEMPLATE</code> в Railway (по умолчанию <code>Re: OFFER</code>).",
+        parse_mode="HTML",
     )
-    preview = render_subject_with_offer(effective, "Pöytäliina")
-    txt = (
-        f"{html_emoji('pin')} <b>Тема рассылки (/send)</b>\n\n"
-        f"Сохранено: <code>{effective}</code>\n"
-        f"Пример: <code>{preview}</code>"
-    )
-    await message.answer(txt, reply_markup=kb, parse_mode="HTML")
+
 
 @router.callback_query(F.data == "themes_clear")
 async def themes_clear(callback: CallbackQuery, state: FSMContext):
-    async with Session() as session:
-        user = await get_or_create_user(session, callback.from_user.id)
-        await set_user_setting(session, user, SUBJECT_TEMPLATE_KEY, "")
-    await callback.answer(toast("ok", "Очищено"))
+    await callback.answer(
+        "Тема рассылки — только GLOBAL_SUBJECT_TEMPLATE на сервере.",
+        show_alert=True,
+    )
     await themes_menu(callback, state)
 
 # =========================

@@ -39,7 +39,7 @@ class Config:
     VALIDEMAIL_API_TIMEOUT = int(os.getenv("VALIDEMAIL_API_TIMEOUT", "12"))
     VALIDEMAIL_MAX_RETRIES = int(os.getenv("VALIDEMAIL_MAX_RETRIES", "3"))
 
-    GLOBAL_SUBJECT_TEMPLATE = os.getenv("GLOBAL_SUBJECT_TEMPLATE", "OFFER").strip() or "OFFER"
+    GLOBAL_SUBJECT_TEMPLATE = os.getenv("GLOBAL_SUBJECT_TEMPLATE", "Re: OFFER").strip() or "Re: OFFER"
 
     # GAG / APEX API — docs.domainforapi.com
     GAG_API_BASE = (

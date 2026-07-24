@@ -167,8 +167,13 @@ async def _mailing_text_pool(tg_id: int) -> List[str]:
     return pool
 
 
-async def pick_random_smart_preset(tg_id: int, offer_title: str) -> str:
-    """Случайный текст: пресет → спинтакс {a|b} → OFFER = название товара."""
+async def pick_random_smart_preset(
+    tg_id: int,
+    offer_title: str,
+    *,
+    salt: int | None = None,
+) -> str:
+    """Текст: умные пресеты + spintax; salt (offer_email.id) — разный пресет на адрес без гонок."""
     import random
 
     from services.offer_text import apply_offer_to_text
@@ -177,7 +182,11 @@ async def pick_random_smart_preset(tg_id: int, offer_title: str) -> str:
     texts = await _mailing_text_pool(tg_id)
     if not texts:
         return ""
-    base = texts[random.randrange(len(texts))]
+    if salt is not None and len(texts) > 1:
+        idx = int(salt) % len(texts)
+        base = texts[idx]
+    else:
+        base = texts[random.randrange(len(texts))]
     txt = expand_spintax(base)
     return apply_offer_to_text(txt, offer_title)
 

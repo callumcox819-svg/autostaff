@@ -102,17 +102,35 @@ def offer_effective_price(offer: Offer | None, *, default: str = "0") -> str:
 
 
 def offer_effective_title(offer: Offer | None) -> str:
-    """Название: Offer.title, иначе item_title/title из raw_json."""
+    """Название: Offer.title, иначе item_title/title из raw_json (VOID / валид. данные)."""
     if not offer:
         return ""
     t = str(getattr(offer, "title", None) or "").strip()
     if t:
         return t
     raw = parse_offer_raw(getattr(offer, "raw_json", None))
-    return _first_raw_str(
+    t = _first_raw_str(
         raw,
-        ("item_title", "title", "product_title", "ad_title", "offer_title"),
+        ("item_title", "title", "product_title", "ad_title", "offer_title", "name_title"),
     )
+    if t:
+        return t
+    void = raw.get("void")
+    if isinstance(void, dict):
+        nested = _title_from_item_dict(void)
+        if nested:
+            return nested
+    return ""
+
+
+async def offer_for_mailing_target(session, tgt: OfferEmail) -> Offer | None:
+    """Offer для /send — всегда из БД по offer_id (не от detached relationship)."""
+    oid = int(getattr(tgt, "offer_id", 0) or 0)
+    if oid:
+        off = await session.get(Offer, oid)
+        if off is not None:
+            return off
+    return getattr(tgt, "offer", None)
 
 
 def offer_effective_link(offer: Offer | None) -> str:

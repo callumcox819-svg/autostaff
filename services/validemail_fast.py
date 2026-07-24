@@ -87,10 +87,10 @@ def _validemail_api_timeout() -> int:
     try:
         from config import config
 
-        base = int(getattr(config, "VALIDEMAIL_API_TIMEOUT", 8))
+        base = int(getattr(config, "VALIDEMAIL_API_TIMEOUT", 5))
     except Exception:
         try:
-            base = int(os.getenv("VALIDEMAIL_API_TIMEOUT", "8"))
+            base = int(os.getenv("VALIDEMAIL_API_TIMEOUT", "5"))
         except (TypeError, ValueError):
             base = 8
     return max(2, min(30, base))
@@ -100,10 +100,10 @@ def _validemail_max_retries() -> int:
     try:
         from config import config
 
-        return max(1, min(5, int(getattr(config, "VALIDEMAIL_MAX_RETRIES", 3))))
+        return max(1, min(5, int(getattr(config, "VALIDEMAIL_MAX_RETRIES", 2))))
     except Exception:
         try:
-            return max(1, min(5, int(os.getenv("VALIDEMAIL_MAX_RETRIES", "3"))))
+            return max(1, min(5, int(os.getenv("VALIDEMAIL_MAX_RETRIES", "2"))))
         except (TypeError, ValueError):
             return 3
 

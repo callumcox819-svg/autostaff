@@ -45,11 +45,27 @@ def _validemail_per_key_concurrency() -> int:
 
 
 def _validemail_seller_parallel_per_key() -> int:
-    raw = (os.getenv("VALIDEMAIL_SELLER_PARALLEL_PER_KEY") or "6").strip()
+    raw = (os.getenv("VALIDEMAIL_SELLER_PARALLEL_PER_KEY") or "12").strip()
     try:
         return max(1, min(32, int(raw)))
     except (TypeError, ValueError):
-        return 6
+        return 12
+
+
+def _validemail_domain_wave_size() -> int:
+    raw = (os.getenv("VALIDEMAIL_DOMAIN_WAVE_SIZE") or "4").strip()
+    try:
+        return max(1, min(8, int(raw)))
+    except (TypeError, ValueError):
+        return 4
+
+
+def _validemail_max_domains_probe() -> int:
+    raw = (os.getenv("VALIDEMAIL_MAX_DOMAINS_PROBE") or "0").strip()
+    try:
+        return max(0, min(32, int(raw)))
+    except (TypeError, ValueError):
+        return 0
 
 
 def _parse_admin_ids(raw: str) -> list[int]:
@@ -73,14 +89,16 @@ class Config:
     VALIDEMAIL_API_KEYS = _parse_validemail_api_keys()
     VALIDEMAIL_CONCURRENCY_PER_KEY = _validemail_per_key_concurrency()
     VALIDEMAIL_SELLER_PARALLEL_PER_KEY = _validemail_seller_parallel_per_key()
+    VALIDEMAIL_DOMAIN_WAVE_SIZE = _validemail_domain_wave_size()
+    VALIDEMAIL_MAX_DOMAINS_PROBE = _validemail_max_domains_probe()
     _conc_env = (os.getenv("VALIDEMAIL_CONCURRENCY") or "").strip()
     if _conc_env.isdigit():
         VALIDEMAIL_CONCURRENCY = max(2, int(_conc_env))
     else:
         n_k = max(1, len(VALIDEMAIL_API_KEYS))
         VALIDEMAIL_CONCURRENCY = max(2, VALIDEMAIL_CONCURRENCY_PER_KEY * n_k)
-    VALIDEMAIL_API_TIMEOUT = max(2, min(30, int(os.getenv("VALIDEMAIL_API_TIMEOUT", "8"))))
-    VALIDEMAIL_MAX_RETRIES = int(os.getenv("VALIDEMAIL_MAX_RETRIES", "3"))
+    VALIDEMAIL_API_TIMEOUT = max(2, min(30, int(os.getenv("VALIDEMAIL_API_TIMEOUT", "5"))))
+    VALIDEMAIL_MAX_RETRIES = max(1, min(5, int(os.getenv("VALIDEMAIL_MAX_RETRIES", "2"))))
 
     GLOBAL_SUBJECT_TEMPLATE = os.getenv("GLOBAL_SUBJECT_TEMPLATE", "Re: OFFER").strip() or "Re: OFFER"
 

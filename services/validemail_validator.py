@@ -324,13 +324,20 @@ async def _validate_offers_old(
     if not domains_clean:
         return []
 
-    # После фикса парсинга ответа API — не использовать старый кэш с ложными "invalid".
-    try:
-        from services.validemail_fast import _CACHE
+    from services.validemail_keys import max_domains_per_seller
 
-        _CACHE.clear()
-    except Exception:
-        pass
+    cap = max_domains_per_seller()
+    if cap > 0 and len(domains_clean) > cap:
+        domains_clean = domains_clean[:cap]
+
+    # Старый кэш сбрасываем только если явно задано (ускоряет повторные прогоны).
+    if (os.getenv("VALIDEMAIL_CLEAR_CACHE") or "").strip().lower() in {"1", "true", "yes", "on"}:
+        try:
+            from services.validemail_fast import _CACHE
+
+            _CACHE.clear()
+        except Exception:
+            pass
 
     user_blacklist = cfg.user_blacklist or []
     require_fl = bool(cfg.require_first_and_last)
@@ -455,10 +462,13 @@ async def _validate_offers_old(
     url = str(cfg.validation_url or DEFAULT_VALIDEMAIL_URL).strip()
 
     from services.validemail_keys import (
+        domain_probe_wave_size,
         seller_parallel_per_key,
         validation_concurrency_plan,
         validation_pool_size,
     )
+
+    wave_size = domain_probe_wave_size()
 
     n_keys = max(1, len(api_keys))
     per_key_limit, parallel_pool = validation_concurrency_plan(n_keys)
@@ -565,17 +575,23 @@ async def _validate_offers_old(
         eligible_o = int(stats.get("offers_eligible") or len(prepared))
         stats["offers_remaining"] = max(0, eligible_o - sellers_found)
 
-    async def _probe_email(seller_i: int, email: str, dom: str, api_key: str) -> None:
-        """Один адрес ValidEmail; домены — строго по приоритету, не пачкой."""
-        if found_by_idx[seller_i]:
+    async def _probe_domain_chunk(
+        seller_i: int,
+        local: str,
+        domain_chunk: list[str],
+        api_key: str,
+    ) -> None:
+        if found_by_idx[seller_i] or not domain_chunk:
             return
-        em = (email or "").strip().lower()
-        if not em or "@" not in em:
+        loc = (local or "").strip().lower()
+        if not loc:
             return
+        batch = [f"{loc}@{dom}".lower() for dom in domain_chunk]
+        dom_label = domain_chunk[0]
         results = await _run_batch(
-            [em],
+            batch,
             seller_i=seller_i,
-            dom=(dom or "").strip().lower(),
+            dom=dom_label,
             api_key=api_key,
         )
         cv = await _consume_results(seller_i, results)
@@ -583,6 +599,21 @@ async def _validate_offers_old(
             if stats is not None:
                 stats["combinations_valid"] = int(stats.get("combinations_valid") or 0) + cv
             _refresh_stats()
+
+    async def _probe_local_by_priority(seller_i: int, local: str, api_key: str) -> None:
+        """
+        1-й домен — отдельно (строгий приоритет).
+        Дальше — волны по wave_size доменов параллельно; нашли valid — стоп.
+        """
+        if found_by_idx[seller_i] or not domains_clean:
+            return
+        await _probe_domain_chunk(seller_i, local, domains_clean[:1], api_key)
+        idx = 1
+        n = len(domains_clean)
+        while idx < n and not found_by_idx[seller_i]:
+            chunk = domains_clean[idx : idx + wave_size]
+            idx += len(chunk)
+            await _probe_domain_chunk(seller_i, local, chunk, api_key)
 
     async def _validate_seller(i: int, api_key: str) -> None:
         row = prepared[i]
@@ -597,12 +628,8 @@ async def _validate_offers_old(
         primary = locals_list[0]
         extra_locals = locals_list[1:]
 
-        # 1) Основной local-part: домены по приоритету, по одному (gmail → следующий → …)
         if not found_by_idx[i]:
-            for dom in domains_clean:
-                if found_by_idx[i]:
-                    break
-                await _probe_email(i, f"{primary}@{dom}", dom, api_key)
+            await _probe_local_by_priority(i, primary, api_key)
 
         if found_by_idx[i]:
             nk = str(prepared[i].get("name_key") or "").strip()
@@ -612,14 +639,10 @@ async def _validate_offers_old(
                     pending_seller_names.add(nk)
             return
 
-        # 2) Запасные варианты имени — снова домены по одному в порядке приоритета
         for local in extra_locals:
             if found_by_idx[i]:
                 break
-            for dom in domains_clean:
-                if found_by_idx[i]:
-                    break
-                await _probe_email(i, f"{local}@{dom}", dom, api_key)
+            await _probe_local_by_priority(i, local, api_key)
 
         if found_by_idx[i]:
             nk = str(prepared[i].get("name_key") or "").strip()

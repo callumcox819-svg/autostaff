@@ -24,10 +24,30 @@ def seller_parallel_per_key() -> int:
     try:
         return max(
             1,
-            min(32, int(getattr(config, "VALIDEMAIL_SELLER_PARALLEL_PER_KEY", 6) or 6)),
+            min(32, int(getattr(config, "VALIDEMAIL_SELLER_PARALLEL_PER_KEY", 12) or 12)),
         )
     except (TypeError, ValueError):
-        return 6
+        return 12
+
+
+def domain_probe_wave_size() -> int:
+    """После 1-го домена — параллельные «волны» по N доменов (приоритет сохраняется)."""
+    try:
+        return max(
+            1,
+            min(8, int(getattr(config, "VALIDEMAIL_DOMAIN_WAVE_SIZE", 4) or 4)),
+        )
+    except (TypeError, ValueError):
+        return 4
+
+
+def max_domains_per_seller() -> int:
+    """0 = все домены из приоритета; иначе обрезка списка."""
+    try:
+        n = int(getattr(config, "VALIDEMAIL_MAX_DOMAINS_PROBE", 0) or 0)
+    except (TypeError, ValueError):
+        return 0
+    return max(0, min(32, n))
 
 
 def validation_pool_size(num_keys: int | None = None) -> int:

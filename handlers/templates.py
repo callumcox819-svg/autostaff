@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import re
 from dataclasses import dataclass
+from html import escape
 from pathlib import Path
 from typing import List
 
@@ -36,6 +38,7 @@ from utils.preset_list_ui import (
 )
 
 MAX_TEXT_LEN = 4000
+MAX_TITLE_LEN = 64
 
 
 @dataclass

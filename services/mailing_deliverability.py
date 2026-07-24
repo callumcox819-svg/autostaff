@@ -73,8 +73,13 @@ def mailing_plain_only() -> bool:
 
 
 def mailing_minimal_headers() -> bool:
-    """From = реальный Gmail, без marketing display name."""
-    return _env_on("MAILING_MINIMAL_HEADERS", default="1")
+    """True = только email в From (хуже для inbox). False = имя + Reply-To как у Gmail-клиента."""
+    return _env_on("MAILING_MINIMAL_HEADERS", default="0")
+
+
+def mailing_body_variation() -> bool:
+    """Случайные приветствия/подписи — по умолчанию выкл., текст как в пресете."""
+    return _env_on("MAILING_BODY_VARIATION", default="0")
 
 
 def mailing_strip_link() -> bool:
@@ -156,6 +161,8 @@ def sanitize_body_for_inbox(body: str) -> str:
 
 def add_inbox_body_variation(body: str) -> str:
     """Микро-уникализация — разные подписи и приветствия."""
+    if not mailing_body_variation():
+        return (body or "").strip()
     b = (body or "").strip()
     opener = random.choice(_INBOX_OPENERS)
     if opener and not b.lower().startswith(("grüezi", "guten tag", "hallo", "hello")):
@@ -200,10 +207,11 @@ def pick_rotating_subject(offer_title: str, *, user_template: str | None = None)
 
 def log_deliverability_profile(logger) -> None:
     logger.info(
-        "Inbox placement: plain=%s minimal_hdr=%s no_links=%s "
+        "Inbox placement: plain=%s minimal_hdr=%s body_var=%s no_links=%s "
         "stagger_ms=%s wave_gap=%.2fs burst_target=%.0fs ehlo=%s",
         mailing_plain_only(),
         mailing_minimal_headers(),
+        mailing_body_variation(),
         mailing_strip_link(),
         inbox_stagger_ms(),
         inbox_account_gap_sec(),

@@ -439,8 +439,8 @@ async def _run_mass_test(message: Message, tg_id: int) -> None:
             if fail_lines:
                 summary += "\n\n<b>Ошибки:</b>\n" + "\n".join(fail_lines[:6])
             summary += (
-                "\n\n<i>Смотрите Inbox и Спам. Письмо собрано как /send "
-                "(7bit/quoted-printable, без base64).</i>"
+                "\n\n<i>Inbox: plain + quoted-printable, Reply-To, имя в From "
+                "(задаётся в Настройки → имя отправителя).</i>"
             )
             await status.edit_text(summary, parse_mode="HTML")
         except Exception as e:

@@ -351,7 +351,7 @@ async def send_email_via_account_with_proxy_isolated(
             sender_name=sender_name,
             is_html=is_html,
             smtp_timeout_sec=smtp_tmo,
-            for_mailing=mailing_fast,
+            for_mailing=True,
         )
         err = normalize_send_error(err)
         if ok:

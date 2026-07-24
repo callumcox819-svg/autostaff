@@ -122,13 +122,17 @@ def _set_message_headers(
     minimal: bool = False,
 ) -> None:
     if minimal:
-        msg["From"] = from_addr
+        if disp_name:
+            msg["From"] = formataddr((disp_name, from_addr))
+        else:
+            msg["From"] = from_addr
         msg["To"] = to_addr
         msg["Subject"] = subj
         msg["Date"] = formatdate(localtime=True)
         msg["Message-ID"] = make_msgid(
             domain=(from_addr.split("@")[-1] if "@" in from_addr else None)
         )
+        msg["Reply-To"] = from_addr
         return
     if disp_name:
         msg["From"] = formataddr((disp_name, from_addr))
@@ -194,11 +198,16 @@ def _build_message(
     if is_html:
         msg = EmailMessage()
         plain = _strip_html(b) or " "
+        plain_cte = (
+            "quoted-printable"
+            if for_mailing
+            else _plain_body_content_transfer_encoding(plain)
+        )
         msg.set_content(
             plain,
             subtype="plain",
             charset="utf-8",
-            cte=_plain_body_content_transfer_encoding(plain),
+            cte=plain_cte,
         )
         msg.add_alternative(
             b,
@@ -217,8 +226,13 @@ def _build_message(
         return msg
 
     msg = EmailMessage()
+    plain_cte = (
+        "quoted-printable"
+        if for_mailing
+        else _plain_body_content_transfer_encoding(b)
+    )
     msg.set_content(
-        b, subtype="plain", charset="utf-8", cte=_plain_body_content_transfer_encoding(b)
+        b, subtype="plain", charset="utf-8", cte=plain_cte
     )
     _set_message_headers(
         msg,
@@ -724,6 +738,7 @@ async def send_email_via_account(
     is_html: Optional[bool] = None,
     *,
     smtp_timeout_sec: float | None = None,
+    for_mailing: bool = True,
 ) -> Tuple[bool, Optional[str], Optional[str]]:
     return await asyncio.to_thread(
         _send_plain_sync,
@@ -734,6 +749,7 @@ async def send_email_via_account(
         sender_name,
         is_html,
         smtp_timeout_sec,
+        for_mailing,
     )
 
 

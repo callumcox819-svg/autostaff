@@ -35,13 +35,24 @@ _DEFINITIVE_BAD_REASONS = frozenset(
         "invalid_format",
         "invalid_domain",
         "disposable",
-        "catch_all",
     }
 )
 
 _SESSION: aiohttp.ClientSession | None = None
 _KEY_SEMAPHORES: dict[str, asyncio.Semaphore] = {}
 _KEY_SEM_LIMITS: dict[str, int] = {}
+_GLOBAL_INFLIGHT: asyncio.Semaphore | None = None
+
+
+def _global_inflight_sem() -> asyncio.Semaphore:
+    global _GLOBAL_INFLIGHT
+    if _GLOBAL_INFLIGHT is None:
+        try:
+            cap = max(8, min(80, int(os.getenv("VALIDEMAIL_GLOBAL_INFLIGHT", "36"))))
+        except (TypeError, ValueError):
+            cap = 36
+        _GLOBAL_INFLIGHT = asyncio.Semaphore(cap)
+    return _GLOBAL_INFLIGHT
 
 
 def _semaphore_for_api_key(api_key: str, limit: int) -> asyncio.Semaphore:
@@ -215,8 +226,6 @@ def _normalize_ok_v1(data: dict, *, strict: bool, min_score: int) -> bool:
 
     if reason in _TRANSIENT_REASONS:
         return False
-    if reason in _DEFINITIVE_BAD_REASONS:
-        return False
     if data.get("isDisposable") is True:
         return False
     if data.get("isFormatValid") is False or data.get("isDomainValid") is False:
@@ -232,6 +241,9 @@ def _normalize_ok_v1(data: dict, *, strict: bool, min_score: int) -> bool:
                 except (TypeError, ValueError):
                     pass
         return True
+
+    if reason in _DEFINITIVE_BAD_REASONS:
+        return False
 
     if status == "undeliverable":
         return False
@@ -425,64 +437,65 @@ async def _check_one(
     max_attempts = _validemail_max_retries()
     last_raw: dict = {"error": "not_checked"}
 
-    async with semaphore:
-        async with lock:
-            counters["in_use"] += 1
-            if progress_cb:
-                try:
-                    progress_cb(counters["done"], counters["total"], limit, counters["in_use"])
-                except Exception:
-                    pass
-
-        try:
-            ok = False
-            for attempt in range(max_attempts):
-                try:
-                    ok, last_raw = await _fetch_validemail_once(
-                        email_lc,
-                        api_key=api_key,
-                        url=url,
-                        use_ssl_verify=use_ssl_verify,
-                    )
-                except Exception as e:
-                    last_raw = {"error": str(e)}
-                    ok = False
-
-                if ok:
-                    _cache_set(url, email_lc, True, last_raw)
-                    return email, True, last_raw
-
-                if not _is_transient_failure(last_raw) or attempt >= max_attempts - 1:
-                    if _should_cache_result(last_raw):
-                        _cache_set(url, email_lc, False, last_raw)
-                    return email, False, last_raw
-
-                if isinstance(last_raw, dict) and last_raw.get("_api_key_error"):
-                    if _should_cache_result(last_raw):
-                        _cache_set(url, email_lc, False, last_raw)
-                    return email, False, last_raw
-
-                delay = _retry_delay_sec(attempt, last_raw)
-                logger.debug(
-                    "validemail retry %s/%s for %s in %.1fs (%s)",
-                    attempt + 2,
-                    max_attempts,
-                    email_lc,
-                    delay,
-                    last_raw.get("reason") or last_raw.get("error") or last_raw.get("_http_status"),
-                )
-                await asyncio.sleep(delay)
-
-            return email, False, last_raw
-        finally:
+    async with _global_inflight_sem():
+        async with semaphore:
             async with lock:
-                counters["in_use"] -= 1
-                counters["done"] += 1
+                counters["in_use"] += 1
                 if progress_cb:
                     try:
                         progress_cb(counters["done"], counters["total"], limit, counters["in_use"])
                     except Exception:
                         pass
+
+            try:
+                ok = False
+                for attempt in range(max_attempts):
+                    try:
+                        ok, last_raw = await _fetch_validemail_once(
+                            email_lc,
+                            api_key=api_key,
+                            url=url,
+                            use_ssl_verify=use_ssl_verify,
+                        )
+                    except Exception as e:
+                        last_raw = {"error": str(e)}
+                        ok = False
+
+                    if ok:
+                        _cache_set(url, email_lc, True, last_raw)
+                        return email, True, last_raw
+
+                    if not _is_transient_failure(last_raw) or attempt >= max_attempts - 1:
+                        if _should_cache_result(last_raw):
+                            _cache_set(url, email_lc, False, last_raw)
+                        return email, False, last_raw
+
+                    if isinstance(last_raw, dict) and last_raw.get("_api_key_error"):
+                        if _should_cache_result(last_raw):
+                            _cache_set(url, email_lc, False, last_raw)
+                        return email, False, last_raw
+
+                    delay = _retry_delay_sec(attempt, last_raw)
+                    logger.debug(
+                        "validemail retry %s/%s for %s in %.1fs (%s)",
+                        attempt + 2,
+                        max_attempts,
+                        email_lc,
+                        delay,
+                        last_raw.get("reason") or last_raw.get("error") or last_raw.get("_http_status"),
+                    )
+                    await asyncio.sleep(delay)
+
+                return email, False, last_raw
+            finally:
+                async with lock:
+                    counters["in_use"] -= 1
+                    counters["done"] += 1
+                    if progress_cb:
+                        try:
+                            progress_cb(counters["done"], counters["total"], limit, counters["in_use"])
+                        except Exception:
+                            pass
 
 
 async def _validate_emails_single_key(

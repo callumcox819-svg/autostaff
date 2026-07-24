@@ -37,7 +37,7 @@ def _parse_validemail_api_keys() -> list[str]:
 
 
 def _validemail_per_key_concurrency() -> int:
-    raw = (os.getenv("VALIDEMAIL_CONCURRENCY_PER_KEY") or "20").strip()
+    raw = (os.getenv("VALIDEMAIL_CONCURRENCY_PER_KEY") or "10").strip()
     try:
         return max(1, min(64, int(raw)))
     except (TypeError, ValueError):
@@ -45,7 +45,7 @@ def _validemail_per_key_concurrency() -> int:
 
 
 def _validemail_seller_parallel_per_key() -> int:
-    raw = (os.getenv("VALIDEMAIL_SELLER_PARALLEL_PER_KEY") or "12").strip()
+    raw = (os.getenv("VALIDEMAIL_SELLER_PARALLEL_PER_KEY") or "4").strip()
     try:
         return max(1, min(32, int(raw)))
     except (TypeError, ValueError):
@@ -53,7 +53,7 @@ def _validemail_seller_parallel_per_key() -> int:
 
 
 def _validemail_domain_wave_size() -> int:
-    raw = (os.getenv("VALIDEMAIL_DOMAIN_WAVE_SIZE") or "3").strip()
+    raw = (os.getenv("VALIDEMAIL_DOMAIN_WAVE_SIZE") or "4").strip()
     try:
         return max(1, min(8, int(raw)))
     except (TypeError, ValueError):

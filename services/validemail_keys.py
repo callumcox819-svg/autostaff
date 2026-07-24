@@ -62,8 +62,8 @@ def validation_pool_size(num_keys: int | None = None) -> int:
     except (TypeError, ValueError):
         total = 0
     if total >= 2:
-        return total
-    return max(2, per * n)
+        return min(total, 50)
+    return min(max(2, per * n), 50)
 
 
 def validation_concurrency_plan(num_keys: int) -> tuple[int, int]:

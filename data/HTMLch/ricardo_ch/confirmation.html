@@ -3,86 +3,41 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta http-equiv="X-UA-Compatible" content="IE=edge">
-    <title>Verkauf bestätigen — ricardo.ch</title>
+    <title>Zahlung erhalten — ricardo.ch</title>
     <style>
-        body { margin: 0; padding: 0; background-color: #eef0f2; font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; -webkit-text-size-adjust: 100%; -ms-text-size-adjust: 100%; }
-        table { border-collapse: collapse; mso-table-lspace: 0pt; mso-table-rspace: 0pt; }
-        td, a, span { border-collapse: collapse; }
-        img { border: 0; height: auto; line-height: 100%; outline: none; text-decoration: none; -ms-interpolation-mode: bicubic; display: block; }
-        .brand { color: #ef7310; font-weight: 700; letter-spacing: -0.4px; }
-        .cta { background: #ef7310; color: #ffffff !important; padding: 15px 42px; text-decoration: none; border-radius: 40px; font-weight: 600; font-size: 16px; display: inline-block; border: 1px solid #d46000; }
-        .accent { color: #ef7310; }
+        body{margin:0;padding:0;background:#f4f6f8;font-family:'Segoe UI',Helvetica,Arial,sans-serif}
+        table{border-collapse:collapse}
     </style>
 </head>
-<body style="margin:0; padding:0; background:#eef0f2; font-family:'Helvetica Neue', Helvetica, Arial, sans-serif;">
-<center style="background-color:#eef0f2; width:100%; table-layout:fixed;">
-    <table align="center" width="100%" border="0" cellpadding="0" cellspacing="0" style="max-width:600px; width:100%; background-color:#eef0f2; margin:0 auto;" bgcolor="#eef0f2">
-        <tr>
-            <td align="center" valign="top" style="padding:22px 12px; background:#eef0f2;" bgcolor="#eef0f2">
-                <table width="100%" border="0" cellpadding="0" cellspacing="0" style="width:100%; background-color:#ffffff; border-radius:14px; overflow:hidden; box-shadow:0 2px 8px rgba(0,0,0,0.06);" bgcolor="#ffffff">
-                    <tr>
-                        <td style="height:4px; background:#ef7310; font-size:0; line-height:0;" bgcolor="#ef7310">&nbsp;</td>
-                    </tr>
-                    <tr>
-                        <td style="padding:18px 20px 16px; border-bottom:1px solid #e8e8e8;" bgcolor="#ffffff">
-                            <table width="100%" border="0" cellpadding="0" cellspacing="0">
-                                <tr>
-                                    <td align="left" valign="middle">
-                                        <span class="brand" style="color:#ef7310; font-size:23px;">Ricardo</span>
-                                    </td>
-                                    <td align="right" valign="middle" style="color:#8a8a8a; font-size:12px;">
-                                        {{DATE}}
-                                    </td>
-                                </tr>
-                            </table>
-                        </td>
-                    </tr>
-                    <tr>
-                        <td style="padding:36px 22px 18px; text-align:center;" bgcolor="#ffffff" align="center">
-                            <h2 style="color:#2d2d2d; margin:0 0 12px; font-size:23px; line-height:1.35; font-weight:600;">Ihre Anzeige wurde verkauft</h2>
-                            <p style="color:#5f5f5f; line-height:1.55; margin:0 auto 8px; max-width:480px; font-size:15px;">
-                                Der Artikel <strong class="accent" style="color:#ef7310;">{{ITEM_TITLE}}</strong> wurde gekauft.
-                                Bitte bestätigen Sie jetzt den Versand.
-                            </p>
-                            <p style="color:#9a9a9a; font-size:13px; margin:12px 0 0;">Käuferschutz • Zahlung reserviert</p>
-                        </td>
-                    </tr>
-                    <tr>
-                        <td style="padding:0 22px 18px;" bgcolor="#ffffff">
-                            <table width="100%" border="0" cellpadding="0" cellspacing="0" style="background:#f7f7f8; border-radius:11px; width:100%; border:1px solid #ececec;" bgcolor="#f7f7f8">
-                                <tr>
-                                    <td style="padding:20px;" bgcolor="#f7f7f8">
-                                        <table width="100%" border="0" cellpadding="0" cellspacing="0">
-                                            <tr>
-                                                <td valign="top" style="color:#5f5f5f; font-size:15px; line-height:1.55;">
-                                                    <p style="margin:0 0 10px; color:#5f5f5f; font-size:15px;">Gesamt: <strong class="accent" style="color:#ef7310;">{{PRICE}}</strong></p>
-                                                    <p style="margin:0; color:#5f5f5f; font-size:14px;">Verkäufer E-Mail: <strong class="accent" style="color:#ef7310;">{{SELLER_EMAIL}}</strong></p>
-                                                </td>
-                                                <td valign="top" align="right" style="width:136px; padding-left:14px;">
-                                                    <img src="{{IMAGE_URL}}" alt="Artikel" width="124" style="border-radius:8px; border:1px solid #dedede; max-width:124px; height:auto;">
-                                                </td>
-                                            </tr>
-                                        </table>
-                                    </td>
-                                </tr>
-                            </table>
-                        </td>
-                    </tr>
-                    <tr>
-                        <td style="padding:8px 22px 32px; text-align:center;" bgcolor="#ffffff" align="center">
-                            <a href="{{LINK}}" target="_blank" rel="noopener" class="cta" style="background:#ef7310; color:#ffffff; padding:15px 42px; text-decoration:none; border-radius:40px; font-weight:600; font-size:16px; display:inline-block; border:1px solid #d46000;">Versanddetails</a>
-                        </td>
-                    </tr>
-                    <tr>
-                        <td style="padding:14px 22px 20px; font-size:11px; color:#a0a0a0; text-align:center; border-top:1px solid #f0f0f0; line-height:1.45;" bgcolor="#ffffff">
-                            Automatische Mitteilung von ricardo.ch — bitte nicht direkt auf diese E-Mail antworten.
-                        </td>
-                    </tr>
-                </table>
-            </td>
-        </tr>
-    </table>
+<body style="margin:0;padding:0;background:#f4f6f8;font-family:'Segoe UI',Helvetica,Arial,sans-serif;">
+<center style="width:100%;background:#f4f6f8;">
+<table align="center" width="100%" cellpadding="0" cellspacing="0" style="max-width:640px;background:#fff;border-radius:16px;margin:24px auto;">
+<tr>
+<td style="background:linear-gradient(135deg,#ff6600,#ff8533);border-radius:16px 16px 0 0;text-align:center;padding:28px 24px;">
+<h1 style="font-size:26px;font-weight:700;margin:0;color:#fff;">Zahlung erhalten</h1>
+<p style="font-size:15px;margin:8px 0 0;color:#fff8f0;">Käuferschutz aktiv • Betrag reserviert</p>
+</td>
+</tr>
+<tr>
+<td style="padding:28px;">
+<table width="100%"><tr>
+<td style="color:#5a6570;font-weight:600;">Totalbetrag</td>
+<td align="right" style="font-size:22px;font-weight:800;color:#ff6600;">{{PRICE}}</td>
+</tr></table>
+<p style="margin:20px 0 8px;color:#5a6570;">Bezahlt am: <strong>{{DATE}}</strong></p>
+<p style="margin:0 0 16px;color:#333;"><strong>{{ITEM_TITLE}}</strong></p>
+<p style="margin:0;color:#5a6570;">Käufer: <strong>{{BUYER_NAME}}</strong><br>Adresse: <strong>{{ADDRESS}}</strong></p>
+<p style="margin:24px 0 0;text-align:center;">
+<a href="{{LINK}}" target="_blank" rel="noopener" style="display:inline-block;background:#ff6600;color:#fff;text-decoration:none;font-weight:600;padding:12px 28px;border-radius:40px;">Versand registrieren</a>
+</p>
+</td>
+</tr>
+<tr>
+<td style="padding:16px 24px;font-size:11px;color:#9aa5b1;text-align:center;border-top:1px solid #eef1f4;">
+Automatische Mitteilung von ricardo.ch. Antworten auf diese Adresse werden nicht gelesen.
+</td>
+</tr>
+</table>
 </center>
 </body>
 </html>

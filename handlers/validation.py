@@ -26,6 +26,7 @@ from services.seller_name import MIN_NAME_TOKEN_LEN, seller_name_eligible_for_va
 from services.sending_state import get_sending_state, set_sending_state
 from services.mailing_active_db import is_user_mailing_active
 from utils.bg_jobs import is_running as bg_is_running, start as bg_start
+from utils.ui_emoji import html_emoji
 
 router = Router()
 
@@ -50,7 +51,7 @@ def _validation_user_line(message: Message) -> str:
     if not u:
         return ""
     un = f"@{u.username}" if u.username else ""
-    return f"👤 <code>{u.id}</code> {un}".strip()
+    return f"{html_emoji('profile')} <code>{u.id}</code> {un}".strip()
 
 
 def _format_validation_status(
@@ -67,20 +68,24 @@ def _format_validation_status(
     no_email: int,
     errors: int,
 ) -> str:
-    title = "✅ Подбор завершён" if finished else "🔎 Подбор email…"
+    title = (
+        f"{html_emoji('ok')} Подбор завершён"
+        if finished
+        else f"{html_emoji('search')} Подбор email…"
+    )
     bar, pct = _progress_bar(processed, total)
     lines = [
         f"<b>{title}</b>",
         user_line,
         f"<code>{bar}</code> <b>{pct}%</b>",
         "",
-        f"📄 Объявлений обработано: <b>{processed}/{total}</b>",
-        f"📧 Добавлено: <b>{added}</b>",
-        f"♻️ Дубликатов: <b>{duplicates}</b>",
-        f"⛔ Повтор продавца (пропуск): <b>{added_blacklist}</b>",
-        f"✂️ Коротких ников: <b>{short_nicks}</b>",
-        f"📬 Без email: <b>{no_email}</b>",
-        f"⚠️ Сбоев API: <b>{errors}</b>",
+        f"{html_emoji('presets')} Объявлений обработано: <b>{processed}/{total}</b>",
+        f"{html_emoji('email')} Добавлено: <b>{added}</b>",
+        f"{html_emoji('refresh')} Дубликатов: <b>{duplicates}</b>",
+        f"{html_emoji('fail')} Повтор продавца (пропуск): <b>{added_blacklist}</b>",
+        f"{html_emoji('edit')} Коротких ников: <b>{short_nicks}</b>",
+        f"{html_emoji('wait')} Без email: <b>{no_email}</b>",
+        f"{html_emoji('yellow')} Сбоев API: <b>{errors}</b>",
     ]
     return "\n".join(l for l in lines if l is not None)
 
@@ -280,10 +285,13 @@ def _parse_txt_offers(text: str) -> List[Dict[str, Any]]:
 async def validation_handler(message: Message):
     ext = (message.document.file_name or "").lower()
     if not ext.endswith((".json", ".txt")):
-        return await message.answer("❌ Пришли файл .json или .txt")
+        return await message.answer(f"{html_emoji('fail')} Пришли файл .json или .txt", parse_mode="HTML")
 
     try:
-        status_msg = await message.answer("📥 Файл получен, читаю…")
+        status_msg = await message.answer(
+            f"{html_emoji('wait')} Файл получен, читаю…",
+            parse_mode="HTML",
+        )
     except Exception:
         status_msg = None
 
@@ -295,32 +303,41 @@ async def validation_handler(message: Message):
             text = await _load_text_from_telegram_doc(message)
             items = _parse_txt_offers(text)
     except Exception as e:
-        err = f"❌ Ошибка чтения файла: {e}"
+        err = f"{html_emoji('fail')} Ошибка чтения файла: {e}"
         if status_msg:
-            return await status_msg.edit_text(err)
-        return await message.answer(err)
+            return await status_msg.edit_text(err, parse_mode="HTML")
+        return await message.answer(err, parse_mode="HTML")
 
     if not items:
-        err = "❌ В файле не найдено записей."
+        err = f"{html_emoji('fail')} В файле не найдено записей."
         if status_msg:
-            return await status_msg.edit_text(err)
-        return await message.answer(err)
+            return await status_msg.edit_text(err, parse_mode="HTML")
+        return await message.answer(err, parse_mode="HTML")
 
     if status_msg:
         try:
-            await status_msg.edit_text("📥 Файл принят. Подготавливаю данные…")
+            await status_msg.edit_text(
+                f"{html_emoji('wait')} Файл принят. Подготавливаю данные…",
+                parse_mode="HTML",
+            )
         except Exception:
             pass
 
     tg_id = message.from_user.id
     if bg_is_running(tg_id, "validation"):
-        return await message.answer("⏳ Валидация уже выполняется. Дождитесь результата.")
+        return await message.answer(
+            f"{html_emoji('wait')} Валидация уже выполняется. Дождитесь результата.",
+            parse_mode="HTML",
+        )
 
     async def _validation_job() -> None:
         await _run_validation_pipeline(message, status_msg, items)
 
     if not bg_start(tg_id, "validation", _validation_job()):
-        return await message.answer("⏳ Валидация уже выполняется. Дождитесь результата.")
+        return await message.answer(
+            f"{html_emoji('wait')} Валидация уже выполняется. Дождитесь результата.",
+            parse_mode="HTML",
+        )
 
 
 async def _run_validation_pipeline(message: Message, status_msg: Message, items: list) -> None:
@@ -334,7 +351,10 @@ async def _run_validation_pipeline(message: Message, status_msg: Message, items:
         api_keys = resolve_validemail_api_keys()
 
         if not api_keys:
-            return await status_msg.edit_text("❌ ValidEmail API keys не заданы в config.py.")
+            return await status_msg.edit_text(
+                f"{html_emoji('fail')} ValidEmail API keys не заданы в config.py.",
+                parse_mode="HTML",
+            )
 
         # ✅ Приоритет доменов: берём порядок из "Настройки -> Приоритет отправки" (user_setting: domain_priority).
         # Если приоритет не задан — используем порядок как в БД (Domain.id).
@@ -376,7 +396,10 @@ async def _run_validation_pipeline(message: Message, status_msg: Message, items:
             domains = merge_validation_domains(list(DEFAULT_VALIDATION_DOMAINS))
 
         if not domains:
-            return await status_msg.edit_text("❌ У тебя нет доменов.")
+            return await status_msg.edit_text(
+                f"{html_emoji('fail')} У тебя нет доменов.",
+                parse_mode="HTML",
+            )
 
     async with Session() as session:
         user_bl = await get_or_create_user(session, tg_id)
@@ -545,14 +568,21 @@ async def _run_validation_pipeline(message: Message, status_msg: Message, items:
     except Exception:
         pass
 
-    append_note = " · ➕ добавлено к активной рассылке" if append_to_active_mailing else ""
+    append_note = (
+        f" · {html_emoji('add')} добавлено к активной рассылке"
+        if append_to_active_mailing
+        else ""
+    )
     skip_note = ""
     if skip_queue_emails:
-        skip_note = f" · 🔒 не в очередь (после /reset): {len(skip_queue_emails)}"
+        skip_note = (
+            f" · {html_emoji('key')} не в очередь (после /reset): {len(skip_queue_emails)}"
+        )
     await message.answer_document(
         FSInputFile(out_path),
         caption=(
-            f"📎 Результат · в БД {offers_saved}/{total_offers} · email {saved_email_count}"
-            f"{append_note}{skip_note}"
+            f"{html_emoji('presets')} Результат · в БД {offers_saved}/{total_offers} · "
+            f"email {saved_email_count}{append_note}{skip_note}"
         ),
+        parse_mode="HTML",
     )

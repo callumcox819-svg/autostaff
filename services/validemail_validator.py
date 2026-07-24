@@ -15,6 +15,7 @@ from sqlalchemy import select
 from database import Session
 from models import User
 from services.validemail_fast import validate_emails_fast
+from utils.ui_emoji import html_emoji
 from services.seller_name import (
     MIN_NAME_TOKEN_LEN,
     normalize_seller_name,
@@ -688,7 +689,10 @@ async def _validate_offers_new(
 
     if not api_keys:
         return {
-            "summary_text": "❌ Не найден validemail API key. Задай VALIDEMAIL_API_KEYS в config.",
+            "summary_text": (
+                f"{html_emoji('fail')} Не найден validemail API key. "
+                "Задай VALIDEMAIL_API_KEYS в config."
+            ),
             "output_json_bytes": None,
             "output_filename": None,
             "stats": {"total_offers": len(offers), "total_emails": len(uniq_emails), "error": "no_api_key"},
@@ -697,7 +701,10 @@ async def _validate_offers_new(
     total = len(uniq_emails)
     progress_msg = await bot.send_message(
         chat_id=chat_id,
-        text=f"🔎 Валидация началась…\nEmail'ов: <b>{total}</b>",
+        text=(
+            f"{html_emoji('search')} Валидация началась…\n"
+            f"Email'ов: <b>{total}</b>"
+        ),
         parse_mode="HTML",
     )
 
@@ -746,12 +753,12 @@ async def _validate_offers_new(
 
     try:
         await progress_msg.edit_text(
-            "✅ Валидация завершена.\n"
-            f"Офферов: <b>{len(offers)}</b>\n"
-            f"Уникальных email: <b>{total}</b>\n"
-            f"Офферов с валидным email: <b>{valid_count}</b>\n"
-            f"Офферов без валидного email: <b>{invalid_count}</b>\n"
-            f"Время: <b>{elapsed:.1f}s</b>",
+            f"{html_emoji('ok')} Валидация завершена.\n"
+            f"{html_emoji('presets')} Офферов: <b>{len(offers)}</b>\n"
+            f"{html_emoji('email')} Уникальных email: <b>{total}</b>\n"
+            f"{html_emoji('green')} Офферов с валидным email: <b>{valid_count}</b>\n"
+            f"{html_emoji('fail')} Офферов без валидного email: <b>{invalid_count}</b>\n"
+            f"{html_emoji('wait')} Время: <b>{elapsed:.1f}s</b>",
             parse_mode="HTML",
         )
     except Exception:
@@ -762,7 +769,7 @@ async def _validate_offers_new(
 
     return {
         "summary_text": (
-            "✅ Валидация завершена.\n"
+            f"{html_emoji('ok')} Валидация завершена.\n"
             f"Офферов: {len(offers)} | Уникальных email: {total} | "
             f"OK-офферов: {valid_count} | BAD-офферов: {invalid_count} | "
             f"{elapsed:.1f}s"

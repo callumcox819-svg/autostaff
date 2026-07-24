@@ -358,14 +358,13 @@ async def _validate_offers_old(
     if cap > 0 and len(domains_clean) > cap:
         domains_clean = domains_clean[:cap]
 
-    # Старый кэш сбрасываем только если явно задано (ускоряет повторные прогоны).
-    if (os.getenv("VALIDEMAIL_CLEAR_CACHE") or "").strip().lower() in {"1", "true", "yes", "on"}:
-        try:
-            from services.validemail_fast import _CACHE
+    # Сброс кэша: после смены правил или перегруза API иначе часами держит ложные invalid.
+    try:
+        from services.validemail_fast import _CACHE
 
-            _CACHE.clear()
-        except Exception:
-            pass
+        _CACHE.clear()
+    except Exception:
+        pass
 
     user_blacklist = cfg.user_blacklist or []
     require_fl = bool(cfg.require_first_and_last)
@@ -490,13 +489,10 @@ async def _validate_offers_old(
     url = str(cfg.validation_url or DEFAULT_VALIDEMAIL_URL).strip()
 
     from services.validemail_keys import (
-        domain_probe_wave_size,
         seller_parallel_per_key,
         validation_concurrency_plan,
         validation_pool_size,
     )
-
-    wave_size = domain_probe_wave_size()
 
     n_keys = max(1, len(api_keys))
     per_key_limit, parallel_pool = validation_concurrency_plan(n_keys)
@@ -636,39 +632,17 @@ async def _validate_offers_old(
 
     async def _probe_local_by_priority(seller_i: int, local: str, api_key: str) -> None:
         """
-        1-й домен — отдельно (строгий приоритет).
-        Дальше — волны по wave_size. Все домены из приоритета (без раннего стопа по умолчанию).
+        1-й домен приоритета — отдельно.
+        Остальные домены — одним параллельным батчем (как раньше, но gmail/gmx первым).
         """
         if found_by_idx[seller_i] or not domains_clean:
             return
-        try:
-            stop_tail_after = int(os.getenv("VALIDEMAIL_STOP_AFTER_INVALID_STREAK", "0"))
-        except (TypeError, ValueError):
-            stop_tail_after = 0
 
-        streak_invalid = 0
-        probes_done = 0
-
-        inv = await _probe_domain_chunk(seller_i, local, domains_clean[:1], api_key)
-        probes_done += 1
-        if inv:
-            streak_invalid += 1
+        await _probe_domain_chunk(seller_i, local, domains_clean[:1], api_key)
         if found_by_idx[seller_i]:
             return
-
-        idx = 1
-        n = len(domains_clean)
-        while idx < n and not found_by_idx[seller_i]:
-            if stop_tail_after > 0 and streak_invalid >= stop_tail_after and probes_done >= stop_tail_after:
-                break
-            chunk = domains_clean[idx : idx + wave_size]
-            idx += len(chunk)
-            inv = await _probe_domain_chunk(seller_i, local, chunk, api_key)
-            probes_done += len(chunk)
-            if inv:
-                streak_invalid += len(chunk)
-            else:
-                streak_invalid = 0
+        if len(domains_clean) > 1:
+            await _probe_domain_chunk(seller_i, local, domains_clean[1:], api_key)
 
     async def _validate_seller(i: int, api_key: str) -> None:
         row = prepared[i]

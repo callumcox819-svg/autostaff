@@ -196,9 +196,9 @@ def _validemail_strict_mode() -> bool:
 
 def _validemail_min_score() -> int:
     try:
-        return max(50, min(100, int(os.getenv("VALIDEMAIL_MIN_SCORE", "88"))))
+        return max(50, min(100, int(os.getenv("VALIDEMAIL_MIN_SCORE", "80"))))
     except (TypeError, ValueError):
-        return 88
+        return 80
 
 
 _BAD_EMAIL_STATES = frozenset(
@@ -217,13 +217,21 @@ _BAD_EMAIL_STATES = frozenset(
     }
 )
 
-_GOOD_DELIVERABLE_REASONS = frozenset({"accepted", "other"})
+def _score_meets_min(data: dict, *, strict: bool, min_score: int) -> bool:
+    if not strict:
+        return True
+    try:
+        score = int(data.get("score") if data.get("score") is not None else 0)
+        return score >= min_score
+    except (TypeError, ValueError):
+        return False
 
 
 def _normalize_ok_v1(data: dict, *, strict: bool, min_score: int) -> bool:
     """Ответ 200 по схеме validemail.co v1 (status, reason, score, isDeliverable, …)."""
     status = str(data.get("status") or "").lower().strip()
-    reason = str(data.get("reason") or "").lower().strip()
+    reason = str(data.get("reason") or data.get("Reason") or "").lower().strip()
+    deliverable_flag = data.get("isDeliverable") is True
 
     if reason in _TRANSIENT_REASONS:
         return False
@@ -236,32 +244,30 @@ def _normalize_ok_v1(data: dict, *, strict: bool, min_score: int) -> bool:
 
     if status == "undeliverable":
         return False
-    if status == "unknown":
-        return False
+
+    accept_risky = (os.getenv("VALIDEMAIL_ACCEPT_RISKY") or "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    )
+
     if status == "risky":
-        if strict or not (os.getenv("VALIDEMAIL_ACCEPT_RISKY") or "").strip().lower() in (
-            "1",
-            "true",
-            "yes",
-            "on",
-        ):
-            return False
-
-    if status != "deliverable":
-        return False
-    if data.get("isDeliverable") is not True:
-        return False
-    if reason and reason not in _GOOD_DELIVERABLE_REASONS:
+        if accept_risky or (deliverable_flag and not strict):
+            return _score_meets_min(data, strict=strict, min_score=min_score)
         return False
 
-    if strict:
-        try:
-            score = int(data.get("score") if data.get("score") is not None else 0)
-            if score < min_score:
-                return False
-        except (TypeError, ValueError):
+    if status == "unknown":
+        if deliverable_flag and not strict:
+            return _score_meets_min(data, strict=strict, min_score=min_score)
+        return False
+
+    if status == "deliverable" or deliverable_flag:
+        if reason in _DEFINITIVE_BAD_REASONS:
             return False
-    return True
+        return _score_meets_min(data, strict=strict, min_score=min_score)
+
+    return False
 
 
 def _normalize_ok(data: object) -> bool:

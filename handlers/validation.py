@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 import tempfile
 import time
@@ -7,6 +8,7 @@ import re
 from typing import Any, Dict, List
 
 from aiogram import Router, F
+from aiogram.filters import Command
 from aiogram.types import Message, FSInputFile
 
 from sqlalchemy import select, delete
@@ -33,10 +35,17 @@ from services.seller_name import (
 )
 from services.sending_state import get_sending_state, set_sending_state
 from services.mailing_active_db import is_user_mailing_active
-from utils.bg_jobs import is_running as bg_is_running, start as bg_start
+from utils.bg_jobs import (
+    cancel as bg_cancel,
+    is_running as bg_is_running,
+    running_since as bg_running_since,
+    start as bg_start,
+)
 from utils.ui_emoji import html_emoji, inline_button, menu_path, toast, msg_fail, msg_ok, msg_wait, msg_warn
 
 router = Router()
+
+logger = logging.getLogger(__name__)
 
 REPLACE_OLD_FOR_USER = True
 REQUIRE_FIRST_AND_LAST = False
@@ -44,6 +53,25 @@ PROGRESS_UPDATE_INTERVAL = 3  # seconds
 # Одна валидная почта на продавца → один OfferEmail, без путаницы при AQUA и входящих.
 MAX_EMAILS_PER_SELLER = 1
 MAX_EMAILS_PER_OFFER = 1
+
+# Снимок прогресса текущего подбора (для сообщения «уже идёт»)
+_validation_snapshots: dict[int, dict[str, Any]] = {}
+
+
+def _running_validation_hint(tg_id: int) -> str:
+    snap = _validation_snapshots.get(int(tg_id)) or {}
+    total = int(snap.get("offers_total") or 0)
+    si = int(snap.get("seller_index") or 0)
+    since = bg_running_since(tg_id, "validation")
+    mins = ""
+    if since:
+        mins = f" · уже <b>{max(0, int((time.time() - since) // 60))}</b> мин"
+    prog = f" · продавцы <b>{si}/{total}</b>" if total else ""
+    return (
+        f"{html_emoji('wait')} <b>Предыдущий подбор email ещё идёт</b>{mins}{prog}.\n\n"
+        f"Этот JSON <b>не запущен</b> — смотри прогресс в сообщении <b>выше</b> в чате.\n"
+        f"Остановить: <code>/stopvalid</code>, затем пришли файл снова."
+    )
 
 
 def _progress_bar(done: int, total: int, width: int = 20) -> tuple[str, int]:
@@ -306,6 +334,22 @@ def _parse_txt_offers(text: str) -> List[Dict[str, Any]]:
 # ===================== MAIN HANDLER =====================
 
 
+@router.message(Command("stopvalid", "stopvalidation", "cancelvalid"))
+async def stop_validation_handler(message: Message):
+    tg_id = message.from_user.id
+    if not bg_is_running(tg_id, "validation"):
+        return await message.answer(
+            f"{html_emoji('ok')} Подбор email сейчас не выполняется.",
+            parse_mode="HTML",
+        )
+    bg_cancel(tg_id, "validation")
+    _validation_snapshots.pop(int(tg_id), None)
+    await message.answer(
+        f"{html_emoji('warn')} Останавливаю подбор… Через несколько секунд можно прислать JSON снова.",
+        parse_mode="HTML",
+    )
+
+
 @router.message(F.document)
 async def validation_handler(message: Message):
     ext = (message.document.file_name or "").lower()
@@ -339,6 +383,17 @@ async def validation_handler(message: Message):
             return await status_msg.edit_text(err, parse_mode="HTML")
         return await message.answer(err, parse_mode="HTML")
 
+    tg_id = message.from_user.id
+    if bg_is_running(tg_id, "validation"):
+        hint = _running_validation_hint(tg_id)
+        if status_msg:
+            try:
+                await status_msg.edit_text(hint, parse_mode="HTML")
+            except Exception:
+                pass
+            return
+        return await message.answer(hint, parse_mode="HTML")
+
     if status_msg:
         try:
             await status_msg.edit_text(
@@ -348,28 +403,62 @@ async def validation_handler(message: Message):
         except Exception:
             pass
 
-    tg_id = message.from_user.id
-    if bg_is_running(tg_id, "validation"):
-        return await message.answer(
-            f"{html_emoji('wait')} Валидация уже выполняется. Дождитесь результата.",
-            parse_mode="HTML",
-        )
-
     async def _validation_job() -> None:
         await _run_validation_pipeline(message, status_msg, items)
 
     if not bg_start(tg_id, "validation", _validation_job()):
-        return await message.answer(
-            f"{html_emoji('wait')} Валидация уже выполняется. Дождитесь результата.",
-            parse_mode="HTML",
-        )
+        hint = _running_validation_hint(tg_id)
+        if status_msg:
+            try:
+                await status_msg.edit_text(hint, parse_mode="HTML")
+            except Exception:
+                pass
+            return
+        return await message.answer(hint, parse_mode="HTML")
 
 
 async def _run_validation_pipeline(message: Message, status_msg: Message, items: list) -> None:
     total_offers = len(items)
     user_line = _validation_user_line(message)
     tg_id = message.from_user.id
+    _validation_snapshots[int(tg_id)] = {"offers_total": total_offers, "seller_index": 0}
 
+    try:
+        await _run_validation_pipeline_inner(
+            message, status_msg, items, total_offers, user_line, tg_id
+        )
+    except asyncio.CancelledError:
+        try:
+            if status_msg:
+                await status_msg.edit_text(
+                    f"{html_emoji('warn')} Подбор остановлен (<code>/stopvalid</code>).",
+                    parse_mode="HTML",
+                )
+        except Exception:
+            pass
+        raise
+    except Exception as e:
+        logger.exception("validation pipeline failed tg=%s", tg_id)
+        try:
+            if status_msg:
+                await status_msg.edit_text(
+                    f"{html_emoji('fail')} Ошибка подбора: {e}",
+                    parse_mode="HTML",
+                )
+        except Exception:
+            pass
+    finally:
+        _validation_snapshots.pop(int(tg_id), None)
+
+
+async def _run_validation_pipeline_inner(
+    message: Message,
+    status_msg: Message,
+    items: list,
+    total_offers: int,
+    user_line: str,
+    tg_id: int,
+) -> None:
     async with Session() as session:
         user = await get_or_create_user(session, tg_id)
 
@@ -508,6 +597,7 @@ async def _run_validation_pipeline(message: Message, status_msg: Message, items:
 
     async def _progress_updater(msg: Message, stop: asyncio.Event, vstats: dict) -> None:
         while not stop.is_set():
+            _validation_snapshots[int(tg_id)] = dict(vstats)
             text = _ui_from_stats(vstats, finished=False)
             if text != ui_state.get("last_text"):
                 try:

@@ -17,6 +17,7 @@ from services.aqua_keys import (
     user_profile_fields_complete,
 )
 from services.aqua_network import AquaError, generate_aqua_link
+from services.gag_domains import get_domain_base, normalize_gag_generated_url
 from utils.ui_emoji import menu_path
 from services.offer_storage import offer_effective_photo, offer_effective_price, offer_effective_title
 
@@ -104,8 +105,9 @@ async def aqua_generate_for_offer(
     image = await resolve_aqua_image_url(session, user, offer)
     api_service = aqua_service_for_api(service)
     domain_n = await get_user_generate_domain(session, user)
+    domain_base = await get_domain_base(session, user, domain_n)
 
-    return await generate_aqua_link(
+    raw_link = await generate_aqua_link(
         user_api_key=user_key,
         team_api_key=team_key,
         service=api_service,
@@ -117,3 +119,9 @@ async def aqua_generate_for_offer(
         image=image or None,
         domain=domain_n,
     )
+    try:
+        return normalize_gag_generated_url(
+            raw_link, domain_slot=domain_n, domain_base=domain_base
+        )
+    except ValueError as e:
+        raise AquaError(str(e)) from e

@@ -136,7 +136,10 @@ async def _aqua_generate_link(
         offer = await find_offer_by_link(session, user_id=int(user.id), ad_url=listing_url)
     resolved_image = await resolve_aqua_image_url(session, user, offer, image)
     domain_n = await get_user_generate_domain(session, user)
-    return await generate_aqua_link(
+    from services.gag_domains import get_domain_base, normalize_gag_generated_url
+
+    domain_base = await get_domain_base(session, user, domain_n)
+    raw_link = await generate_aqua_link(
         user_api_key=user_key,
         team_api_key=team_key,
         service=aqua_service_for_api(service),
@@ -148,6 +151,12 @@ async def _aqua_generate_link(
         image=resolved_image,
         domain=domain_n,
     )
+    try:
+        return normalize_gag_generated_url(
+            raw_link, domain_slot=domain_n, domain_base=domain_base
+        )
+    except ValueError as e:
+        raise AquaError(str(e)) from e
 
 
 @dataclass

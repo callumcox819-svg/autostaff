@@ -20,12 +20,6 @@ AQUA_PROFILE_ADDRESS_KEY = "aqua_profile_address"
 
 AQUA_GENERATE_DOMAIN_KEY = "aqua_generate_domain"
 
-# domain в POST /generate (GAG API): 1 — личный, 2 — команда (как в старых ботах).
-GENERATE_DOMAIN_CHOICES: tuple[tuple[str, str], ...] = (
-    ("1", "Личный домен"),
-    ("2", "Домен команды"),
-)
-
 AQUA_SERVICE_CHOICES = ("ricardo_ch", "tutti_ch")
 
 _SERVICE_ALIASES: dict[str, str] = {
@@ -82,25 +76,10 @@ async def get_user_aqua_service(session, user: User) -> str:
     return normalize_aqua_service(AQUA_DEFAULT_SERVICE) or AQUA_DEFAULT_SERVICE
 
 
-def generate_domain_label(num: int | str | None) -> str:
-    s = str(num or "").strip()
-    for code, label in GENERATE_DOMAIN_CHOICES:
-        if code == s:
-            return label
-    return f"domain {s}" if s else "—"
-
-
 async def get_user_generate_domain(session, user: User) -> int:
-    raw = (await get_user_setting(session, user, AQUA_GENERATE_DOMAIN_KEY) or "").strip()
-    if raw.isdigit():
-        n = int(raw)
-        if 1 <= n <= 8:
-            return n
-    try:
-        n = int(getattr(config, "GAG_GENERATE_DOMAIN", None) or 1)
-    except (TypeError, ValueError):
-        n = 1
-    return max(1, min(8, n))
+    from services.gag_domains import get_active_domain_slot
+
+    return await get_active_domain_slot(session, user)
 
 
 def normalize_aqua_api_key(value: str | None) -> str:

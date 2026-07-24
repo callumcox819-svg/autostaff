@@ -17,14 +17,11 @@ from services.aqua_keys import (
     AQUA_PROFILE_ADDRESS_KEY,
     AQUA_PROFILE_NAME_KEY,
     AQUA_PROFILE_TITLE_KEY,
-    AQUA_GENERATE_DOMAIN_KEY,
     AQUA_SERVICE_CHOICES,
     AQUA_SERVICE_KEY,
     AQUA_USER_API_KEY_SETTING,
-    GENERATE_DOMAIN_CHOICES,
     aqua_service_label,
     aqua_service_matches,
-    generate_domain_label,
     get_user_aqua_service,
     get_user_generate_domain,
     get_user_aqua_user_key_async,
@@ -35,10 +32,20 @@ from services.aqua_keys import (
     normalize_aqua_service,
     user_profile_fields_complete,
 )
+from services.gag_domains import (
+    clear_domain_base,
+    get_active_domain_slot,
+    get_domain_base,
+    profile_domain_summary,
+    set_active_domain_slot,
+    set_domain_base,
+    profile_domain_summary,
+    set_active_domain_slot,
+)
 from services.aqua_network import AquaError, generate_api_base, generate_api_configured, verify_gag_auth
 from services.user_settings import get_user_setting, set_user_setting
 from utils.secrets import clean_secret
-from utils.ui_emoji import html_emoji, inline_button, back_inline, back_kb, menu_path, toast, msg_fail, msg_ok, msg_wait, msg_warn, unicode_fallback
+from utils.ui_emoji import html_emoji, inline_button, back_inline, back_kb, icon_button, menu_path, toast, msg_fail, msg_ok, msg_wait, msg_warn, unicode_fallback
 
 router = Router(name="api_keys")
 
@@ -51,6 +58,10 @@ class ProfileState(StatesGroup):
     title = State()
     buyer_name = State()
     address = State()
+
+
+class DomainState(StatesGroup):
+    waiting_base = State()
 
 
 def _back_kb() -> InlineKeyboardMarkup:
@@ -69,16 +80,23 @@ def profile_screen_kb() -> InlineKeyboardMarkup:
     )
 
 
-def domain_picker_kb(current: int) -> InlineKeyboardMarkup:
-    cur = str(int(current))
+async def _domain_slots_kb(session, user) -> InlineKeyboardMarkup:
+    active = await get_active_domain_slot(session, user)
     rows: list[list[InlineKeyboardButton]] = []
-    for code, label in GENERATE_DOMAIN_CHOICES:
-        mark = f"{unicode_fallback('ok')} " if code == cur else ""
+    for n in range(1, 9):
+        base = await get_domain_base(session, user, n)
+        if base and n == active:
+            lbl = f"Сменить #{n}"
+            cb = f"aqua_domain_edit:{n}"
+        elif base:
+            lbl = f"#{n} · выбрать"
+            cb = f"aqua_domain_use:{n}"
+        else:
+            lbl = f"Установить #{n}"
+            cb = f"aqua_domain_edit:{n}"
         rows.append([
-            InlineKeyboardButton(
-                text=f"{mark}{label}".strip(),
-                callback_data=f"aqua_domain_set:{code}",
-            )
+            InlineKeyboardButton(text=lbl, callback_data=cb),
+            icon_button("delete", callback_data=f"aqua_domain_clear:{n}"),
         ])
     rows.append([back_inline("aqua_show:profile")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
@@ -131,8 +149,10 @@ async def _render_profile_screen(callback: CallbackQuery) -> None:
         addr = await get_user_profile_address(session, user)
         service = await get_user_aqua_service(session, user)
         domain_n = await get_user_generate_domain(session, user)
+        domain_base = await get_domain_base(session, user, domain_n)
         complete = await user_profile_fields_complete(session, user)
         await session.commit()
+        domain_line = profile_domain_summary(domain_n, domain_base)
         status = (
             f"{html_emoji('green')} готов к генерации"
             if complete
@@ -145,7 +165,7 @@ async def _render_profile_screen(callback: CallbackQuery) -> None:
             f"{_field_line('Имя получателя', buyer)}\n"
             f"{_field_line('Адрес доставки', addr)}\n"
             f"{_field_line('Сервис', aqua_service_label(service))}\n"
-            f"{_field_line('Домен GAG', generate_domain_label(domain_n))}\n\n"
+            f"{_field_line('Домен GAG', domain_line)}\n\n"
             f"Статус: {status}"
         )
     try:
@@ -227,33 +247,108 @@ async def aqua_domain_pick(callback: CallbackQuery, state: FSMContext) -> None:
     await state.clear()
     async with Session() as session:
         user = await get_or_create_user(session, callback.from_user.id)
-        domain_n = await get_user_generate_domain(session, user)
+        active = await get_active_domain_slot(session, user)
+        base = await get_domain_base(session, user, active)
+        kb = await _domain_slots_kb(session, user)
     text = (
-        f"{html_emoji('link')} <b>Домен GAG</b>\n\n"
-        f"Текущий: <b>{generate_domain_label(domain_n)}</b> "
-        f"(<code>domain={domain_n}</code> в API)\n\n"
-        "Какой домен использовать при генерации ссылок:"
+        f"{html_emoji('link')} <b>Домены GAG</b> (слоты 1–8)\n\n"
+        f"Активный: <b>{profile_domain_summary(active, base)}</b>\n"
+        f"В API уходит <code>domain={active}</code>, <code>version=lk</code> → <code>/get/…</code>\n\n"
+        "<b>Установить #N</b> — URL домена команды (https://…).\n"
+        "Если GAG отдаёт <code>undefined/get/…</code>, бот подставит ваш домен из слота.\n"
+        "<b>❌</b> — очистить слот."
     )
+    await callback.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("aqua_domain_edit:"))
+async def aqua_domain_edit_begin(callback: CallbackQuery, state: FSMContext) -> None:
+    slot = int((callback.data or "").split(":", 1)[1])
+    if not 1 <= slot <= 8:
+        return await callback.answer("Слот 1–8", show_alert=True)
+    async with Session() as session:
+        user = await get_or_create_user(session, callback.from_user.id)
+        cur = await get_domain_base(session, user, slot)
+    await state.set_state(DomainState.waiting_base)
+    await state.update_data(domain_slot=slot)
+    hint = f"\nСейчас: <code>{html.escape(cur)}</code>" if cur else ""
     await callback.message.edit_text(
-        text,
-        reply_markup=domain_picker_kb(domain_n),
+        f"{html_emoji('link')} <b>Домен команды #{slot}</b>{hint}\n\n"
+        "Отправь базовый URL одним сообщением.\n"
+        "<i>Пример: https://your-team-domain.cfd</i>\n\n"
+        "Без <code>/generate</code> и без пути — только домен.",
         parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup(
+            inline_keyboard=[[back_inline("aqua_domain_pick", text="Отмена")]]
+        ),
     )
     await callback.answer()
 
 
-@router.callback_query(F.data.startswith("aqua_domain_set:"))
-async def aqua_domain_set(callback: CallbackQuery, state: FSMContext) -> None:
-    code = (callback.data or "").split(":", 1)[1].strip()
-    if code not in {c for c, _ in GENERATE_DOMAIN_CHOICES}:
-        return await callback.answer("Неизвестный домен", show_alert=True)
+@router.message(DomainState.waiting_base)
+async def aqua_domain_save(message: Message, state: FSMContext) -> None:
+    data = await state.get_data()
+    slot = int(data.get("domain_slot") or 1)
+    raw = (message.text or "").strip()
+    if not raw or raw in ("-", "cancel", "отмена"):
+        await state.clear()
+        await message.answer(f"{html_emoji('fail')} Отменено.")
+        return
     async with Session() as session:
-        user = await get_or_create_user(session, callback.from_user.id)
-        await set_user_setting(session, user, AQUA_GENERATE_DOMAIN_KEY, code)
+        user = await get_or_create_user(session, message.from_user.id)
+        await set_domain_base(session, user, slot, raw)
+        await set_active_domain_slot(session, user, slot)
         await session.commit()
     await state.clear()
-    await callback.answer(generate_domain_label(int(code)))
-    await _render_profile_screen(callback)
+    await message.answer(
+        f"{html_emoji('ok')} Домен #{slot} сохранён и выбран для генерации.",
+        reply_markup=profile_screen_kb(),
+    )
+
+
+@router.callback_query(F.data.startswith("aqua_domain_clear:"))
+async def aqua_domain_clear_cb(callback: CallbackQuery, state: FSMContext) -> None:
+    await state.clear()
+    slot = int((callback.data or "").split(":", 1)[1])
+    if not 1 <= slot <= 8:
+        return await callback.answer()
+    async with Session() as session:
+        user = await get_or_create_user(session, callback.from_user.id)
+        await clear_domain_base(session, user, slot)
+        await session.commit()
+        kb = await _domain_slots_kb(session, user)
+        active = await get_active_domain_slot(session, user)
+        base = await get_domain_base(session, user, active)
+    await callback.message.edit_reply_markup(reply_markup=kb)
+    await callback.answer(f"Слот #{slot} очищен")
+
+
+@router.callback_query(F.data.startswith("aqua_domain_use:"))
+async def aqua_domain_use_cb(callback: CallbackQuery, state: FSMContext) -> None:
+    await state.clear()
+    slot = int((callback.data or "").split(":", 1)[1])
+    if not 1 <= slot <= 8:
+        return await callback.answer()
+    async with Session() as session:
+        user = await get_or_create_user(session, callback.from_user.id)
+        if not await get_domain_base(session, user, slot):
+            return await callback.answer("Сначала Установить #N", show_alert=True)
+        await set_active_domain_slot(session, user, slot)
+        await session.commit()
+        kb = await _domain_slots_kb(session, user)
+        active = slot
+        base = await get_domain_base(session, user, active)
+    text = (
+        f"{html_emoji('link')} <b>Домены GAG</b> (слоты 1–8)\n\n"
+        f"Активный: <b>{profile_domain_summary(active, base)}</b>\n"
+        f"В API уходит <code>domain={active}</code>, <code>version=lk</code> → <code>/get/…</code>\n\n"
+        "<b>Установить #N</b> — URL домена команды (https://…).\n"
+        "Если GAG отдаёт <code>undefined/get/…</code>, бот подставит ваш домен из слота.\n"
+        "<b>❌</b> — очистить слот."
+    )
+    await callback.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
+    await callback.answer(f"Активен #{slot}")
 
 
 @router.callback_query(F.data.startswith("aqua_service_set:"))
@@ -411,4 +506,8 @@ async def keys_set_finish(message: Message, state: FSMContext) -> None:
         await session.commit()
 
     await state.clear()
-    await message.answer(f"{html_emoji('ok')} Ключ сохранён.")
+    await message.answer(
+        f"{html_emoji('ok')} Ключ сохранён.\n"
+        f"{menu_path(('settings', ''), ('key', 'Ключ'))} — «Проверить ключ».",
+        parse_mode="HTML",
+    )

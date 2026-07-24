@@ -72,20 +72,32 @@ def price_to_api_string(price: str | float | int | None) -> str:
 
 
 def _extract_link(data: dict[str, Any]) -> str:
-    for key in ("url", "link", "message"):
-        val = (data.get(key) or "").strip()
-        if val.lower().startswith(("http://", "https://")):
-            return val
+    candidates: list[str] = []
+    for key in ("url", "link", "message", "href"):
+        val = data.get(key)
+        if isinstance(val, str) and val.strip():
+            candidates.append(val.strip())
     details = data.get("details")
     if isinstance(details, dict):
+        for key in ("url", "link", "href"):
+            val = details.get(key)
+            if isinstance(val, str) and val.strip():
+                candidates.append(val.strip())
         short = details.get("short")
         if isinstance(short, dict):
             url = (short.get("url") or "").strip()
             if url:
-                return url
-        link = (details.get("link") or "").strip()
-        if link:
-            return link
+                candidates.append(url)
+    data_block = data.get("data")
+    if isinstance(data_block, dict):
+        for key in ("url", "link"):
+            val = data_block.get(key)
+            if isinstance(val, str) and val.strip():
+                candidates.append(val.strip())
+
+    for val in candidates:
+        if val.lower().startswith(("http://", "https://")) or "/get/" in val or "/buy/" in val:
+            return val
     raise AquaError(f"No link in response: {str(data)[:300]}")
 
 
@@ -203,6 +215,13 @@ async def generate_aqua_link_no_parse(
         body["image"] = img
 
     data = await _post_generate(body, timeout_sec=timeout_sec)
+    logger.info(
+        "GAG /generate ok service=%s domain=%s version=%s title=%r",
+        body.get("service"),
+        body.get("domain"),
+        body.get("version"),
+        (body.get("title") or "")[:60],
+    )
     return _extract_link(data)
 
 

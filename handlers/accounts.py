@@ -112,7 +112,7 @@ async def _edit_add_progress(
         speed = f"\n{html_emoji('burst')} ~<b>{per_min:.1f}</b> акк./мин ({workers} потоков)"
     try:
         await status_msg.edit_text(
-            "⏳ <b>Добавление аккаунтов</b>\n\n"
+            f"{html_emoji('wait')} <b>Добавление аккаунтов</b>\n\n"
             f"Проверка IMAP: <b>{current}/{total}</b>\n"
             f"{html_emoji('ok')} успешно: <b>{ok}</b> · {html_emoji('fail')} ошибки: <b>{fail}</b>"
             f"{speed}",
@@ -156,7 +156,7 @@ async def _bulk_add_accounts(
     total = len(lines)
     workers = max(1, min(8, int(os.getenv("ACCOUNTS_IMAP_CONCURRENCY", "4"))))
     status_msg = await message.answer(
-        "⏳ <b>Добавление аккаунтов</b>\n\n"
+        f"{html_emoji('wait')} <b>Добавление аккаунтов</b>\n\n"
         f"Проверка IMAP: <b>0/{total}</b>\n"
         f"Параллельно: <b>{workers}</b> потоков",
         parse_mode="HTML",
@@ -461,7 +461,7 @@ async def acc_delete_all_confirm(callback: CallbackQuery) -> None:
         ]
     )
     await callback.message.edit_text(
-        "⚠️ <b>Удалить все почтовые аккаунты?</b>\n\n"
+        f"{html_emoji('warn')} <b>Удалить все почтовые аккаунты?</b>\n\n"
         "Будут удалены все ящики из списка. Это действие нельзя отменить.",
         reply_markup=kb,
         parse_mode="HTML",
@@ -553,7 +553,7 @@ async def acc_check_smtp(callback: CallbackQuery) -> None:
             async with Session() as session:
                 user = await get_user(session, tg_id)
                 if not user:
-                    await status_msg.edit_text("❌ Пользователь не найден.")
+                    await status_msg.edit_text(f"{html_emoji('fail')} Пользователь не найден.")
                     return
                 db_uid = int(user.id)
 
@@ -658,7 +658,7 @@ async def acc_check_smtp(callback: CallbackQuery) -> None:
                         )
 
             summary = (
-                "✅ <b>Проверка SMTP завершена</b>\n\n"
+                f"{html_emoji('ok')} <b>Проверка SMTP завершена</b>\n\n"
                 f"{html_emoji('green')} активны (SMTP OK): <b>{ok_n}</b>\n"
                 f"{html_emoji('yellow')} лимит/блок (smtp_blocked): <b>{blocked_n}</b>\n"
                 f"{html_emoji('delete')} удалено (нет доступа): <b>{deleted_n}</b>\n"
@@ -707,7 +707,7 @@ async def _quick_gmail_begin(message: Message, state: FSMContext) -> None:
         ]
     )
     await message.answer(
-        "⚡ <b>Быстрое добавление (Gmail)</b>\n\n"
+        f"{html_emoji('burst')} <b>Быстрое добавление (Gmail)</b>\n\n"
         "<b>Шаг 1/2.</b> Введите <b>имя и фамилию</b> для отправки писем\n"
         "(например: <code>Maria Johansen</code>).\n\n"
         "Отмена: отправьте <code>-</code>",
@@ -732,7 +732,7 @@ async def quick_gmail_sender_name(message: Message, state: FSMContext) -> None:
     raw = (message.text or "").strip()
     if raw == "-":
         await state.clear()
-        return await message.answer("❌ Отменено.")
+        return await message.answer(f"{html_emoji('fail')} Отменено.")
     words = [w for w in raw.split() if w.strip()]
     if len(words) < 2:
         return await message.answer(
@@ -743,7 +743,7 @@ async def quick_gmail_sender_name(message: Message, state: FSMContext) -> None:
     await state.update_data(quick_sender_name=raw)
     await state.set_state(AccountsQuickGmailStates.waiting_gmail_creds)
     await message.answer(
-        "✅ Имя сохранено.\n\n"
+        f"{html_emoji('ok')} Имя сохранено.\n\n"
         "<b>Шаг 2/2.</b> Отправьте Gmail-аккаунты:\n"
         "<code>email@gmail.com:app_password</code>\n\n"
         "Каждый аккаунт — с новой строки (можно несколько).\n"
@@ -758,13 +758,13 @@ async def quick_gmail_creds(message: Message, state: FSMContext) -> None:
     raw = message.text or ""
     if raw.strip() == "-":
         await state.clear()
-        return await message.answer("❌ Отменено.")
+        return await message.answer(f"{html_emoji('fail')} Отменено.")
 
     data = await state.get_data()
     sender_name = (data.get("quick_sender_name") or "").strip()
     if not sender_name:
         await state.clear()
-        return await message.answer("Сессия сброшена. Начните с «⚡ Быстрое добавление».")
+        return await message.answer(f"Сессия сброшена. Начните с «{html_emoji('burst')} Быстрое добавление».")
 
     lines = [ln.strip() for ln in raw.splitlines() if ln.strip()]
     if not lines:
@@ -772,10 +772,10 @@ async def quick_gmail_creds(message: Message, state: FSMContext) -> None:
 
     tg_id = message.from_user.id
     if bg_is_running(tg_id, "accounts_add"):
-        return await message.answer("⏳ Добавление аккаунтов уже выполняется…")
+        return await message.answer(f"{html_emoji('wait')} Добавление аккаунтов уже выполняется…")
 
     await state.clear()
-    await message.answer("⏳ Проверяю Gmail (IMAP)…")
+    await message.answer(f"{html_emoji('wait')} Проверяю Gmail (IMAP)…")
 
     async def _job() -> None:
         async with Session() as session:
@@ -801,7 +801,7 @@ async def quick_gmail_creds(message: Message, state: FSMContext) -> None:
         await render_accounts_menu(message, tg_id, page=1, status_filter="all")
 
     if not bg_start(tg_id, "accounts_add", _job()):
-        await message.answer("⏳ Добавление аккаунтов уже выполняется…")
+        await message.answer(f"{html_emoji('wait')} Добавление аккаунтов уже выполняется…")
 
 
 @router.callback_query(F.data == "accounts_add_menu")
@@ -828,10 +828,10 @@ async def process_accounts_input(message: Message, state: FSMContext) -> None:
 
     tg_id = message.from_user.id
     if bg_is_running(tg_id, "accounts_add"):
-        return await message.answer("⏳ Добавление аккаунтов уже выполняется…")
+        return await message.answer(f"{html_emoji('wait')} Добавление аккаунтов уже выполняется…")
 
     await state.clear()
-    await message.answer("⏳ Проверяю аккаунты (IMAP)…")
+    await message.answer(f"{html_emoji('wait')} Проверяю аккаунты (IMAP)…")
 
     async def _job() -> None:
         async with Session() as session:
@@ -853,12 +853,12 @@ async def process_accounts_input(message: Message, state: FSMContext) -> None:
         await render_accounts_menu(message, tg_id, page=1, status_filter="all")
 
     if not bg_start(tg_id, "accounts_add", _job()):
-        await message.answer("⏳ Добавление аккаунтов уже выполняется…")
+        await message.answer(f"{html_emoji('wait')} Добавление аккаунтов уже выполняется…")
 
 @router.callback_query(F.data.startswith("acc_info:"))
 async def account_info_click(callback: CallbackQuery) -> None:
     await callback.answer(
-        "🟢 — рассылка · 🟡 smtp_blocked (только IMAP) · ↩️ вернуть в рассылку · 🗑 удалить",
+        f"{html_emoji('green')} — рассылка · {html_emoji('yellow')} smtp_blocked (только IMAP) · {html_emoji('restore')} вернуть в рассылку · {html_emoji('delete')} удалить",
         show_alert=False,
     )
 
@@ -895,7 +895,7 @@ async def account_restore_smtp(callback: CallbackQuery) -> None:
         await session.commit()
 
     await render_accounts_menu(callback, callback.from_user.id, page=page, status_filter=status_filter)
-    await callback.answer("↩️ Снова в рассылке", show_alert=False)
+    await callback.answer(toast("restore", "Снова в рассылке"), show_alert=False)
 
 
 @router.callback_query(F.data.startswith("acc_del:"))
@@ -936,7 +936,7 @@ async def account_delete_click(callback: CallbackQuery) -> None:
         await session.commit()
 
     await render_accounts_menu(callback, callback.from_user.id, page=page, status_filter=status_filter)
-    await callback.answer("Аккаунт удалён 🗑", show_alert=False)
+    await callback.answer(toast("delete", "Аккаунт удалён"), show_alert=False)
 
 @router.callback_query(F.data == "noop")
 async def noop(callback: CallbackQuery) -> None:

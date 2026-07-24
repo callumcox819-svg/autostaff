@@ -16,6 +16,7 @@ from services.aqua_keys import (
     user_profile_fields_complete,
 )
 from services.aqua_network import AquaError, generate_aqua_link
+from utils.ui_emoji import menu_path
 from services.offer_storage import offer_effective_photo, offer_effective_price, offer_effective_title
 
 
@@ -70,7 +71,7 @@ async def aqua_generate_for_offer(
 ) -> str:
     user_key, team_key = await get_user_aqua_api_keys_async(session, user)
     if not user_key:
-        raise AquaError("Не задан личный API key. ⚙️ → 🔑 Ключ")
+        raise AquaError(f"Не задан личный API key. {menu_path(('settings', ''), ('key', 'Ключ'))}")
     from services.aqua_network import generate_api_configured
 
     if not generate_api_configured():
@@ -80,8 +81,8 @@ async def aqua_generate_for_offer(
 
     if not await user_profile_fields_complete(session, user):
         raise AquaError(
-            "Профиль не заполнен. ⚙️ → 🧾 Профиль → Заполнить / изменить "
-            "(название, имя получателя, адрес)."
+            f"Профиль не заполнен. {menu_path(('settings', ''), ('profile', 'Профиль'))} → "
+            "Заполнить / изменить (название, имя получателя, адрес)."
         )
 
     buyer_name = await get_user_profile_buyer_name(session, user)

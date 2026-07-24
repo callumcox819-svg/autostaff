@@ -1,6 +1,7 @@
 """Проверка прокси (SOCKS5 / HTTP) перед рассылкой и периодически во время /send."""
 
 from __future__ import annotations
+from utils.ui_emoji import html_emoji, menu_path, toast, msg_fail, msg_ok, msg_wait, msg_warn
 
 import asyncio
 import logging
@@ -43,8 +44,8 @@ class ProxyHealthSummary:
 
     def format_lines(self) -> str:
         return (
-            f"Прокси: <b>{self.total}</b> · 🟢 SMTP OK: <b>{self.ok}</b> · "
-            f"🟡 неясно: <b>{self.unknown}</b> · 🔴 мёртв при рассылке: <b>{self.bad}</b>"
+            f"Прокси: <b>{self.total}</b> · {html_emoji('green')} SMTP OK: <b>{self.ok}</b> · "
+            f"{html_emoji('yellow')} неясно: <b>{self.unknown}</b> · {html_emoji('red')} мёртв при рассылке: <b>{self.bad}</b>"
         )
 
 
@@ -83,13 +84,13 @@ def mailing_may_start(summary: ProxyHealthSummary, *, fast: bool = False) -> Tup
             return (
                 True,
                 summary.format_lines()
-                + "\n<i>⚡ Фаст: один 🟢 прокси на всю рассылку (полный SMTP-таймаут).</i>",
+                + f"\n<i>{html_emoji('burst')} Фаст: один {html_emoji('green')} прокси на всю рассылку (полный SMTP-таймаут).</i>",
             )
         return (
             False,
             summary.format_lines()
-            + "\n\n❌ <b>Фаст рассыл</b> требует хотя бы один 🟢 прокси (SMTP+STARTTLS OK). "
-            "Сейчас только 🟡/🔴 — выключите фаст или замените прокси.",
+            + f"\n\n{html_emoji('fail')} <b>Фаст рассыл</b> требует хотя бы один {html_emoji('green')} прокси (SMTP+STARTTLS OK). "
+            f"Сейчас только {html_emoji('yellow')}/{html_emoji('red')} — выключите фаст или замените прокси.",
         )
     if summary.ok >= 1:
         return True, summary.format_lines()
@@ -102,8 +103,8 @@ def mailing_may_start(summary: ProxyHealthSummary, *, fast: bool = False) -> Tup
     return (
         False,
         summary.format_lines()
-        + "\n\n❌ Все прокси помечены 🔴 после сбоя туннеля при рассылке. "
-        "Замените их или дождитесь «Проверить прокси» (🟢).",
+        + f"\n\n{html_emoji('fail')} Все прокси помечены {html_emoji('red')} после сбоя туннеля при рассылке. "
+        f"Замените их или дождитесь «Проверить прокси» ({html_emoji('green')}).",
     )
 
 
@@ -125,7 +126,7 @@ async def preflight_proxies_for_mailing(
                 if ok:
                     detail = (
                         summary.format_lines()
-                        + "\n<i>⚡ Фаст: preflight пропущен (MAIL_FAST_PREFLIGHT_SKIP).</i>"
+                        + f"\n<i>{html_emoji('burst')} Фаст: preflight пропущен (MAIL_FAST_PREFLIGHT_SKIP).</i>"
                     )
                 return ok, summary, detail
 
@@ -162,13 +163,13 @@ async def preflight_proxies_for_mailing(
     if fast and ok and not MAIL_FAST_PREFLIGHT_SKIP and sticky_proxy_id is not None:
         detail = (
             summary.format_lines()
-            + f"\n<i>⚡ Фаст: проверен 1 ротирующий прокси (id=<b>{sticky_proxy_id}</b>), "
+            + f"\n<i>{html_emoji('burst')} Фаст: проверен 1 ротирующий прокси (id=<b>{sticky_proxy_id}</b>), "
             f"таймаут {MAIL_FAST_PREFLIGHT_TIMEOUT}с.</i>"
         )
     elif fast and ok and not MAIL_FAST_PREFLIGHT_SKIP:
         detail = (
             summary.format_lines()
-            + f"\n<i>⚡ Фаст: проверен 1 ротирующий прокси, "
+            + f"\n<i>{html_emoji('burst')} Фаст: проверен 1 ротирующий прокси, "
             f"таймаут {MAIL_FAST_PREFLIGHT_TIMEOUT}с.</i>"
         )
     return ok, summary, detail
@@ -212,9 +213,9 @@ async def mailing_proxy_watch_loop(
                 try:
                     await bot.send_message(
                         int(chat_id),
-                        "⚠️ <b>Перепроверка прокси</b>\n"
+                        f"{html_emoji('warn')} <b>Перепроверка прокси</b>\n"
                         f"{summary.format_lines()}\n\n"
-                        "<i>Рассылка продолжается — только по 🟢/🟡 прокси (🔴 пропускаются).</i>",
+                        f"<i>Рассылка продолжается — только по {html_emoji('green')}/{html_emoji('yellow')} прокси ({html_emoji('red')} пропускаются).</i>",
                         parse_mode="HTML",
                     )
                 except Exception:

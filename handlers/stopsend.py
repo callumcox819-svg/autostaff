@@ -3,6 +3,7 @@ import logging
 from aiogram import Router, F
 from aiogram.filters import Command
 from aiogram.types import Message
+from utils.ui_emoji import html_emoji, menu_path, toast, msg_fail, msg_ok, msg_wait, msg_warn
 
 from keyboards.main_menu import main_menu_kb, is_stop_trigger
 
@@ -41,7 +42,7 @@ async def cmd_stopsend(message: Message) -> None:
     state.is_stopping = True
     set_sending_state(user_id, state=state)
     await message.answer(
-        "⏹ Я пометил рассылку на остановку.\n"
+        f"{html_emoji('stop')} Я пометил рассылку на остановку.\n"
         "После отправки ближайших писем процесс завершится.",
         reply_markup=main_menu_kb(message.from_user.id),
     )

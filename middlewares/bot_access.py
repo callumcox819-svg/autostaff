@@ -127,7 +127,7 @@ async def user_is_admin(telegram_id: int) -> bool:
 
 
 async def deny_access_message(message: Message) -> None:
-    await message.answer(ACCESS_DENIED_TEXT, reply_markup=ReplyKeyboardRemove())
+    await message.answer(ACCESS_DENIED_TEXT, reply_markup=ReplyKeyboardRemove(), parse_mode="HTML")
 
 
 class BotAccessMiddleware(BaseMiddleware):

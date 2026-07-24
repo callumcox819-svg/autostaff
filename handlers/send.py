@@ -1,7 +1,7 @@
 """GAG /send — только burst-рассылка (2–5 с), ротация ящиков и текстов."""
 
 from __future__ import annotations
-from utils.ui_emoji import html_emoji, menu_path, msg_fail, msg_ok, msg_wait, msg_warn
+from utils.ui_emoji import html_emoji, inline_button, menu_path, toast, msg_fail, msg_ok, msg_wait, msg_warn
 
 import asyncio
 import logging
@@ -218,7 +218,7 @@ async def start_sending(message: Message):
     chat_id = message.chat.id
     bot = message.bot
 
-    status_msg = await message.answer("⏳ Проверяю очередь и аккаунты…", parse_mode="HTML")
+    status_msg = await message.answer(f"{html_emoji('wait')} Проверяю очередь и аккаунты…", parse_mode="HTML")
 
     try:
         await _start_sending_inner(
@@ -233,12 +233,12 @@ async def start_sending(message: Message):
         try:
             await _edit_status_text(
                 status_msg,
-                "❌ Ошибка запуска рассылки. Попробуйте /send снова.",
+                f"{html_emoji('fail')} Ошибка запуска рассылки. Попробуйте /send снова.",
             )
         except Exception:
             await tg_answer_safe(
                 message,
-                "❌ Ошибка запуска рассылки. Попробуйте /send снова.",
+                f"{html_emoji('fail')} Ошибка запуска рассылки. Попробуйте /send снова.",
                 reply_markup=main_menu_kb(tg_user_id),
             )
 
@@ -260,20 +260,20 @@ async def _start_sending_inner(
         if not accounts:
             await _edit_status_text(
                 status_msg,
-                "❌ Нет активных аккаунтов.\nДобавьте почту в «Настройки → E-mail».",
+                f"{html_emoji('fail')} Нет активных аккаунтов.\nДобавьте почту в «Настройки → E-mail».",
             )
             return
 
         if total_targets <= 0:
             await _edit_status_text(
                 status_msg,
-                "❌ Очередь пуста — нет email после валидации.",
+                f"{html_emoji('fail')} Очередь пуста — нет email после валидации.",
             )
             return
 
         state = get_sending_state(tg_user_id)
         if state and getattr(state, "is_running", False):
-            await _edit_status_text(status_msg, "⚠️ Рассылка уже запущена.")
+            await _edit_status_text(status_msg, f"{html_emoji('warn')} Рассылка уже запущена.")
             return
 
         from proxy_manager import is_mailing_proxy
@@ -284,14 +284,14 @@ async def _start_sending_inner(
         if not any(is_mailing_proxy(p) for p in all_px):
             await _edit_status_text(
                 status_msg,
-                "❌ Нет прокси. Добавь SOCKS5 или HTTP в «Прокси».",
+                f"{html_emoji('fail')} Нет прокси. Добавь SOCKS5 или HTTP в «Прокси».",
             )
             return
 
     try:
         await _edit_status_text(
             status_msg,
-            "⏳ Проверяю ротирующий прокси…\n<i>~10 сек.</i>",
+            f"{html_emoji('wait')} Проверяю ротирующий прокси…\n<i>~10 сек.</i>",
             parse_mode="HTML",
         )
     except Exception:
@@ -315,13 +315,13 @@ async def _start_sending_inner(
         try:
             await _edit_status_text(
                 status_msg,
-                "❌ <b>Рассылка не запущена</b>\n\n" + px_detail,
+                f"{html_emoji('fail')} <b>Рассылка не запущена</b>\n\n" + px_detail,
                 parse_mode="HTML",
             )
         except Exception:
             await tg_answer_safe(
                 message,
-                "❌ Рассылка не запущена.\n\n" + px_detail,
+                f"{html_emoji('fail')} Рассылка не запущена.\n\n" + px_detail,
                 reply_markup=main_menu_kb(tg_user_id),
                 parse_mode="HTML",
             )
@@ -330,7 +330,7 @@ async def _start_sending_inner(
     if not sticky_proxy_id:
         await _edit_status_text(
             status_msg,
-            "❌ Нет 🟢 ротирующего прокси. Проверь «Прокси».",
+            f"{html_emoji('fail')} Нет {html_emoji('green')} ротирующего прокси. Проверь «Прокси».",
             parse_mode="HTML",
         )
         return
@@ -358,7 +358,7 @@ async def _start_sending_inner(
     try:
         await _edit_status_text(
             status_msg,
-            "⚡ <b>Рассылка</b>\n"
+            f"{html_emoji('burst')} <b>Рассылка</b>\n"
             f"В очереди: <b>{total_targets}</b> · ящиков: <b>{len(accounts)}</b>\n"
             f"Цель: <b>2–10 с</b> (волны параллельно)\n"
             f"{px_detail}\n"
@@ -441,11 +441,11 @@ async def _notify_sending_finished(*, bot: Bot, chat_id: int, tg_user_id: int) -
     elapsed = getattr(state, "burst_elapsed_sec", None)
 
     if state.is_stopping:
-        title = "⏹ <b>Рассылка остановлена</b>"
+        title = f"{html_emoji('stop')} <b>Рассылка остановлена</b>"
     elif status in ("DONE", "BURST"):
-        title = "✅ <b>Burst-рассылка завершена</b>"
+        title = f"{html_emoji('ok')} <b>Burst-рассылка завершена</b>"
     else:
-        title = "⚠️ <b>Рассылка прервана</b>"
+        title = f"{html_emoji('warn')} <b>Рассылка прервана</b>"
 
     time_line = ""
     if elapsed is not None:

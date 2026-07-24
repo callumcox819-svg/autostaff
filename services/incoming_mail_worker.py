@@ -17,7 +17,7 @@ from typing import Optional, List, Tuple, Dict, Any
 
 from aiogram import Bot
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-from utils.ui_emoji import html_emoji, inline_button, menu_path, msg_fail, msg_ok, msg_wait, msg_warn
+from utils.ui_emoji import html_emoji, inline_button, menu_path, toast, msg_fail, msg_ok, msg_wait, msg_warn
 from sqlalchemy import select as sa_select, or_ as sa_or, func
 from sqlalchemy.exc import OperationalError
 
@@ -1718,7 +1718,7 @@ async def _process_mails_for_account_impl(
             )
             if smtp_block_bounce and chunks:
                 chunks[0] += (
-                    "\n\n⚠️ <b>Почта переведена в неактивные для рассылки.</b> "
+                    f"\n\n{html_emoji('warn')} <b>Почта переведена в неактивные для рассылки.</b> "
                     "IMAP мониторинг оставлен включённым."
                 )
 

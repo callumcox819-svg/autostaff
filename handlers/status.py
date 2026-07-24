@@ -1,5 +1,5 @@
 from __future__ import annotations
-from utils.ui_emoji import html_emoji, menu_path, msg_fail, msg_ok, msg_wait, msg_warn
+from utils.ui_emoji import html_emoji, inline_button, menu_path, toast, msg_fail, msg_ok, msg_wait, msg_warn
 
 import logging
 import os
@@ -128,7 +128,7 @@ def render_status_text(
     offers_total = int(offers_total or 0)
 
     if running:
-        run_line = "🟢 Рассылка запущена"
+        run_line = f"{html_emoji('green')} Рассылка запущена"
     else:
         run_line = "Сейчас рассылка не запущена."
 
@@ -178,7 +178,7 @@ def render_status_text(
         )
 
     return (
-        "📊 <b>Статус рассылки</b>\n\n"
+        f"{html_emoji('status')} <b>Статус рассылки</b>\n\n"
         f"{run_line}\n"
         f"Режим: <b>{mode}</b>\n"
         f"Отправлено (SMTP): <b>{sent}</b>\n"
@@ -267,7 +267,7 @@ async def _collect_db_stats(
 async def cmd_imap_diag(message: Message) -> None:
     """Проверка: жив ли IMAP-воркер и есть ли входящие в БД."""
     tg_user_id = message.from_user.id
-    wait_msg = await message.answer("⏳ Смотрю IMAP и входящие в БД…")
+    wait_msg = await message.answer(f"{html_emoji('wait')} Смотрю IMAP и входящие в БД…")
     from services.incoming_mail_worker import incoming_mail_diag_snapshot
 
     snap = incoming_mail_diag_snapshot()
@@ -304,7 +304,7 @@ async def cmd_imap_diag(message: Message) -> None:
             f"{html_emoji('warn')} Пауза после ошибок IMAP (acc_id→сек): <code>{snap['backoff_sec_by_account']}</code>"
         )
     if not accs:
-        lines.append("\n❌ Нет почтовых аккаунтов — IMAP не к чему подключаться.")
+        lines.append(f"\n{html_emoji('fail')} Нет почтовых аккаунтов — IMAP не к чему подключаться.")
     else:
         blocked_accs = [
             a for a in accs if (a.status or "").strip().lower() == "smtp_blocked"
@@ -355,7 +355,7 @@ async def cmd_statussend(message: Message) -> None:
     st = get_sending_state(tg_user_id)
 
     # Быстрый отклик, пока считаем БД (рассылка не блокирует, но /stat тяжёлый на SQLite).
-    wait_msg = await message.answer("⏳ Считаю статистику…")
+    wait_msg = await message.answer(f"{html_emoji('wait')} Считаю статистику…")
 
     offers_total, pending_now, acc_total, acc_active, inbox_bounces, inbox_seller = (
         await _collect_db_stats(tg_user_id)

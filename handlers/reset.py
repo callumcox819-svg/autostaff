@@ -1,7 +1,7 @@
 """Команда /reset — очистить очередь рассылки, лиды в БД остаются."""
 
 from __future__ import annotations
-from utils.ui_emoji import html_emoji, menu_path, msg_fail, msg_ok, msg_wait, msg_warn
+from utils.ui_emoji import html_emoji, inline_button, menu_path, toast, msg_fail, msg_ok, msg_wait, msg_warn
 
 import logging
 
@@ -35,7 +35,7 @@ async def cmd_reset(message: Message) -> None:
     except Exception:
         logger.exception("cmd_reset failed tg=%s", tg_id)
         await message.answer(
-            "❌ Не удалось сбросить очередь. Попробуйте ещё раз.",
+            f"{html_emoji('fail')} Не удалось сбросить очередь. Попробуйте ещё раз.",
             reply_markup=main_menu_kb(tg_id),
         )
         return
@@ -45,20 +45,20 @@ async def cmd_reset(message: Message) -> None:
 
     if removed == 0:
         lines = [
-            "🔄 <b>Очередь рассылки пуста</b>",
+            f"{html_emoji('refresh')} <b>Очередь рассылки пуста</b>",
             "Нет email в очереди — сбрасывать нечего.",
-            "📧 Объявления в БД на месте.",
-            "📨 После новой валидации в очередь попадут <b>только новые</b> адреса.",
+            f"{html_emoji('email')} Объявления в БД на месте.",
+            f"{html_emoji('mail')} После новой валидации в очередь попадут <b>только новые</b> адреса.",
         ]
     else:
         lines = [
-            "🔄 <b>Очередь рассылки обнулена</b>",
+            f"{html_emoji('refresh')} <b>Очередь рассылки обнулена</b>",
             f"Убрано из очереди: <b>{removed}</b> адресов.",
-            "📧 <b>Объявления в БД</b> — без изменений.",
-            "📨 Следующая валидация <b>не вернёт</b> эти email в рассылку.",
+            f"{html_emoji('email')} <b>Объявления в БД</b> — без изменений.",
+            f"{html_emoji('mail')} Следующая валидация <b>не вернёт</b> эти email в рассылку.",
             f"{html_emoji('key')} Запомнено адресов после сброса: <b>{skip_n}</b>.",
-            "▶️ <code>/send</code> — только email, добавленные после сброса.",
-            "📊 <code>/stat</code> — очередь должна быть <b>0</b>.",
+            f"{html_emoji('send')} <code>/send</code> — только email, добавленные после сброса.",
+            f"{html_emoji('status')} <code>/stat</code> — очередь должна быть <b>0</b>.",
         ]
 
     await message.answer(

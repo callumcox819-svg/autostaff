@@ -115,7 +115,7 @@ async def user_has_active_mailing_proxy(session: AsyncSession, user_id: int) -> 
 
 NO_MAILING_PROXY = (
     "PROXY_ERROR|no_active_proxy|"
-    "Нет прокси. Добавь SOCKS5 или HTTP в ⚙️ → Прокси."
+    "Нет прокси. Добавь SOCKS5 или HTTP в «Настройки → Прокси»."
 )
 
 

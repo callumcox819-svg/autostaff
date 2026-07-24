@@ -91,6 +91,13 @@ def msg_warn(body: str) -> str:
     return f"{html_emoji('warn')} {body}"
 
 
+def toast(key: str, text: str) -> str:
+    """Короткий plain-text для callback.answer (premium icon там не рендерится)."""
+    fb = unicode_fallback(key)
+    t = (text or "").strip()
+    return f"{fb} {t}".strip() if fb else t
+
+
 @lru_cache(maxsize=1)
 def _load_emoji_ids() -> dict[str, str]:
     out: dict[str, str] = {}

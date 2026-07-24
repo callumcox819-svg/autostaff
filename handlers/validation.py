@@ -26,7 +26,7 @@ from services.seller_name import MIN_NAME_TOKEN_LEN, seller_name_eligible_for_va
 from services.sending_state import get_sending_state, set_sending_state
 from services.mailing_active_db import is_user_mailing_active
 from utils.bg_jobs import is_running as bg_is_running, start as bg_start
-from utils.ui_emoji import html_emoji, inline_button, menu_path, msg_fail, msg_ok, msg_wait, msg_warn
+from utils.ui_emoji import html_emoji, inline_button, menu_path, toast, msg_fail, msg_ok, msg_wait, msg_warn
 
 router = Router()
 

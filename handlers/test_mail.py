@@ -28,7 +28,7 @@ from services.user_settings import get_user_setting, set_user_setting
 from sqlalchemy import func, select
 from keyboards.main_menu import is_test_mail_trigger
 from utils.bg_jobs import is_running as bg_is_running, start as bg_start
-from utils.ui_emoji import html_emoji, inline_button, menu_path, msg_fail, msg_ok, msg_wait, msg_warn
+from utils.ui_emoji import html_emoji, inline_button, menu_path, toast, msg_fail, msg_ok, msg_wait, msg_warn
 
 router = Router()
 
@@ -134,13 +134,13 @@ async def _show_menu(message: Message, *, edit: bool = False) -> None:
     from services.bot_roles import user_is_admin
 
     if not await user_is_admin(message.from_user.id):
-        return await message.answer("⛔ Тест маил только для админов.")
+        return await message.answer(f"{html_emoji('deny')} Тест маил только для админов.")
     async with async_session() as session:
         user = (
             await session.execute(select(User).where(User.telegram_id == int(message.from_user.id)))
         ).scalars().first()
         if not user:
-            return await message.answer("❌ Сначала /start")
+            return await message.answer(f"{html_emoji('fail')} Сначала /start")
         text = await _menu_text(session, user)
         saved = await _load_saved_recipients(session, user)
         kb = _menu_kb(has_recipients=bool(saved))
@@ -216,14 +216,14 @@ async def test_mail_save_recipients(message: Message, state: FSMContext) -> None
     text = (message.text or "").strip()
     if text in ("-", "cancel") or text.lower() == "отмена":
         await state.clear()
-        await message.answer("❌ Отменено.")
+        await message.answer(f"{html_emoji('fail')} Отменено.")
         await _show_menu(message)
         return
 
     emails = _parse_emails(text)
     if not emails:
         return await message.answer(
-            "❌ Не найдено ни одного email. Попробуйте снова или отправьте <code>-</code>.",
+            f"{html_emoji('fail')} Не найдено ни одного email. Попробуйте снова или отправьте <code>-</code>.",
             parse_mode="HTML",
         )
 
@@ -233,7 +233,7 @@ async def test_mail_save_recipients(message: Message, state: FSMContext) -> None
         ).scalars().first()
         if not user:
             await state.clear()
-            return await message.answer("❌ Сначала /start")
+            return await message.answer(f"{html_emoji('fail')} Сначала /start")
         await _save_recipients(session, user, emails)
         await session.commit()
 
@@ -324,18 +324,18 @@ async def _build_test_message(
 
 async def _run_mass_test(message: Message, tg_id: int) -> None:
     if bg_is_running(tg_id, "test_mail"):
-        return await message.answer("⏳ Тест уже отправляется…")
+        return await message.answer(f"{html_emoji('wait')} Тест уже отправляется…")
 
     async with async_session() as session:
         user = (
             await session.execute(select(User).where(User.telegram_id == tg_id))
         ).scalars().first()
         if not user:
-            return await message.answer("❌ Сначала /start")
+            return await message.answer(f"{html_emoji('fail')} Сначала /start")
         recipients = await _load_saved_recipients(session, user)
         if not recipients:
             return await message.answer(
-                "❌ Список получателей пуст. «🧪 Тест маил» → «Указать получателей»."
+                f"{html_emoji('fail')} Список получателей пуст. «{html_emoji('test_mail')} Тест маил» → «Указать получателей»."
             )
         user_id = int(user.id)
         accs = [
@@ -346,13 +346,13 @@ async def _run_mass_test(message: Message, tg_id: int) -> None:
             if getattr(a, "status", "") == "active"
         ]
         if not accs:
-            return await message.answer("❌ Нет активных аккаунтов в «📮 Аккаунты».")
+            return await message.answer(f"{html_emoji('fail')} Нет активных аккаунтов в «{html_emoji('email')} Аккаунты».")
 
         sender_emails = {_canon_email(a.email) for a in accs}
         targets = [r for r in recipients if r not in sender_emails]
         if not targets:
             return await message.answer(
-                "❌ Все получатели совпадают с вашими ящиками отправителя. Укажите внешние email."
+                f"{html_emoji('fail')} Все получатели совпадают с вашими ящиками отправителя. Укажите внешние email."
             )
         eligible_acc_ids = [int(a.id) for a in accs]
 
@@ -473,7 +473,7 @@ async def _run_mass_test(message: Message, tg_id: int) -> None:
             await status.edit_text(f"{html_emoji('fail')} Ошибка теста: {escape(str(e))}", parse_mode="HTML")
 
     if not bg_start(tg_id, "test_mail", _job()):
-        await message.answer("⏳ Тест уже отправляется…")
+        await message.answer(f"{html_emoji('wait')} Тест уже отправляется…")
 
 
 def _is_valid_ad_link(url: str) -> bool:
@@ -553,7 +553,7 @@ async def preview_imap_card(message: Message) -> None:
     )
     kb = build_kb(0, "preview", mail_id=None)
     await message.answer(
-        "ℹ️ <b>Демо-карточка</b> (не реальное IMAP-письмо).",
+        f"{html_emoji('info')} <b>Демо-карточка</b> (не реальное IMAP-письмо).",
         parse_mode="HTML",
     )
     await message.answer(chunks[0], reply_markup=kb, parse_mode="HTML", disable_web_page_preview=True)

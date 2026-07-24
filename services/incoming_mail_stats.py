@@ -16,6 +16,11 @@ from services.incoming_mail_worker import (
     _is_smtp_block_bounce,
 )
 from services.offer_matching import is_seller_reply_subject
+from utils.ui_emoji import html_emoji
+
+
+def _cl(key: str, text: str) -> str:
+    return f"{html_emoji(key)} {text}"
 
 
 _AUTO_REPLY_RE = re.compile(
@@ -90,15 +95,15 @@ def classify_incoming_row(row: IncomingMail) -> str:
 
 
 _CATEGORY_LABELS = {
-    "seller_matched": "🟢 Продавец (рассылка / email в базе) — ближе всего к «живому»",
-    "offer_title_only": "📦 Оффер без Re: в теме (редко — проверьте вручную)",
-    "platform": "🏪 Платформа / сервис (ricardo.ch, tutti.ch, gmx…)",
-    "google": "📧 Google / системное (в TG обычно нет карточки)",
-    "bounce_block": "⛔ Block отправителя (Gmail 5.7.1 / Message blocked)",
-    "bounce_recipient": "💀 Мёртвый адрес получателя (не ответ продавца)",
-    "bounce": "↩️ Прочий отбой (mailer-daemon)",
-    "auto_reply": "🤖 Автоответ (out of office)",
-    "unmatched": "❓ Без привязки к офферу (возможная потеря)",
+    "seller_matched": _cl("green", "Продавец (рассылка / email в базе) — ближе всего к «живому»"),
+    "offer_title_only": _cl("presets", "Оффер без Re: в теме (редко — проверьте вручную)"),
+    "platform": _cl("compass", "Платформа / сервис (ricardo.ch, tutti.ch, gmx…)"),
+    "google": _cl("email", "Google / системное (в TG обычно нет карточки)"),
+    "bounce_block": _cl("deny", "Block отправителя (Gmail 5.7.1 / Message blocked)"),
+    "bounce_recipient": _cl("fail", "Мёртвый адрес получателя (не ответ продавца)"),
+    "bounce": _cl("restore", "Прочий отбой (mailer-daemon)"),
+    "auto_reply": _cl("wait", "Автоответ (out of office)"),
+    "unmatched": _cl("info", "Без привязки к офферу (возможная потеря)"),
 }
 
 

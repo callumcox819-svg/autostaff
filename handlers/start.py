@@ -12,21 +12,29 @@ from database import db_session
 from services.users import get_or_create_user
 from services.bot_roles import config_admin_ids
 from services.bot_access import deny_access_message
+from utils.ui_emoji import html_emoji, msg_fail, msg_wait
 
 router = Router()
 logger = logging.getLogger(__name__)
 
 _START_DB_TIMEOUT_SEC = float(os.getenv("START_DB_TIMEOUT_SEC", "12"))
 
-_WELCOME = (
-    "привет даун ебаный\n"
-    "ты воркаешь лутаешь мне бабки\n\n"
-    "/send — рассылка\n"
-    "/stop — стоп\n"
-    "/reset — сброс\n"
-    "/stat — статус\n\n"
-    "json → валидация"
-)
+
+def _welcome_html() -> str:
+    return "\n".join(
+        [
+            f"{html_emoji('burst')} <b>GAG · Швейцария</b>",
+            "Рассылка, входящие, валидация и ссылки.",
+            "",
+            f"{html_emoji('send')} <code>/send</code> — burst-рассылка",
+            f"{html_emoji('stop')} <code>/stop</code> — остановка",
+            f"{html_emoji('refresh')} <code>/reset</code> — сброс очереди",
+            f"{html_emoji('status')} <code>/stat</code> — статус",
+            "",
+            f"{html_emoji('presets')} JSON / TXT — валидация и база офферов",
+            f"{html_emoji('settings')} Кнопка «Настройки» — аккаунты, прокси, ключ, пресеты",
+        ]
+    )
 
 
 async def _start_load_user(tg_id: int) -> tuple[bool, bool, bool]:
@@ -58,8 +66,14 @@ async def cmd_start(message: Message, state: FSMContext) -> None:
     except Exception:
         pass
 
+    welcome = _welcome_html()
+
     if tg_id in config_admin_ids():
-        await message.answer(_WELCOME, reply_markup=main_menu_kb(tg_id, show_admin=True))
+        await message.answer(
+            welcome,
+            reply_markup=main_menu_kb(tg_id, show_admin=True),
+            parse_mode="HTML",
+        )
         return
 
     try:
@@ -69,19 +83,33 @@ async def cmd_start(message: Message, state: FSMContext) -> None:
         )
     except asyncio.TimeoutError:
         logger.error("/start DB timeout tg=%s", tg_id)
-        await message.answer("бд не отвечает, /start через 15 сек")
+        await message.answer(
+            f"{msg_wait('БД не отвечает — повтори /start через 15 сек.')}",
+            parse_mode="HTML",
+        )
         return
     except Exception:
         logger.exception("/start failed tg=%s", tg_id)
-        await message.answer("ошибка бд, /start через 10 сек")
+        await message.answer(
+            f"{msg_fail('Ошибка БД — повтори /start через 10 сек.')}",
+            parse_mode="HTML",
+        )
         return
 
     if is_banned:
-        await message.answer("заблокирован", reply_markup=ReplyKeyboardRemove())
+        await message.answer(
+            f"{msg_fail('Аккаунт заблокирован.')}",
+            reply_markup=ReplyKeyboardRemove(),
+            parse_mode="HTML",
+        )
         return
 
     if not has_access:
         await deny_access_message(message)
         return
 
-    await message.answer(_WELCOME, reply_markup=main_menu_kb(tg_id, show_admin=is_admin))
+    await message.answer(
+        welcome,
+        reply_markup=main_menu_kb(tg_id, show_admin=is_admin),
+        parse_mode="HTML",
+    )

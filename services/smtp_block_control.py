@@ -1,6 +1,7 @@
 """Контроль SMTP-блокировок: ящик остаётся для IMAP, рассылка с него снимается."""
 
 from __future__ import annotations
+from utils.ui_emoji import html_emoji, menu_path, toast, msg_fail, msg_ok, msg_wait, msg_warn
 
 import html
 
@@ -113,7 +114,7 @@ async def notify_smtp_stream_stopped_for_imap(
 ) -> None:
     em = html.escape((account_email or "").strip())
     text = (
-        f"⚡️ Поток SMTP для <code>{em}</code> завершён.\n"
+        f"{html_emoji('burst')} Поток SMTP для <code>{em}</code> завершён.\n"
         f"Оставляем ящик для IMAP (входящие)."
     )
     r = (reason or "").strip()
@@ -170,7 +171,7 @@ async def mark_account_smtp_blocked(
         em = html.escape((account.email or "").strip())
         await bot.send_message(
             int(chat_id),
-            f"<b>{em}</b>: неактивен для отправок 🔴 · IMAP остаётся 🟢",
+            f"<b>{em}</b>: неактивен для отправок {html_emoji('red')} · IMAP остаётся {html_emoji('green')}",
             parse_mode="HTML",
         )
     return True

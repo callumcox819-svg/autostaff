@@ -19,7 +19,7 @@ from sqlalchemy import select
 from database import Session, db_session
 from models import EmailAccount
 from services.users import get_or_create_user
-from utils.ui_emoji import html_emoji, inline_button, menu_path, msg_fail, msg_ok, msg_wait, msg_warn
+from utils.ui_emoji import html_emoji, inline_button, menu_path, toast, msg_fail, msg_ok, msg_wait, msg_warn
 
 router = Router()
 
@@ -485,7 +485,7 @@ async def _finish_presets_add(message: Message, state_data: dict, tg_id: int) ->
     if prompt_id:
         await _delete_message_safe(message.bot, message.chat.id, int(prompt_id))
     await _hide_old_menu_markup(message.bot, state_data)
-    await message.answer("✅ Добавлено.")
+    await message.answer(f"{html_emoji('ok')} Добавлено.")
     await _send_presets_menu_message(message, tg_id)
 
 
@@ -494,7 +494,7 @@ async def _finish_smart_add(message: Message, state_data: dict, tg_id: int) -> N
     if prompt_id:
         await _delete_message_safe(message.bot, message.chat.id, int(prompt_id))
     await _hide_old_menu_markup(message.bot, state_data)
-    await message.answer("✅ Добавлено.")
+    await message.answer(f"{html_emoji('ok')} Добавлено.")
     await _send_smart_menu_message(message, tg_id)
 
 
@@ -702,7 +702,7 @@ async def tmpl_preset_edit_text(message: Message, state: FSMContext) -> None:
     items[idx] = TemplateItem(title=title, text=body)
     await save_templates(tg_id, items)
     await _hide_old_menu_markup(message.bot, data)
-    await message.answer("✅ Сохранено.")
+    await message.answer(f"{html_emoji('ok')} Сохранено.")
     await _send_presets_menu_message(message, tg_id)
 
 
@@ -852,5 +852,5 @@ async def stmpl_edit_text(message: Message, state: FSMContext) -> None:
     items[idx] = text
     await save_smart_texts(tg_id, items)
     await _hide_old_menu_markup(message.bot, data)
-    await message.answer("✅ Сохранено.")
+    await message.answer(f"{html_emoji('ok')} Сохранено.")
     await _send_smart_menu_message(message, tg_id)

@@ -19,7 +19,7 @@ from handlers.templates import load_templates, TemplateItem
 from handlers.incoming_mail import _bg_incoming_smtp, _reply_notify_build_async
 from services.users import get_or_create_user
 from models import IncomingMail
-from utils.ui_emoji import inline_button
+from utils.ui_emoji import html_emoji, inline_button, menu_path, toast, msg_fail, msg_ok, msg_wait, msg_warn
 
 router = Router()
 logger = logging.getLogger(__name__)
@@ -212,7 +212,7 @@ async def mail_tmpl_open(callback: CallbackQuery, state: FSMContext):
 
     items = await load_templates(callback.from_user.id)
     if not items:
-        return await callback.answer("Нет шаблонов. Добавь их в ⚡ Шаблоны", show_alert=True)
+        return await callback.answer(f"Нет шаблонов. Добавь их в {html_emoji('burst')} Шаблоны", show_alert=True)
 
     text = "Нажмите на пресет для отправки"
     await callback.message.answer(
@@ -269,7 +269,7 @@ async def mail_tmpl_send(callback: CallbackQuery, state: FSMContext):
 
     items = await load_templates(callback.from_user.id)
     if not items:
-        return await callback.answer("Нет шаблонов. Добавь их в ⚡ Шаблоны", show_alert=True)
+        return await callback.answer(f"Нет шаблонов. Добавь их в {html_emoji('burst')} Шаблоны", show_alert=True)
 
     if idx < 0 or idx >= len(items):
         return await callback.answer("Шаблон не найден", show_alert=True)

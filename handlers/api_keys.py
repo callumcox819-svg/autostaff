@@ -32,7 +32,7 @@ from services.aqua_keys import (
 from services.aqua_network import AquaError, generate_api_base, generate_api_configured, verify_gag_auth
 from services.user_settings import set_user_setting
 from utils.secrets import clean_secret
-from utils.ui_emoji import html_emoji, inline_button, menu_path, msg_fail, msg_ok, msg_wait, msg_warn
+from utils.ui_emoji import html_emoji, inline_button, menu_path, toast, msg_fail, msg_ok, msg_wait, msg_warn
 
 router = Router(name="api_keys")
 
@@ -229,7 +229,7 @@ async def aqua_profile_create(callback: CallbackQuery, state: FSMContext) -> Non
 async def profile_title_step(message: Message, state: FSMContext) -> None:
     title = (message.text or "").strip()
     if not title:
-        await message.answer("❌ Название пустое.")
+        await message.answer(f"{html_emoji('fail')} Название пустое.")
         return
     await state.update_data(title=title)
     await state.set_state(ProfileState.buyer_name)
@@ -244,7 +244,7 @@ async def profile_title_step(message: Message, state: FSMContext) -> None:
 async def profile_buyer_step(message: Message, state: FSMContext) -> None:
     buyer = (message.text or "").strip()
     if not buyer:
-        await message.answer("❌ Имя пустое.")
+        await message.answer(f"{html_emoji('fail')} Имя пустое.")
         return
     await state.update_data(buyer_name=buyer)
     await state.set_state(ProfileState.address)
@@ -259,7 +259,7 @@ async def profile_buyer_step(message: Message, state: FSMContext) -> None:
 async def profile_address_step(message: Message, state: FSMContext) -> None:
     addr = (message.text or "").strip()
     if not addr:
-        await message.answer("❌ Адрес пустой.")
+        await message.answer(f"{html_emoji('fail')} Адрес пустой.")
         return
     data = await state.get_data()
     title = (data.get("title") or "").strip()
@@ -273,7 +273,7 @@ async def profile_address_step(message: Message, state: FSMContext) -> None:
         await session.commit()
 
     await state.clear()
-    await message.answer("✅ Профиль сохранён.", reply_markup=profile_screen_kb())
+    await message.answer(f"{html_emoji('ok')} Профиль сохранён.", reply_markup=profile_screen_kb())
 
 
 @router.callback_query(F.data == "aqua_test_keys")
@@ -283,10 +283,13 @@ async def aqua_test_keys(callback: CallbackQuery) -> None:
         user = await get_or_create_user(session, callback.from_user.id)
         user_key = await get_user_aqua_user_key_async(session, user)
         if not user_key:
-            return await callback.message.answer("❌ Личный ключ не задан. ⚙️ → 🔑")
+            return await callback.message.answer(
+                f"{html_emoji('fail')} Личный ключ не задан. {menu_path(('settings', ''), ('key', 'Ключ'))}",
+                parse_mode="HTML",
+            )
         if not generate_api_configured():
             return await callback.message.answer(
-                "❌ На сервере не задан GAG_API_BASE (домен генерации)."
+                f"{html_emoji('fail')} На сервере не задан GAG_API_BASE (домен генерации)."
             )
         try:
             await verify_gag_auth(user_api_key=user_key)
@@ -295,7 +298,7 @@ async def aqua_test_keys(callback: CallbackQuery) -> None:
                 f"{html_emoji('fail')} <b>GAG API</b>\n<code>{html.escape(str(e)[:400])}</code>",
                 parse_mode="HTML",
             )
-    await callback.message.answer("✅ Ключи работают (GAG API).", parse_mode="HTML")
+    await callback.message.answer(f"{html_emoji('ok')} Ключи работают (GAG API).", parse_mode="HTML")
 
 
 @router.callback_query(F.data == "aqua_set:user_key")
@@ -314,7 +317,7 @@ async def aqua_set_user_key_begin(callback: CallbackQuery, state: FSMContext) ->
 async def keys_set_finish(message: Message, state: FSMContext) -> None:
     value = clean_secret((message.text or "").strip())
     if not value:
-        await message.answer("❌ Пустое значение.")
+        await message.answer(f"{html_emoji('fail')} Пустое значение.")
         return
 
     async with Session() as session:
@@ -325,4 +328,4 @@ async def keys_set_finish(message: Message, state: FSMContext) -> None:
         await session.commit()
 
     await state.clear()
-    await message.answer("✅ Ключ сохранён.")
+    await message.answer(f"{html_emoji('ok')} Ключ сохранён.")

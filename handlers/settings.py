@@ -239,7 +239,7 @@ async def _spoof_name_menu_payload(tg_user_id: int) -> tuple[str, InlineKeyboard
         f"Имя отправителя (при {html_emoji('green')} Спуфинг): <b>{cur_line}</b>\n\n"
         f"Используется только при отправке <b>HTML</b>.\n"
         f"Рассылка — отдельно: имя из «{html_emoji('email')} E-mail», тема <code>OFFER</code>.\n\n"
-        f"📌 <b>Тема для HTML:</b> <code>{html_subj}</code>"
+        f"{html_emoji('pin')} <b>Тема для HTML:</b> <code>{html_subj}</code>"
     )
     kb = InlineKeyboardMarkup(
         inline_keyboard=[
@@ -546,7 +546,11 @@ async def ref_open(callback: CallbackQuery, state: FSMContext):
         return
     if screen in {"themes", "themes_html"}:
         await state.clear()
-        title = "📌 <b>Темы</b>" if screen == "themes" else "🏷 <b>Тема для HTML</b>"
+        title = (
+            f"{html_emoji('pin')} <b>Темы</b>"
+            if screen == "themes"
+            else f"{html_emoji('profile')} <b>Тема для HTML</b>"
+        )
         text = (
             f"{title}\n\n"
             f"В этом проекте темы/шаблоны управляются через «{html_emoji('profile')} Пресеты».\n"
@@ -649,7 +653,7 @@ async def themes_menu(callback: CallbackQuery, state: FSMContext):
 
     preview = render_subject_with_offer(cur_show, example_title)
     txt = (
-        "📌 <b>Тема рассылки (/send)</b>\n\n"
+        f"{html_emoji('pin')} <b>Тема рассылки (/send)</b>\n\n"
         "Глобально для <b>всех</b> (как happy88: по умолчанию только название товара).\n"
         "<code>OFFER</code> = название товара.\n\n"
         f"Шаблон: <code>{cur_show}</code>\n"
@@ -686,7 +690,7 @@ async def themes_edit(callback: CallbackQuery, state: FSMContext):
     await state.clear()
     await state.set_state(_SettingsInput.subject_template)
     await _safe_send(callback.message.edit_text(
-        "📌 <b>Тема рассылки</b>\n\n"
+        f"{html_emoji('pin')} <b>Тема рассылки</b>\n\n"
         "Отправь шаблон с <code>OFFER</code> (название товара).\n"
         "Примеры: <code>Re: OFFER</code>, <code>Tuote: OFFER</code>\n"
         "Сброс — отправь <code>-</code>.",
@@ -735,7 +739,7 @@ async def _themes_menu_after_save(message: Message, state: FSMContext, cur_show:
     )
     preview = render_subject_with_offer(effective, "Pöytäliina")
     txt = (
-        "📌 <b>Тема рассылки (/send)</b>\n\n"
+        f"{html_emoji('pin')} <b>Тема рассылки (/send)</b>\n\n"
         f"Сохранено: <code>{effective}</code>\n"
         f"Пример: <code>{preview}</code>"
     )
@@ -746,7 +750,7 @@ async def themes_clear(callback: CallbackQuery, state: FSMContext):
     async with Session() as session:
         user = await get_or_create_user(session, callback.from_user.id)
         await set_user_setting(session, user, SUBJECT_TEMPLATE_KEY, "")
-    await callback.answer("Очищено ✅")
+    await callback.answer(toast("ok", "Очищено"))
     await themes_menu(callback, state)
 
 # =========================
@@ -767,7 +771,7 @@ async def html_theme_menu(callback: CallbackQuery, state: FSMContext):
     ])
     cur_show = cur if cur else "—"
     txt = (
-        "📌 <b>Тема для HTML</b>\n\n"
+        f"{html_emoji('pin')} <b>Тема для HTML</b>\n\n"
         "Используется только при отправке <b>HTML</b> (не при массовой рассылке).\n"
         "Рассылка использует глобальный <code>OFFER</code> → название товара.\n\n"
         f"Текущее значение:\n<code>{cur_show}</code>"
@@ -806,7 +810,7 @@ async def html_theme_clear(callback: CallbackQuery, state: FSMContext):
     async with Session() as session:
         user = await get_or_create_user(session, callback.from_user.id)
         await set_user_setting(session, user, HTML_THEME_KEY, "")
-    await callback.answer("Очищено ✅")
+    await callback.answer(toast("ok", "Очищено"))
     await html_theme_menu(callback, state)
 
 # =========================
@@ -878,7 +882,7 @@ async def priority_reset(callback: CallbackQuery, state: FSMContext):
     async with Session() as session:
         user = await get_or_create_user(session, callback.from_user.id)
         await set_user_setting(session, user, DOMAIN_PRIORITY_KEY, json.dumps([]))
-    await callback.answer("Сброшено ✅")
+    await callback.answer(toast("ok", "Сброшено"))
     await priority_menu(callback, state)
 
 # =========================

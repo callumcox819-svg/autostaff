@@ -471,7 +471,7 @@ async def open_proxies(callback: CallbackQuery):
     if bad_n == len(proxies) and not _proxy_bulk_check_tasks.get(telegram_id):
         try:
             await callback.message.answer(
-                "ℹ️ Все прокси помечены 🔴 — запускаю автопроверку…",
+                f"{html_emoji('info')} Все прокси помечены {html_emoji('red')} — запускаю автопроверку…",
                 parse_mode="HTML",
             )
         except TelegramBadRequest:
@@ -493,7 +493,7 @@ async def proxy_add_menu(callback: CallbackQuery, state: FSMContext):
 
     await state.set_state(ProxyAddStates.waiting_for_list)
     await callback.message.edit_text(
-        "📝 <b>SOCKS5 или HTTP</b> — оба типа подходят для рассылки.\n"
+        f"{html_emoji('write')} <b>SOCKS5 или HTTP</b> — оба типа подходят для рассылки.\n"
         "Пришли список прокси (по одному на строку) ИЛИ карточкой.\n\n"
         "<b>Примеры:</b>\n"
         "<code>socks5://user:pass@109.104.153.100:10811</code>\n"
@@ -516,7 +516,7 @@ async def proxy_add_menu(callback: CallbackQuery, state: FSMContext):
 async def proxy_add_process(message: Message, state: FSMContext):
     raw_text = (message.text or "").strip()
     if not raw_text:
-        await message.answer("❌ Пусто. Пришли прокси строками или карточкой.")
+        await message.answer(f"{html_emoji('fail')} Пусто. Пришли прокси строками или карточкой.")
         return
 
     telegram_id = message.from_user.id
@@ -560,7 +560,7 @@ async def proxy_add_process(message: Message, state: FSMContext):
                     parsed_items.append((b, parse_proxy_string(b)))
 
     if bg_is_running(telegram_id, "proxy_add"):
-        return await message.answer("⏳ Добавление прокси уже идёт. Подождите завершения.")
+        return await message.answer(f"{html_emoji('wait')} Добавление прокси уже идёт. Подождите завершения.")
 
     status_msg = await message.answer(
         f"{html_emoji('wait')} Проверяю <b>{len(parsed_items)}</b> прокси…\n"
@@ -572,7 +572,7 @@ async def proxy_add_process(message: Message, state: FSMContext):
         await _proxy_add_work(message, state, telegram_id, parsed_items, status_msg)
 
     if not bg_start(telegram_id, "proxy_add", _job()):
-        return await message.answer("⏳ Добавление прокси уже идёт. Подождите завершения.")
+        return await message.answer(f"{html_emoji('wait')} Добавление прокси уже идёт. Подождите завершения.")
 
 
 async def _proxy_add_work(
@@ -776,13 +776,13 @@ async def proxies_check_all(callback: CallbackQuery) -> None:
     existing = _proxy_bulk_check_tasks.get(telegram_id)
     if existing and not existing.done():
         try:
-            await callback.answer("⏳ Проверка уже идёт, подождите…", show_alert=True)
+            await callback.answer(toast("wait", "Проверка уже идёт, подождите…"), show_alert=True)
         except TelegramBadRequest:
             pass
         return
 
     try:
-        await callback.answer("⏳ Запускаю проверку…", show_alert=False)
+        await callback.answer(toast("wait", "Запускаю проверку…"), show_alert=False)
     except TelegramBadRequest:
         pass
 
@@ -792,7 +792,7 @@ async def proxies_check_all(callback: CallbackQuery) -> None:
         ).scalar_one_or_none()
         if not user:
             try:
-                await callback.message.edit_text("❌ Пользователь не найден.")
+                await callback.message.edit_text(f"{html_emoji('fail')} Пользователь не найден.")
             except TelegramBadRequest:
                 pass
             return
@@ -837,7 +837,7 @@ async def proxies_check_all(callback: CallbackQuery) -> None:
 
             try:
                 await callback.message.edit_text(
-                    "✅ <b>Проверка завершена</b>\n\n"
+                    f"{html_emoji('ok')} <b>Проверка завершена</b>\n\n"
                     f"{html_emoji('green')} рабочих: <b>{ok_n}</b> · {html_emoji('red')} неактивных: <b>{fail_n}</b>\n"
                     "<i>Статус обновлён в списке ниже.</i>",
                     parse_mode="HTML",
@@ -850,7 +850,7 @@ async def proxies_check_all(callback: CallbackQuery) -> None:
             logger.exception("bulk proxy check failed for user %s", telegram_id)
             try:
                 await callback.message.edit_text(
-                    "❌ Ошибка при проверке прокси. Попробуйте позже или проверьте один прокси кнопкой 🔄.",
+                    f"{html_emoji('fail')} Ошибка при проверке прокси. Попробуйте позже или проверьте один прокси кнопкой {html_emoji('refresh')}.",
                     parse_mode="HTML",
                 )
             except TelegramBadRequest:
@@ -865,7 +865,7 @@ async def proxies_check_all(callback: CallbackQuery) -> None:
 @router.callback_query(F.data.startswith("proxy_test:"))
 async def proxy_test(callback: CallbackQuery):
     try:
-        await callback.answer("⏳ Тестирую прокси…", show_alert=False)
+        await callback.answer(toast("wait", "Тестирую прокси…"), show_alert=False)
     except TelegramBadRequest:
         pass
 
@@ -875,7 +875,7 @@ async def proxy_test(callback: CallbackQuery):
 
     if bg_is_running(telegram_id, job_key):
         try:
-            await callback.answer("⏳ Этот прокси уже проверяется…", show_alert=True)
+            await callback.answer(toast("wait", "Этот прокси уже проверяется…"), show_alert=True)
         except TelegramBadRequest:
             pass
         return
@@ -929,6 +929,6 @@ async def proxy_test(callback: CallbackQuery):
 
     if not bg_start(telegram_id, job_key, run()):
         try:
-            await callback.answer("⏳ Этот прокси уже проверяется…", show_alert=True)
+            await callback.answer(toast("wait", "Этот прокси уже проверяется…"), show_alert=True)
         except TelegramBadRequest:
             pass

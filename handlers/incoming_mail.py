@@ -245,7 +245,7 @@ async def _notify_reply_sent(bot, chat_id: int, ctx: ReplyNotifyCtx) -> None:
             await bot.send_document(
                 int(chat_id),
                 doc,
-                caption="📄 HTML, который был отправлен",
+                caption=f"{html_emoji('presets')} HTML, который был отправлен",
                 reply_to_message_id=anchor,
             )
         except Exception:
@@ -441,7 +441,7 @@ async def _ensure_mailing_proxy_for_send(message_or_cb, tg_id: int) -> bool:
         logger.exception("proxy preflight failed tg=%s", tg_id)
         return False
 
-    text = "❌ Нет прокси. Добавь SOCKS5 или HTTP в ⚙️ → Прокси."
+    text = f"{html_emoji('fail')} Нет прокси. Добавь SOCKS5 или HTTP в {menu_path(('settings', ''), ('proxy', 'Прокси'))}."
     if isinstance(message_or_cb, CallbackQuery):
         try:
             await message_or_cb.answer(text, show_alert=True)
@@ -464,12 +464,12 @@ async def _bg_incoming_smtp(
     if not await _ensure_mailing_proxy_for_send(callback, user_id):
         return False
     try:
-        await callback.answer("⏳ Отправляю…", show_alert=False)
+        await callback.answer(toast("wait", "Отправляю…"), show_alert=False)
     except Exception:
         pass
     if bg_is_running(user_id, "smtp"):
         try:
-            await callback.answer("⏳ Отправка уже идёт…", show_alert=True)
+            await callback.answer(toast("wait", "Отправка уже идёт…"), show_alert=True)
         except Exception:
             pass
         return False
@@ -499,14 +499,14 @@ async def _bg_incoming_smtp(
             if ctx:
                 await _notify_reply_sent(bot, chat_id, ctx)
             else:
-                await bot.send_message(chat_id, "✅ Отправлено.", parse_mode="HTML")
+                await bot.send_message(chat_id, f"{html_emoji('ok')} Отправлено.", parse_mode="HTML")
         else:
             err_s = _e(err or "unknown")
             await bot.send_message(chat_id, f"{html_emoji('fail')} Ошибка SMTP:\n<code>{err_s}</code>", parse_mode="HTML")
 
     if not bg_start(user_id, "smtp", _job()):
         try:
-            await callback.answer("⏳ Отправка уже идёт…", show_alert=True)
+            await callback.answer(toast("wait", "Отправка уже идёт…"), show_alert=True)
         except Exception:
             pass
         return False
@@ -525,7 +525,7 @@ async def _bg_message_smtp(
     if not await _ensure_mailing_proxy_for_send(message, user_id):
         return False
     if bg_is_running(user_id, "smtp"):
-        await message.answer("⏳ Отправка уже идёт…")
+        await message.answer(f"{html_emoji('wait')} Отправка уже идёт…")
         return False
 
     chat_id = message.chat.id
@@ -553,13 +553,13 @@ async def _bg_message_smtp(
             if ctx:
                 await _notify_reply_sent(bot, chat_id, ctx)
             else:
-                await bot.send_message(chat_id, "✅ Отправлено.", parse_mode="HTML")
+                await bot.send_message(chat_id, f"{html_emoji('ok')} Отправлено.", parse_mode="HTML")
         else:
             err_s = _e(err or "unknown")
             await bot.send_message(chat_id, f"{html_emoji('fail')} Ошибка SMTP:\n<code>{err_s}</code>", parse_mode="HTML")
 
     if not bg_start(user_id, "smtp", _job()):
-        await message.answer("⏳ Отправка уже идёт…")
+        await message.answer(f"{html_emoji('wait')} Отправка уже идёт…")
         return False
     return True
 
@@ -1085,7 +1085,7 @@ async def _send_generated_link_card_to_chat(
     card_text = (
         f"{head}"
         f"{html_emoji('burst')} <b>Объявления » {_e(service_label)}</b>\n\n"
-        f"📌 <b>Название:</b> {_e((offer_title or '').strip()) or '—'}\n"
+        f"{html_emoji('pin')} <b>Название:</b> {_e((offer_title or '').strip()) or '—'}\n"
         f"💰 <b>Цена:</b> {_e((offer_price or '').strip()) or '—'}\n"
         f"{html_emoji('user')} <b>Профиль:</b> <code>{_e((profile_display or '').strip()) or '—'}</code>\n\n"
         f"{html_emoji('link')} <b>Ссылка:</b>\n{_e(link)}"
@@ -1131,11 +1131,11 @@ async def _send_generated_link_card_to_chat(
         try:
             await bot.send_message(
                 chat_id,
-                "✅ Ссылка создана",
+                f"{html_emoji('ok')} Ссылка создана",
                 reply_to_message_id=reply_to,
             )
         except Exception:
-            await bot.send_message(chat_id, "✅ Ссылка создана")
+            await bot.send_message(chat_id, f"{html_emoji('ok')} Ссылка создана")
         try:
             await _try_pin(bot, chat_id, reply_to)
         except Exception:
@@ -1537,7 +1537,7 @@ async def _run_mail_translate(callback: CallbackQuery, mail_id: int) -> None:
 
     uid = callback.from_user.id
     if bg_is_running(uid, "translate"):
-        return await callback.answer("⏳ Перевод уже выполняется…", show_alert=True)
+        return await callback.answer(toast("wait", "Перевод уже выполняется…"), show_alert=True)
     await callback.answer("Перевожу…", show_alert=False)
 
     mail_id_copy = int(mail_id)
@@ -1550,7 +1550,7 @@ async def _run_mail_translate(callback: CallbackQuery, mail_id: int) -> None:
             try:
                 await bot.send_message(
                     msg.chat.id,
-                    "❌ Не удалось перевести. Попробуйте позже.",
+                    f"{html_emoji('fail')} Не удалось перевести. Попробуйте позже.",
                     reply_to_message_id=msg.message_id,
                 )
             except Exception:
@@ -1586,7 +1586,7 @@ async def _run_mail_translate(callback: CallbackQuery, mail_id: int) -> None:
             )
 
     if not bg_start(uid, "translate", _translate_job()):
-        return await callback.answer("⏳ Перевод уже выполняется…", show_alert=True)
+        return await callback.answer(toast("wait", "Перевод уже выполняется…"), show_alert=True)
 
 
 @router.callback_query(F.data.startswith("mail_translate:"))
@@ -1714,7 +1714,7 @@ async def _create_aqua_link_from_db_work(callback: CallbackQuery, mail_id: int) 
         if not url:
             subj_hint = product_title_from_subject(subj_mail) if subject_is_informative(subj_mail) else subj_mail
             await callback.message.answer(
-                "❌ <b>Не нашёл объявление для этого письма</b>\n\n"
+                f"{html_emoji('fail')} <b>Не нашёл объявление для этого письма</b>\n\n"
                 f"<b>Тема:</b> <code>{_e(subj_hint or '—')}</code>\n"
                 f"<b>От:</b> <code>{_e(contact_email) or '—'}</code>\n\n"
                 "Загрузите JSON с этим лотом, провалидируйте email продавца "
@@ -1739,7 +1739,7 @@ async def _create_aqua_link_from_db_work(callback: CallbackQuery, mail_id: int) 
         offer_title = title
 
         if not title:
-            await callback.message.answer("❌ Нет названия в теме письма (Re: …).")
+            await callback.message.answer(f"{html_emoji('fail')} Нет названия в теме письма (Re: …).")
             await callback.answer()
             return
 
@@ -1802,9 +1802,9 @@ async def _create_aqua_link_from_db_work(callback: CallbackQuery, mail_id: int) 
 async def _enqueue_aqua_link_by_mail_id(callback: CallbackQuery, mail_id: int) -> None:
     uid_tg = callback.from_user.id
     if bg_is_running(uid_tg, "aqua_link"):
-        return await callback.answer("⏳ Ссылка уже создаётся…", show_alert=True)
+        return await callback.answer(toast("wait", "Ссылка уже создаётся…"), show_alert=True)
     try:
-        await callback.answer("⏳ Создаю ссылку…", show_alert=False)
+        await callback.answer(toast("wait", "Создаю ссылку…"), show_alert=False)
     except Exception:
         pass
 
@@ -1812,7 +1812,7 @@ async def _enqueue_aqua_link_by_mail_id(callback: CallbackQuery, mail_id: int) -
         await _run_aqua_link_bg(callback, lambda: _create_aqua_link_from_db_work(callback, int(mail_id)))
 
     if not bg_start(uid_tg, "aqua_link", _link_job()):
-        return await callback.answer("⏳ Ссылка уже создаётся…", show_alert=True)
+        return await callback.answer(toast("wait", "Ссылка уже создаётся…"), show_alert=True)
 
 
 @router.callback_query(F.data.startswith("goo_link:"))
@@ -1845,9 +1845,9 @@ async def cb_create_goo_link(callback: CallbackQuery):
 
     uid_tg = callback.from_user.id
     if bg_is_running(uid_tg, "aqua_link"):
-        return await callback.answer("⏳ Ссылка уже создаётся…", show_alert=True)
+        return await callback.answer(toast("wait", "Ссылка уже создаётся…"), show_alert=True)
     try:
-        await callback.answer("⏳ Создаю ссылку…", show_alert=False)
+        await callback.answer(toast("wait", "Создаю ссылку…"), show_alert=False)
     except Exception:
         pass
 
@@ -1857,7 +1857,7 @@ async def cb_create_goo_link(callback: CallbackQuery):
         )
 
     if not bg_start(uid_tg, "aqua_link", _link_job()):
-        return await callback.answer("⏳ Ссылка уже создаётся…", show_alert=True)
+        return await callback.answer(toast("wait", "Ссылка уже создаётся…"), show_alert=True)
 
 
 async def _create_aqua_link_work(callback: CallbackQuery, acc_id: int, uid: str, meta: dict) -> None:
@@ -1897,7 +1897,7 @@ async def _create_aqua_link_work(callback: CallbackQuery, acc_id: int, uid: str,
         if not url:
             subj_hint = product_title_from_subject(subj_pre) if subject_is_informative(subj_pre) else subj_pre
             await callback.message.answer(
-                "❌ <b>Не нашёл объявление для этого письма</b>\n\n"
+                f"{html_emoji('fail')} <b>Не нашёл объявление для этого письма</b>\n\n"
                 f"<b>Тема:</b> <code>{_e(subj_hint or '—')}</code>\n"
                 f"<b>От:</b> <code>{_e(contact_email) or '—'}</code>\n\n"
                 "Загрузите JSON с этим лотом и провалидируйте email (<code>item_link</code>).",
@@ -1923,7 +1923,7 @@ async def _create_aqua_link_work(callback: CallbackQuery, acc_id: int, uid: str,
         offer_title = title
 
         if not title:
-            await callback.message.answer("❌ Нет названия в теме письма (Re: …).")
+            await callback.message.answer(f"{html_emoji('fail')} Нет названия в теме письма (Re: …).")
             return await callback.answer()
 
         service = await get_user_aqua_service(session, user)
@@ -1980,7 +1980,7 @@ async def _create_aqua_link_work(callback: CallbackQuery, acc_id: int, uid: str,
             contact_email=contact_email,
             inbox_label=inbox_label or None,
         )
-        await callback.answer("Готово ✅")
+        await callback.answer(toast("ok", "Готово"))
 
 
 @router.callback_query(F.data.startswith("mail_reply_db:"))
@@ -2063,7 +2063,7 @@ async def cb_mail_reply_mode(callback: CallbackQuery, state: FSMContext):
     if mode == "preset":
         items = await load_templates(int(callback.from_user.id))
         if not items:
-            return await callback.answer("Нет шаблонов. Добавь их в ⚡ Шаблоны", show_alert=True)
+            return await callback.answer(f"Нет шаблонов. Добавь их в {html_emoji('burst')} Шаблоны", show_alert=True)
 
         preset_mail_id = data.get("mail_id")
         try:
@@ -2073,13 +2073,13 @@ async def cb_mail_reply_mode(callback: CallbackQuery, state: FSMContext):
         pick_kb = _kb_preset_pick(items, acc_id, uid, mail_id=preset_mail_id)
         try:
             await callback.message.edit_text(
-                "🧾 <b>Ваши шаблоны:</b>\n\nНажмите на пресет для отправки",
+                f"{html_emoji('profile')} <b>Ваши шаблоны:</b>\n\nНажмите на пресет для отправки",
                 parse_mode="HTML",
                 reply_markup=pick_kb,
             )
         except Exception:
             ui = await callback.message.answer(
-                "🧾 <b>Ваши шаблоны:</b>\n\nНажмите на пресет для отправки",
+                f"{html_emoji('profile')} <b>Ваши шаблоны:</b>\n\nНажмите на пресет для отправки",
                 parse_mode="HTML",
                 reply_markup=pick_kb,
             )
@@ -2105,7 +2105,7 @@ async def cb_mail_reply_mode(callback: CallbackQuery, state: FSMContext):
             account_email=account_email,
         )
         html_text = (
-            "🧩 <b>HTML</b>\n\n"
+            f"{html_emoji('puzzle')} <b>HTML</b>\n\n"
             f"Кому: <code>{_e(to_email) or '—'}</code>\n"
             f"От ящика: <code>{_e(account_email) or '—'}</code>\n\n"
             "Выберите шаблон:"
@@ -2338,7 +2338,7 @@ async def cb_mail_reply_html_send(callback: CallbackQuery, state: FSMContext):
         service_raw = (await get_user_setting(session, user_pre, AQUA_SERVICE_KEY) or "").strip()
         if not is_valid_aqua_service(service_raw):
             return await callback.answer(
-                "Сначала заполните профиль: ⚙️ → 🧾 Профиль",
+                f"Сначала заполните профиль: {menu_path(('settings', ''), ('profile', 'Профиль'))}",
                 show_alert=True,
             )
         from services.html_templates import html_template_path, service_label_for_path
@@ -2470,7 +2470,7 @@ async def mail_reply_text(message: Message, state: FSMContext):
     text = (message.text or "").strip()
     if text == "-":
         await state.clear()
-        return await message.answer("❌ Отменено.")
+        return await message.answer(f"{html_emoji('fail')} Отменено.")
 
     acc_id = int(data.get("acc_id") or 0)
     uid = str(data.get("uid") or "")
@@ -2488,7 +2488,7 @@ async def mail_reply_text(message: Message, state: FSMContext):
         )
     if not to_email or "@" not in to_email:
         return await message.answer(
-            "❌ Не вижу email получателя. Откройте карточку письма и «Написать ещё» снова."
+            f"{html_emoji('fail')} Не вижу email получателя. Откройте карточку письма и «Написать ещё» снова."
         )
 
     out_subject = _reply_subject(subject)
@@ -2549,7 +2549,7 @@ async def mail_reply_custom_html(message: Message, state: FSMContext):
     text = (message.text or "").strip()
     if text == "-":
         await state.clear()
-        return await message.answer("❌ Отменено.")
+        return await message.answer(f"{html_emoji('fail')} Отменено.")
 
     acc_id = int(data.get("acc_id") or 0)
     mail_uid = str(data.get("uid") or "")
@@ -2569,7 +2569,7 @@ async def mail_reply_custom_html(message: Message, state: FSMContext):
         )
     if not to_email or "@" not in to_email:
         return await message.answer(
-            "❌ Не вижу email получателя. Откройте карточку письма снова."
+            f"{html_emoji('fail')} Не вижу email получателя. Откройте карточку письма снова."
         )
 
     async def _send() -> tuple[bool, str | None]:
@@ -2802,7 +2802,7 @@ async def cb_mail_info(callback: CallbackQuery):
         body_preview = body_preview[:1800] + "…"
 
     text = (
-        "ℹ️ <b>Информация по письму</b>\n\n"
+        f"{html_emoji('info')} <b>Информация по письму</b>\n\n"
         f"<b>Mail ID:</b> <code>{mail_db_id or '—'}</code>\n"
         f"<b>Inbox:</b> <code>{_e(inbox_email) or '—'}</code>\n"
         f"<b>From:</b> <code>{_e(contact_email) or '—'}</code>\n"
@@ -3027,7 +3027,7 @@ async def cb_offer_price(callback: CallbackQuery, state: FSMContext):
     )
 
     await callback.message.answer(
-        "💶 <b>Цена</b>\n\n"
+        f"{html_emoji('price')} <b>Цена</b>\n\n"
         f"Текущая цена: <code>{_e(current)}</code>\n\n"
         "Отправь новую цену (например: <code>500</code> или <code>500.00 EUR</code>).\n"
         "Бот пересоздаст ссылку GAG и отправит её к письму.\n\n"
@@ -3042,13 +3042,13 @@ async def offer_price_set(message: Message, state: FSMContext):
     text = (message.text or "").strip()
     if text == "-":
         await state.clear()
-        return await message.answer("❌ Отменено.")
+        return await message.answer(f"{html_emoji('fail')} Отменено.")
 
     data = await state.get_data()
     offer_id = int(data.get("offer_id") or 0)
     if not offer_id:
         await state.clear()
-        return await message.answer("❌ Нет offer_id.")
+        return await message.answer(f"{html_emoji('fail')} Нет offer_id.")
 
     prev_price = ""
     async with Session() as session:
@@ -3061,7 +3061,7 @@ async def offer_price_set(message: Message, state: FSMContext):
     new_price = _format_aqua_price_from_input(text, previous=prev_price)
     if not new_price:
         return await message.answer(
-            "❌ Введи число (пример: <code>500</code> или <code>500.00 EUR</code>) или <code>-</code> для отмены.",
+            f"{html_emoji('fail')} Введи число (пример: <code>500</code> или <code>500.00 EUR</code>) или <code>-</code> для отмены.",
             parse_mode="HTML",
         )
 
@@ -3075,9 +3075,9 @@ async def offer_price_set(message: Message, state: FSMContext):
     await state.clear()
 
     if bg_is_running(tg_id, "aqua_link"):
-        return await message.answer("⏳ Ссылка уже создаётся… подождите.")
+        return await message.answer(f"{html_emoji('wait')} Ссылка уже создаётся… подождите.")
 
-    await message.answer("⏳ Пересоздаю ссылку с новой ценой…")
+    await message.answer(f"{html_emoji('wait')} Пересоздаю ссылку с новой ценой…")
 
     bot = message.bot
 
@@ -3107,4 +3107,4 @@ async def offer_price_set(message: Message, state: FSMContext):
             )
 
     if not bg_start(tg_id, "aqua_link", _job()):
-        await message.answer("⏳ Ссылка уже создаётся…")
+        await message.answer(f"{html_emoji('wait')} Ссылка уже создаётся…")

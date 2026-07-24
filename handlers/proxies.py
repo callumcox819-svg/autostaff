@@ -29,7 +29,7 @@ from services.proxy_verify import (
 )
 from proxy_manager import normalize_proxy_type
 from utils.bg_jobs import is_running as bg_is_running, start as bg_start
-from utils.ui_emoji import html_emoji, inline_button, menu_path, msg_fail, msg_ok, msg_wait, msg_warn
+from utils.ui_emoji import html_emoji, inline_button, icon_button, menu_path, msg_fail, msg_ok, msg_wait, msg_warn
 
 router = Router()
 logger = logging.getLogger(__name__)
@@ -684,7 +684,10 @@ async def _proxy_add_work(
             await status_msg.edit_text(summary[:4000], parse_mode="HTML")
         except Exception:
             await message.answer(summary[:4000], parse_mode="HTML")
-        await render_proxy_menu(message, telegram_id)
+        try:
+            await render_proxy_menu(message, telegram_id)
+        except Exception:
+            logger.exception("render_proxy_menu after proxy_add tg=%s", telegram_id)
     except Exception as e:
         logger.exception("proxy_add_work failed tg=%s", telegram_id)
         err = (

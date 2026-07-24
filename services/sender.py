@@ -270,6 +270,8 @@ _PROXY_PATTERNS_STRICT = [
     r"can'?t connect to proxy",
     r"cannot connect to proxy",
     r"http proxy server did not return",
+    r"407",
+    r"proxy authentication required",
     r"0x05",
     r"doesn't support ipv6",
     r"pysocks doesn't support ipv6",
@@ -645,7 +647,7 @@ def _send_plain_sync_via_isolated_proxy(
     smtp_timeout_sec: float | None = None,
     for_mailing: bool = False,
 ) -> Tuple[bool, Optional[str], Optional[str]]:
-    """SMTP через свой SOCKS5-сокет (без глобального PySocks) — можно параллелить ящики."""
+    """SMTP через свой SOCKS/HTTP-сокет (без глобального PySocks) — можно параллелить ящики."""
     from services.smtp_account_check import _connect_smtp_via_socks
 
     if "{{" in (body or ""):

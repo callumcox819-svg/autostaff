@@ -327,6 +327,7 @@ async def mail_tmpl_send(callback: CallbackQuery, state: FSMContext):
                     out_subject = _render_subject_with_offer(tpl, offer_title)
             except Exception:
                 pass
+            is_html_body = "<html" in body_copy.lower() or "<body" in body_copy.lower()
             return await send_email_via_account_with_proxy(
                 session,
                 int(user.id),
@@ -335,6 +336,8 @@ async def mail_tmpl_send(callback: CallbackQuery, state: FSMContext):
                 out_subject,
                 body_copy,
                 sender_name=getattr(user, "sender_name", None),
+                is_html=is_html_body or None,
+                fast=True,
             )
 
     data = await state.get_data()

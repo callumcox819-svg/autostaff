@@ -58,7 +58,9 @@ _SMTP_TEST_HOST = (os.getenv("SMTP_TEST_HOST") or "smtp.gmail.com").strip()
 _SMTP_TEST_PORT = int(os.getenv("SMTP_TEST_PORT") or "587")
 
 SOCKS5_TYPES = frozenset({"socks5", "socks5h"})
+SOCKS4_TYPES = frozenset({"socks4", "socks4a"})
 HTTP_TYPES = frozenset({"http", "https"})
+MAILING_PROXY_TYPES = SOCKS5_TYPES | SOCKS4_TYPES | HTTP_TYPES
 
 
 def normalize_proxy_type(t: str | None) -> str:
@@ -69,8 +71,16 @@ def normalize_proxy_type(t: str | None) -> str:
         return "socks5h"
     if t in ("socks5",):
         return "socks5"
+    if t in ("socks4a",):
+        return "socks4a"
+    if t in ("socks4",):
+        return "socks4"
     if t in ("http", "https"):
         return "http"
+    if t.startswith("socks5"):
+        return "socks5"
+    if t.startswith("socks4"):
+        return "socks4a" if t.endswith("a") else "socks4"
     if t.startswith("socks"):
         return "socks5"
     return "socks5"
@@ -89,21 +99,88 @@ def is_http_proxy(proxy: Proxy) -> bool:
     return proxy_type_name(proxy) in HTTP_TYPES
 
 
+def is_socks4_proxy(proxy: Proxy) -> bool:
+    return proxy_type_name(proxy) in SOCKS4_TYPES
+
+
 def is_mailing_proxy(proxy: Proxy) -> bool:
-    """SOCKS5 или HTTP — оба подходят для SMTP через CONNECT."""
-    return is_socks5_proxy(proxy) or is_http_proxy(proxy)
+    """SOCKS4/5 или HTTP — SMTP через CONNECT (PySocks)."""
+    return (
+        is_socks5_proxy(proxy)
+        or is_socks4_proxy(proxy)
+        or is_http_proxy(proxy)
+    )
 
 
 def socks_proxy_type_for(proxy: Proxy) -> int:
     import socks
 
+    t = proxy_type_name(proxy)
     if is_http_proxy(proxy):
         return socks.HTTP
+    if t == "socks4a":
+        return socks.SOCKS4A
+    if t == "socks4":
+        return socks.SOCKS4
     return socks.SOCKS5
 
 
 def socks_proxy_rdns(proxy: Proxy) -> bool:
-    return is_socks5_proxy(proxy)
+    """Remote DNS: socks5h / socks4a; HTTP — локально; socks5 — по умолчанию remote (как раньше)."""
+    t = proxy_type_name(proxy)
+    if is_http_proxy(proxy):
+        return False
+    if t in ("socks5h", "socks4a"):
+        return True
+    if t == "socks4":
+        return False
+    return True
+
+
+def _mailing_proxy_credentials(proxy: Proxy) -> tuple[str, int, str | None, str | None]:
+    host = (proxy.host or "").strip()
+    port = int(proxy.port or 0)
+    if not host or not port:
+        raise ValueError("Proxy host/port is empty")
+    username = (proxy.username or "").strip() or None
+    password = (proxy.password or "").strip() or None
+    return host, port, username, password
+
+
+def connect_via_mailing_proxy(
+    proxy: Proxy,
+    dest_host: str,
+    dest_port: int,
+    *,
+    timeout: float,
+) -> _stdlib_socket.socket:
+    """
+    TCP до dest через SOCKS4/5 или HTTP CONNECT — как при рассылке (изолированный сокет).
+    """
+    import socks
+
+    if not is_mailing_proxy(proxy):
+        raise ValueError(
+            f"Неподдерживаемый тип прокси: {proxy_type_name(proxy)!r} "
+            f"(нужен socks5, socks4, http)"
+        )
+
+    px_host, px_port, username, password = _mailing_proxy_credentials(proxy)
+    kind = socks_proxy_type_for(proxy)
+    rdns = socks_proxy_rdns(proxy)
+
+    sock = socks.socksocket()
+    sock.set_proxy(
+        kind,
+        px_host,
+        px_port,
+        username=username,
+        password=password,
+        rdns=rdns,
+    )
+    sock.settimeout(float(timeout))
+    sock.connect((str(dest_host).strip(), int(dest_port)))
+    return sock
 
 
 async def choose_proxy_for_user(
@@ -171,7 +248,8 @@ def apply_proxy_to_smtplib(proxy: Proxy) -> None:
 
     if not is_mailing_proxy(proxy):
         raise ValueError(
-            f"Неподдерживаемый тип прокси: {(proxy.type or '?')!r} (нужен socks5 или http)"
+            f"Неподдерживаемый тип прокси: {proxy_type_name(proxy)!r} "
+            f"(нужен socks5, socks4 или http)"
         )
 
     host = (proxy.host or "").strip()

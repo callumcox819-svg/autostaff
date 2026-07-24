@@ -174,32 +174,13 @@ def _smtp_check_on_client(
 
 
 def _connect_smtp_via_socks(proxy: Proxy, host: str, port: int, *, timeout: float) -> smtplib.SMTP:
-    """Отдельное соединение через SOCKS5/HTTP без глобального PySocks-патча."""
-    import socks
-    from proxy_manager import is_mailing_proxy, socks_proxy_rdns, socks_proxy_type_for
+    """Отдельное соединение через SOCKS/HTTP без глобального PySocks-патча."""
+    from proxy_manager import connect_via_mailing_proxy, is_mailing_proxy
 
     if not is_mailing_proxy(proxy):
         raise ValueError(f"Unsupported proxy type: {(proxy.type or '?')!r}")
 
-    px_host = (proxy.host or "").strip()
-    px_port = int(proxy.port or 0)
-    if not px_host or not px_port:
-        raise ValueError("Proxy host/port is empty")
-
-    username = (proxy.username or "").strip() or None
-    password = (proxy.password or "").strip() or None
-
-    sock = socks.socksocket()
-    sock.set_proxy(
-        socks_proxy_type_for(proxy),
-        px_host,
-        px_port,
-        username=username,
-        password=password,
-        rdns=socks_proxy_rdns(proxy),
-    )
-    sock.settimeout(timeout)
-    sock.connect((host, int(port)))
+    sock = connect_via_mailing_proxy(proxy, host, int(port), timeout=float(timeout))
 
     client = smtplib.SMTP(timeout=timeout)
     client.sock = sock

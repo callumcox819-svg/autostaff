@@ -258,7 +258,14 @@ def parse_proxy_string(raw: str) -> Optional[dict]:
             return None
         tail = parts[3:]
         proto = None
-        if len(tail) >= 2 and normalize_proxy_type(tail[-1]) in ("socks5", "socks5h", "http", "https"):
+        if len(tail) >= 2 and normalize_proxy_type(tail[-1]) in (
+            "socks5",
+            "socks5h",
+            "socks4",
+            "socks4a",
+            "http",
+            "https",
+        ):
             proto = tail[-1]
             pwd = ":".join(tail[:-1])
         else:

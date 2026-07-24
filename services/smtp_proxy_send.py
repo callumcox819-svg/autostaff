@@ -57,7 +57,7 @@ async def choose_required_proxy(
 ) -> Tuple[Optional[Proxy], Optional[str]]:
     """
     (proxy, None) — ок.
-    (None, NO_ACTIVE_PROXY) — в БД нет ни одного активного прокси (SOCKS5/HTTP).
+    (None, NO_ACTIVE_PROXY) — в БД нет ни одного активного прокси (SOCKS/HTTP).
     (None, None) — все доступные прокси уже пробовали в этом send (не «мёртвые»).
     """
     from proxy_manager import choose_proxy_for_user
@@ -75,7 +75,7 @@ def _smtp_eligible_proxy_row(p: Proxy) -> bool:
 
 
 async def _list_active_mailing_proxies(session: AsyncSession, user_id: int) -> List[Proxy]:
-    """SOCKS5/HTTP для рассылки: без 🔴 (is_active=False). 🟢 и 🟡 (None) — можно."""
+    """SOCKS/HTTP для рассылки: без 🔴 (is_active=False). 🟢 и 🟡 (None) — можно."""
     rows = (
         await session.execute(
             sa_select(Proxy)

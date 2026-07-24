@@ -11,8 +11,11 @@ from urllib.parse import urlsplit
 from models import Proxy
 from proxy_manager import (
     HTTP_TYPES,
+    MAILING_PROXY_TYPES,
     SOCKS5_TYPES,
+    connect_via_mailing_proxy,
     normalize_proxy_type,
+    proxy_type_name,
 )
 
 logger = logging.getLogger(__name__)
@@ -27,13 +30,15 @@ PROXY_CHECK_RETRY_PAUSE_SEC = max(
 
 def proxy_to_dict(proxy: Proxy | dict[str, Any]) -> dict[str, Any]:
     if isinstance(proxy, dict):
-        return proxy
+        d = dict(proxy)
+        d["type"] = normalize_proxy_type(d.get("type"))
+        return d
     return {
         "host": proxy.host,
         "port": int(proxy.port),
         "username": proxy.username,
         "password": proxy.password,
-        "type": proxy.type or "socks5",
+        "type": proxy_type_name(proxy),
     }
 
 
@@ -54,42 +59,26 @@ def is_socks5_type(proxy_type: str) -> bool:
 
 
 def _test_proxy_tunnel_sync(d: dict[str, Any], *, timeout: int = 12) -> Tuple[bool, str]:
-    """Быстрая проверка туннеля до smtp.gmail.com:587 (PySocks)."""
-    import socks
-
-    host = (d.get("host") or "").strip()
-    port = int(d.get("port") or 0)
-    if not host or not port:
-        return False, "host/port пустые"
-
-    username = (d.get("username") or "").strip() or None
-    password = (d.get("password") or "").strip() or None
+    """Быстрая проверка туннеля до smtp.gmail.com:587 (как при send)."""
     ptype = normalize_proxy_type(d.get("type"))
-    kind = socks.HTTP if ptype in HTTP_TYPES else socks.SOCKS5
-    rdns = kind == socks.SOCKS5
+    if ptype not in MAILING_PROXY_TYPES:
+        return False, "Нужен socks5, socks4 или http прокси."
 
     thost, tport = "smtp.gmail.com", 587
-    s = socks.socksocket()
+    row = _proxy_row_from_dict(d)
+    s = None
     try:
-        s.set_proxy(
-            kind,
-            host,
-            port,
-            username=username,
-            password=password,
-            rdns=rdns,
-        )
-        s.settimeout(float(timeout))
-        s.connect((thost, int(tport)))
-        label = "HTTP" if kind == socks.HTTP else "SOCKS5"
+        s = connect_via_mailing_proxy(row, thost, tport, timeout=float(timeout))
+        label = ptype.upper() if ptype in HTTP_TYPES else ptype
         return True, f"{label} OK -> {thost}:{tport}"
     except Exception as e:
         return False, f"{type(e).__name__}: {e}"
     finally:
-        try:
-            s.close()
-        except Exception:
-            pass
+        if s is not None:
+            try:
+                s.close()
+            except Exception:
+                pass
 
 
 async def _test_proxy_tunnel_handshake(
@@ -164,8 +153,8 @@ async def _test_proxy_once(proxy: Proxy | dict[str, Any], *, timeout: int = 20) 
     """Одна попытка: SMTP+STARTTLS как при /send."""
     d = proxy_to_dict(proxy)
     ptype = normalize_proxy_type(d.get("type"))
-    if ptype not in SOCKS5_TYPES and ptype not in HTTP_TYPES:
-        return False, "Нужен socks5 или http прокси."
+    if ptype not in MAILING_PROXY_TYPES:
+        return False, "Нужен socks5, socks4 или http прокси."
 
     smtp_timeout = max(20, int(timeout))
     smtp_ok, smtp_info = await test_smtp_tunnel(proxy, timeout=smtp_timeout)
@@ -205,8 +194,8 @@ async def test_proxy(
 async def test_proxy_url(proxy_url: str, *, timeout: int = 20) -> Tuple[bool, str]:
     p = (proxy_url or "").strip()
     scheme = normalize_proxy_type(urlsplit(p).scheme or "socks5")
-    if scheme not in SOCKS5_TYPES and scheme not in HTTP_TYPES:
-        return False, "Нужен socks5:// или http://"
+    if scheme not in MAILING_PROXY_TYPES:
+        return False, "Нужен socks5://, socks4:// или http://"
     return await test_proxy(
         {
             "host": urlsplit(p).hostname or "",

@@ -306,7 +306,7 @@ async def _build_test_message(
         "IMAGE_URL": image_url,
     }
 
-    base_text = await pick_random_smart_preset(tg_id, item_title, salt=random.randint(0, 10_000))
+    base_text = await pick_random_smart_preset(tg_id, item_title)
     if not (base_text or "").strip():
         base_text = expand_spintax(random.choice(MAILING_FALLBACK_BODIES))
 

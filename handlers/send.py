@@ -189,9 +189,7 @@ async def _build_message_for_target(
     try:
         from handlers.templates import pick_random_smart_preset
 
-        base_text = await pick_random_smart_preset(
-            tg_user_id, item_title, salt=int(getattr(tgt, "id", 0) or 0)
-        )
+        base_text = await pick_random_smart_preset(tg_user_id, item_title)
     except Exception:
         base_text = ""
     if not (base_text or "").strip():
@@ -506,6 +504,10 @@ async def _burst_sending_loop(*, bot: Bot, chat_id: int, tg_user_id: int) -> Non
             state.last_status = "BURST"
             state.current_to = f"{html_emoji('burst')} burst × {len(targets)}"
             set_sending_state(tg_user_id, state=state)
+
+            from handlers.templates import reset_smart_preset_rotation
+
+            reset_smart_preset_rotation(tg_user_id)
 
             async def build_message(session: AsyncSession, tgt: OfferEmail) -> Tuple[str, str]:
                 return await _build_message_for_target(session, tg_user_id, tgt)

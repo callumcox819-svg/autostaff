@@ -65,13 +65,22 @@ def text_presets_manage_kb(
     back_cb: str,
     hide_cb: str,
     has_any: bool,
+    add_txt_cb: str | None = None,
 ) -> InlineKeyboardMarkup:
     rows: List[List[InlineKeyboardButton]] = [
         [
             inline_button("add", "Добавить пресет", callback_data=add_cb),
-            inline_button("edit", "Изменить пресет", callback_data=edit_cb),
         ],
     ]
+    if add_txt_cb:
+        rows[0].append(
+            inline_button("add", "Добавить .txt", callback_data=add_txt_cb),
+        )
+    rows.append(
+        [
+            inline_button("edit", "Изменить пресет", callback_data=edit_cb),
+        ]
+    )
     if has_any:
         rows.append(
             [

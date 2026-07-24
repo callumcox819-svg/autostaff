@@ -1,9 +1,6 @@
 from __future__ import annotations
 
-import json
-import os
-from html import escape
-import re
+import asyncio
 from dataclasses import dataclass
 from pathlib import Path
 from typing import List
@@ -100,6 +97,7 @@ def _smart_presets_kb(has_any: bool) -> InlineKeyboardMarkup:
         back_cb="settings_open",
         hide_cb="stmpl_hide",
         has_any=has_any,
+        add_txt_cb="stmpl_add_txt",
     )
 
 
@@ -167,26 +165,41 @@ async def _mailing_text_pool(tg_id: int) -> List[str]:
     return pool
 
 
+# Round-robin по умным пресетам на каждое письмо /send (потокобезопасно в burst).
+_mailing_preset_rr_index: dict[int, int] = {}
+_mailing_preset_rr_locks: dict[int, asyncio.Lock] = {}
+
+
+def reset_smart_preset_rotation(tg_id: int) -> None:
+    """Сброс перед новой рассылкой — снова с первого пресета по кругу."""
+    _mailing_preset_rr_index[int(tg_id)] = 0
+
+
 async def pick_random_smart_preset(
     tg_id: int,
     offer_title: str,
     *,
     salt: int | None = None,
 ) -> str:
-    """Текст: умные пресеты + spintax; salt (offer_email.id) — разный пресет на адрес без гонок."""
-    import random
-
+    """
+    Текст рассылки: умные пресеты по кругу (1→2→…→N→1), spintax, OFFER = название товара.
+    salt игнорируется (оставлен для совместимости).
+    """
+    del salt
     from services.offer_text import apply_offer_to_text
     from services.spintax import expand_spintax
 
     texts = await _mailing_text_pool(tg_id)
     if not texts:
         return ""
-    if salt is not None and len(texts) > 1:
-        idx = int(salt) % len(texts)
+
+    uid = int(tg_id)
+    lock = _mailing_preset_rr_locks.setdefault(uid, asyncio.Lock())
+    async with lock:
+        idx = _mailing_preset_rr_index.get(uid, 0) % len(texts)
+        _mailing_preset_rr_index[uid] = idx + 1
         base = texts[idx]
-    else:
-        base = texts[random.randrange(len(texts))]
+
     txt = expand_spintax(base)
     return apply_offer_to_text(txt, offer_title)
 
@@ -364,6 +377,7 @@ class PresetEdit(StatesGroup):
 
 class SmartTmplAdd(StatesGroup):
     text = State()
+    txt_file = State()
 
 
 class SmartTmplEdit(StatesGroup):
@@ -505,6 +519,52 @@ async def _finish_smart_add(message: Message, state_data: dict, tg_id: int) -> N
     await _hide_old_menu_markup(message.bot, state_data)
     await message.answer(f"{html_emoji('ok')} Добавлено.")
     await _send_smart_menu_message(message, tg_id)
+
+
+async def _finish_smart_txt_import(
+    message: Message,
+    state_data: dict,
+    tg_id: int,
+    *,
+    added: int,
+    skipped_cap: int,
+) -> None:
+    from services.smart_preset_txt import MAX_SMART_PRESETS_TOTAL
+
+    prompt_id = state_data.get("_prompt_msg_id")
+    if prompt_id:
+        await _delete_message_safe(message.bot, message.chat.id, int(prompt_id))
+    await _hide_old_menu_markup(message.bot, state_data)
+    extra = ""
+    if skipped_cap > 0:
+        extra = f"\n{html_emoji('warn')} Не загружено (лимит {MAX_SMART_PRESETS_TOTAL}): <b>{skipped_cap}</b>"
+    await message.answer(
+        f"{html_emoji('ok')} Из .txt добавлено пресетов: <b>{added}</b>{extra}",
+        parse_mode="HTML",
+    )
+    await _send_smart_menu_message(message, tg_id)
+
+
+async def _load_txt_from_telegram_doc(message: Message) -> str:
+    file = await message.bot.download(message.document)
+    raw = file.read()
+    for enc in ("utf-8-sig", "utf-8", "cp1252", "latin-1"):
+        try:
+            return raw.decode(enc)
+        except Exception:
+            continue
+    return raw.decode("utf-8", errors="replace")
+
+
+def _is_txt_document(message: Message) -> bool:
+    doc = message.document
+    if not doc:
+        return False
+    name = (doc.file_name or "").lower()
+    if name.endswith(".txt"):
+        return True
+    mime = (doc.mime_type or "").lower()
+    return mime in ("text/plain", "application/octet-stream")
 
 
 @router.callback_query(F.data == "presets_menu")
@@ -759,6 +819,62 @@ async def stmpl_add_start(call: CallbackQuery, state: FSMContext) -> None:
     )
     await state.update_data(_prompt_msg_id=prompt.message_id)
     await call.answer()
+
+
+@router.callback_query(F.data == "stmpl_add_txt")
+async def stmpl_add_txt_start(call: CallbackQuery, state: FSMContext) -> None:
+    await state.update_data(
+        _menu_chat_id=call.message.chat.id,
+        _menu_msg_id=call.message.message_id,
+    )
+    await state.set_state(SmartTmplAdd.txt_file)
+    prompt = await call.message.answer(
+        f"{html_emoji('add')} Отправь файл <b>.txt</b>.\n"
+        "Каждая <b>строка</b> = один умный пресет (Пресет #1, #2, …).\n"
+        "В файле можно <code>OFFER</code> или <code>[[ITEM_TITLE]]</code> — подставится название товара.",
+        parse_mode="HTML",
+    )
+    await state.update_data(_prompt_msg_id=prompt.message_id)
+    await call.answer()
+
+
+@router.message(SmartTmplAdd.txt_file, F.document)
+async def stmpl_add_txt_file(message: Message, state: FSMContext) -> None:
+    if not _is_txt_document(message):
+        return await message.answer(
+            f"{html_emoji('fail')} Нужен файл <code>.txt</code> (text/plain).",
+            parse_mode="HTML",
+        )
+    from services.smart_preset_txt import MAX_SMART_PRESETS_TOTAL, merge_smart_presets, parse_smart_presets_txt
+
+    try:
+        raw = await _load_txt_from_telegram_doc(message)
+    except Exception as e:
+        return await message.answer(f"{html_emoji('fail')} Не удалось скачать файл: {e}")
+
+    parsed = parse_smart_presets_txt(raw)
+    if not parsed:
+        return await message.answer(
+            f"{html_emoji('fail')} В файле нет подходящих строк (минимум 2 символа на строку)."
+        )
+
+    data = await state.get_data()
+    await state.clear()
+
+    async with Session() as session:
+        tg_id = await _user_tg_id(session, message.from_user.id)
+    items = await load_smart_texts(tg_id)
+    merged, added, skipped = merge_smart_presets(items, parsed)
+    await save_smart_texts(tg_id, merged)
+    await _finish_smart_txt_import(message, data, tg_id, added=added, skipped_cap=skipped)
+
+
+@router.message(SmartTmplAdd.txt_file)
+async def stmpl_add_txt_wrong(message: Message) -> None:
+    await message.answer(
+        f"{html_emoji('wait')} Жду документ <code>.txt</code>. Отмена — /start или «Назад» в меню.",
+        parse_mode="HTML",
+    )
 
 
 @router.message(SmartTmplAdd.text)

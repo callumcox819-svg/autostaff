@@ -162,48 +162,34 @@ def _len_for_limits(local_part: str) -> int:
 
 
 def _is_api_failure(_ok: bool, raw: object) -> bool:
-    """Только сеть, rate limit, 5xx, мёртвый ключ — не «ящик не найден»."""
-    if _ok:
-        return False
+    """Сбой API/сети. «Email не существует» / undeliverable — не ошибка."""
     if not isinstance(raw, dict):
         return True
-
     reason = str(raw.get("reason") or raw.get("Reason") or "").lower().strip()
     if reason in ("connection_error", "timeout"):
         return True
     if reason in _DEFINITIVE_BAD_REASONS:
         return False
-
     status = str(raw.get("status") or raw.get("State") or raw.get("state") or "").lower().strip()
-    if status:
-        return False
-
-    if any(
-        k in raw
-        for k in (
-            "isDeliverable",
-            "IsValid",
-            "isValid",
-            "score",
-            "Score",
-            "isFormatValid",
-            "isDomainValid",
-            "isDisposable",
-        )
+    if status in (
+        "deliverable",
+        "undeliverable",
+        "unknown",
+        "risky",
+        "invalid",
+        "not deliverable",
     ):
         return False
-
+    if any(k in raw for k in ("isDeliverable", "IsValid", "isValid", "score", "Score")):
+        return False
     try:
         st = int(raw.get("_http_status"))
         if raw.get("_api_key_error"):
             return True
         if st in (401, 403, 402, 429) or st >= 500:
             return True
-        if 400 <= st < 500:
-            return False
     except (TypeError, ValueError):
         pass
-
     err = raw.get("error")
     if err is None:
         err = raw.get("message")
@@ -211,22 +197,6 @@ def _is_api_failure(_ok: bool, raw: object) -> bool:
         es = str(err or "").strip().lower()
         if es in ("", "empty", "no api key"):
             return False
-        infra = (
-            "rate limit",
-            "too many",
-            "timeout",
-            "timed out",
-            "connection",
-            "connect",
-            "network",
-            "temporarily unavailable",
-            "service unavailable",
-            "internal server",
-            "bad gateway",
-            "gateway timeout",
-        )
-        if any(p in es for p in infra):
-            return True
         benign = (
             "invalid email",
             "not valid",
@@ -243,24 +213,30 @@ def _is_api_failure(_ok: bool, raw: object) -> bool:
             "user unknown",
             "address not found",
             "no such user",
-            "could not",
-            "failed validation",
         )
         if any(p in es for p in benign):
             return False
-        try:
-            st = int(raw.get("_http_status"))
-            if st == 200:
-                return False
-        except (TypeError, ValueError):
-            pass
-
-    err_raw = str(raw.get("error") or "").lower()
-    if err_raw and any(
-        x in err_raw for x in ("timeout", "connect", "connection", "clientconnector", "ssl")
-    ):
         return True
-
+    for key in (
+        "IsValid",
+        "isValid",
+        "State",
+        "state",
+        "Score",
+        "score",
+        "Reason",
+        "reason",
+        "is_valid",
+        "valid",
+        "status",
+        "result",
+        "isDeliverable",
+        "is_deliverable",
+        "deliverable",
+        "smtp_check",
+    ):
+        if key in raw:
+            return False
     return False
 
 
@@ -348,13 +324,7 @@ async def _validate_offers_old(
     if not domains_clean:
         return []
 
-    from services.validemail_keys import max_domains_per_seller
-
-    cap = max_domains_per_seller()
-    if cap > 0 and len(domains_clean) > cap:
-        domains_clean = domains_clean[:cap]
-
-    # Сброс кэша: после смены правил или перегруза API иначе часами держит ложные invalid.
+    # После фикса парсинга ответа API — не использовать старый кэш с ложными "invalid".
     try:
         from services.validemail_fast import _CACHE
 

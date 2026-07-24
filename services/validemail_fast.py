@@ -42,18 +42,6 @@ _DEFINITIVE_BAD_REASONS = frozenset(
 _SESSION: aiohttp.ClientSession | None = None
 _KEY_SEMAPHORES: dict[str, asyncio.Semaphore] = {}
 _KEY_SEM_LIMITS: dict[str, int] = {}
-_GLOBAL_INFLIGHT: asyncio.Semaphore | None = None
-
-
-def _global_inflight_sem() -> asyncio.Semaphore:
-    global _GLOBAL_INFLIGHT
-    if _GLOBAL_INFLIGHT is None:
-        try:
-            cap = max(8, min(256, int(os.getenv("VALIDEMAIL_GLOBAL_INFLIGHT", "48"))))
-        except (TypeError, ValueError):
-            cap = 48
-        _GLOBAL_INFLIGHT = asyncio.Semaphore(cap)
-    return _GLOBAL_INFLIGHT
 
 
 def _semaphore_for_api_key(api_key: str, limit: int) -> asyncio.Semaphore:
@@ -99,10 +87,10 @@ def _validemail_api_timeout() -> int:
     try:
         from config import config
 
-        base = int(getattr(config, "VALIDEMAIL_API_TIMEOUT", 6))
+        base = int(getattr(config, "VALIDEMAIL_API_TIMEOUT", 8))
     except Exception:
         try:
-            base = int(os.getenv("VALIDEMAIL_API_TIMEOUT", "6"))
+            base = int(os.getenv("VALIDEMAIL_API_TIMEOUT", "8"))
         except (TypeError, ValueError):
             base = 8
     return max(2, min(30, base))
@@ -112,10 +100,10 @@ def _validemail_max_retries() -> int:
     try:
         from config import config
 
-        return max(1, min(5, int(getattr(config, "VALIDEMAIL_MAX_RETRIES", 2))))
+        return max(1, min(5, int(getattr(config, "VALIDEMAIL_MAX_RETRIES", 3))))
     except Exception:
         try:
-            return max(1, min(5, int(os.getenv("VALIDEMAIL_MAX_RETRIES", "2"))))
+            return max(1, min(5, int(os.getenv("VALIDEMAIL_MAX_RETRIES", "3"))))
         except (TypeError, ValueError):
             return 3
 
@@ -196,9 +184,9 @@ def _validemail_strict_mode() -> bool:
 
 def _validemail_min_score() -> int:
     try:
-        return max(50, min(100, int(os.getenv("VALIDEMAIL_MIN_SCORE", "80"))))
+        return max(50, min(100, int(os.getenv("VALIDEMAIL_MIN_SCORE", "75"))))
     except (TypeError, ValueError):
-        return 80
+        return 75
 
 
 _BAD_EMAIL_STATES = frozenset(
@@ -217,25 +205,13 @@ _BAD_EMAIL_STATES = frozenset(
     }
 )
 
-def _score_meets_min(data: dict, *, strict: bool, min_score: int) -> bool:
-    if not strict:
-        return True
-    raw = data.get("score")
-    if raw is None:
-        raw = data.get("Score")
-    if raw is None:
-        return True
-    try:
-        return int(raw) >= min_score
-    except (TypeError, ValueError):
-        return True
+_GOOD_DELIVERABLE_REASONS = frozenset({"accepted", "other"})  # legacy, не используется для отсева
 
 
 def _normalize_ok_v1(data: dict, *, strict: bool, min_score: int) -> bool:
-    """Ответ 200 по схеме validemail.co v1 (status, reason, score, isDeliverable, …)."""
+    """validemail.co v1 — главный сигнал isDeliverable, без whitelist reason."""
     status = str(data.get("status") or "").lower().strip()
     reason = str(data.get("reason") or data.get("Reason") or "").lower().strip()
-    deliverable_flag = data.get("isDeliverable") is True
 
     if reason in _TRANSIENT_REASONS:
         return False
@@ -246,30 +222,40 @@ def _normalize_ok_v1(data: dict, *, strict: bool, min_score: int) -> bool:
     if data.get("isFormatValid") is False or data.get("isDomainValid") is False:
         return False
 
+    if data.get("isDeliverable") is True and status != "undeliverable":
+        if strict:
+            raw_sc = data.get("score") if data.get("score") is not None else data.get("Score")
+            if raw_sc is not None:
+                try:
+                    if int(raw_sc) < min_score:
+                        return False
+                except (TypeError, ValueError):
+                    pass
+        return True
+
     if status == "undeliverable":
         return False
-
-    accept_risky = (os.getenv("VALIDEMAIL_ACCEPT_RISKY") or "").strip().lower() in (
-        "1",
-        "true",
-        "yes",
-        "on",
-    )
-
-    if status == "risky":
-        if accept_risky or (deliverable_flag and not strict):
-            return _score_meets_min(data, strict=strict, min_score=min_score)
-        return False
-
     if status == "unknown":
-        if deliverable_flag and not strict:
-            return _score_meets_min(data, strict=strict, min_score=min_score)
         return False
-
-    if status == "deliverable" or deliverable_flag:
-        if reason in _DEFINITIVE_BAD_REASONS:
+    if status == "risky":
+        if not (os.getenv("VALIDEMAIL_ACCEPT_RISKY") or "").strip().lower() in (
+            "1",
+            "true",
+            "yes",
+            "on",
+        ):
             return False
-        return _score_meets_min(data, strict=strict, min_score=min_score)
+
+    if status == "deliverable":
+        if strict:
+            raw_sc = data.get("score") if data.get("score") is not None else data.get("Score")
+            if raw_sc is not None:
+                try:
+                    if int(raw_sc) < min_score:
+                        return False
+                except (TypeError, ValueError):
+                    pass
+        return True
 
     return False
 
@@ -439,65 +425,64 @@ async def _check_one(
     max_attempts = _validemail_max_retries()
     last_raw: dict = {"error": "not_checked"}
 
-    async with _global_inflight_sem():
-        async with semaphore:
+    async with semaphore:
+        async with lock:
+            counters["in_use"] += 1
+            if progress_cb:
+                try:
+                    progress_cb(counters["done"], counters["total"], limit, counters["in_use"])
+                except Exception:
+                    pass
+
+        try:
+            ok = False
+            for attempt in range(max_attempts):
+                try:
+                    ok, last_raw = await _fetch_validemail_once(
+                        email_lc,
+                        api_key=api_key,
+                        url=url,
+                        use_ssl_verify=use_ssl_verify,
+                    )
+                except Exception as e:
+                    last_raw = {"error": str(e)}
+                    ok = False
+
+                if ok:
+                    _cache_set(url, email_lc, True, last_raw)
+                    return email, True, last_raw
+
+                if not _is_transient_failure(last_raw) or attempt >= max_attempts - 1:
+                    if _should_cache_result(last_raw):
+                        _cache_set(url, email_lc, False, last_raw)
+                    return email, False, last_raw
+
+                if isinstance(last_raw, dict) and last_raw.get("_api_key_error"):
+                    if _should_cache_result(last_raw):
+                        _cache_set(url, email_lc, False, last_raw)
+                    return email, False, last_raw
+
+                delay = _retry_delay_sec(attempt, last_raw)
+                logger.debug(
+                    "validemail retry %s/%s for %s in %.1fs (%s)",
+                    attempt + 2,
+                    max_attempts,
+                    email_lc,
+                    delay,
+                    last_raw.get("reason") or last_raw.get("error") or last_raw.get("_http_status"),
+                )
+                await asyncio.sleep(delay)
+
+            return email, False, last_raw
+        finally:
             async with lock:
-                counters["in_use"] += 1
+                counters["in_use"] -= 1
+                counters["done"] += 1
                 if progress_cb:
                     try:
                         progress_cb(counters["done"], counters["total"], limit, counters["in_use"])
                     except Exception:
                         pass
-
-            try:
-                ok = False
-                for attempt in range(max_attempts):
-                    try:
-                        ok, last_raw = await _fetch_validemail_once(
-                            email_lc,
-                            api_key=api_key,
-                            url=url,
-                            use_ssl_verify=use_ssl_verify,
-                        )
-                    except Exception as e:
-                        last_raw = {"error": str(e)}
-                        ok = False
-
-                    if ok:
-                        _cache_set(url, email_lc, True, last_raw)
-                        return email, True, last_raw
-
-                    if not _is_transient_failure(last_raw) or attempt >= max_attempts - 1:
-                        if _should_cache_result(last_raw):
-                            _cache_set(url, email_lc, False, last_raw)
-                        return email, False, last_raw
-
-                    if isinstance(last_raw, dict) and last_raw.get("_api_key_error"):
-                        if _should_cache_result(last_raw):
-                            _cache_set(url, email_lc, False, last_raw)
-                        return email, False, last_raw
-
-                    delay = _retry_delay_sec(attempt, last_raw)
-                    logger.debug(
-                        "validemail retry %s/%s for %s in %.1fs (%s)",
-                        attempt + 2,
-                        max_attempts,
-                        email_lc,
-                        delay,
-                        last_raw.get("reason") or last_raw.get("error") or last_raw.get("_http_status"),
-                    )
-                    await asyncio.sleep(delay)
-
-                return email, False, last_raw
-            finally:
-                async with lock:
-                    counters["in_use"] -= 1
-                    counters["done"] += 1
-                    if progress_cb:
-                        try:
-                            progress_cb(counters["done"], counters["total"], limit, counters["in_use"])
-                        except Exception:
-                            pass
 
 
 async def _validate_emails_single_key(

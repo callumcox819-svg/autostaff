@@ -186,7 +186,7 @@ async def close_validemail_session() -> None:
 
 
 def _validemail_strict_mode() -> bool:
-    return (os.getenv("VALIDEMAIL_STRICT", "1") or "").strip().lower() in (
+    return (os.getenv("VALIDEMAIL_STRICT", "0") or "").strip().lower() in (
         "1",
         "true",
         "yes",
@@ -220,11 +220,15 @@ _BAD_EMAIL_STATES = frozenset(
 def _score_meets_min(data: dict, *, strict: bool, min_score: int) -> bool:
     if not strict:
         return True
+    raw = data.get("score")
+    if raw is None:
+        raw = data.get("Score")
+    if raw is None:
+        return True
     try:
-        score = int(data.get("score") if data.get("score") is not None else 0)
-        return score >= min_score
+        return int(raw) >= min_score
     except (TypeError, ValueError):
-        return False
+        return True
 
 
 def _normalize_ok_v1(data: dict, *, strict: bool, min_score: int) -> bool:

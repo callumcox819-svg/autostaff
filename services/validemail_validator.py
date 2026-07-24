@@ -264,10 +264,6 @@ def _is_api_failure(_ok: bool, raw: object) -> bool:
     return False
 
 
-def _is_definitive_invalid(_ok: bool, raw: object) -> bool:
-    return not _ok and not _is_api_failure(_ok, raw)
-
-
 # -------------------------
 # NEW API helpers (/validate)
 # -------------------------
@@ -599,51 +595,6 @@ async def _validate_offers_old(
         eligible_o = int(stats.get("offers_eligible") or len(prepared))
         stats["offers_remaining"] = max(0, eligible_o - sellers_found)
 
-    async def _probe_domain_chunk(
-        seller_i: int,
-        local: str,
-        domain_chunk: list[str],
-        api_key: str,
-    ) -> bool:
-        """False = были только «ящик не найден», можно обрезать хвост доменов."""
-        if found_by_idx[seller_i] or not domain_chunk:
-            return False
-        loc = (local or "").strip().lower()
-        if not loc:
-            return False
-        batch = [f"{loc}@{dom}".lower() for dom in domain_chunk]
-        dom_label = domain_chunk[0]
-        results = await _run_batch(
-            batch,
-            seller_i=seller_i,
-            dom=dom_label,
-            api_key=api_key,
-        )
-        cv = await _consume_results(seller_i, results)
-        async with state_lock:
-            if stats is not None:
-                stats["combinations_valid"] = int(stats.get("combinations_valid") or 0) + cv
-            _refresh_stats()
-        if found_by_idx[seller_i]:
-            return False
-        if not results:
-            return False
-        return all(_is_definitive_invalid(ok, raw) for _e, ok, raw in results)
-
-    async def _probe_local_by_priority(seller_i: int, local: str, api_key: str) -> None:
-        """
-        1-й домен приоритета — отдельно.
-        Остальные домены — одним параллельным батчем (как раньше, но gmail/gmx первым).
-        """
-        if found_by_idx[seller_i] or not domains_clean:
-            return
-
-        await _probe_domain_chunk(seller_i, local, domains_clean[:1], api_key)
-        if found_by_idx[seller_i]:
-            return
-        if len(domains_clean) > 1:
-            await _probe_domain_chunk(seller_i, local, domains_clean[1:], api_key)
-
     async def _validate_seller(i: int, api_key: str) -> None:
         row = prepared[i]
         async with state_lock:
@@ -658,7 +609,15 @@ async def _validate_offers_old(
         extra_locals = locals_list[1:]
 
         if not found_by_idx[i]:
-            await _probe_local_by_priority(i, primary, api_key)
+            batch = [f"{primary}@{dom}".lower() for dom in domains_clean]
+            results = await _run_batch(
+                batch, seller_i=i, dom=domains_clean[0] if domains_clean else "", api_key=api_key
+            )
+            cv = await _consume_results(i, results)
+            async with state_lock:
+                if stats is not None:
+                    stats["combinations_valid"] = int(stats.get("combinations_valid") or 0) + cv
+                _refresh_stats()
 
         if found_by_idx[i]:
             nk = str(prepared[i].get("name_key") or "").strip()
@@ -668,10 +627,22 @@ async def _validate_offers_old(
                     pending_seller_names.add(nk)
             return
 
-        for local in extra_locals:
-            if found_by_idx[i]:
-                break
-            await _probe_local_by_priority(i, local, api_key)
+        if not extra_locals:
+            return
+
+        batch = [
+            f"{local}@{dom}".lower()
+            for dom in domains_clean
+            for local in extra_locals
+        ]
+        results = await _run_batch(
+            batch, seller_i=i, dom=domains_clean[0] if domains_clean else "", api_key=api_key
+        )
+        cv = await _consume_results(i, results)
+        async with state_lock:
+            if stats is not None:
+                stats["combinations_valid"] = int(stats.get("combinations_valid") or 0) + cv
+            _refresh_stats()
 
         if found_by_idx[i]:
             nk = str(prepared[i].get("name_key") or "").strip()

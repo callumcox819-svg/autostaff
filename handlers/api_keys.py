@@ -11,6 +11,7 @@ from aiogram.fsm.state import StatesGroup, State
 from aiogram.exceptions import TelegramBadRequest
 
 from database import Session
+from region import AQUA_DEFAULT_SERVICE
 from services.users import get_or_create_user
 from services.aqua_keys import (
     AQUA_PROFILE_ADDRESS_KEY,
@@ -35,7 +36,7 @@ from services.aqua_keys import (
     user_profile_fields_complete,
 )
 from services.aqua_network import AquaError, generate_api_base, generate_api_configured, verify_gag_auth
-from services.user_settings import set_user_setting
+from services.user_settings import get_user_setting, set_user_setting
 from utils.secrets import clean_secret
 from utils.ui_emoji import html_emoji, inline_button, back_inline, menu_path, toast, msg_fail, msg_ok, msg_wait, msg_warn, unicode_fallback
 
@@ -182,8 +183,18 @@ async def aqua_hide(callback: CallbackQuery) -> None:
 @router.callback_query(F.data == "aqua_show:profile")
 async def aqua_show_profile(callback: CallbackQuery, state: FSMContext) -> None:
     await state.clear()
+    try:
+        await _render_profile_screen(callback)
+    except Exception:
+        import logging
+
+        logging.getLogger(__name__).exception("aqua_show_profile failed tg=%s", callback.from_user.id)
+        if callback.message:
+            await callback.message.answer(
+                f"{html_emoji('fail')} Не удалось открыть профиль. Попробуй ещё раз или /start.",
+                parse_mode="HTML",
+            )
     await callback.answer()
-    await _render_profile_screen(callback)
 
 
 @router.callback_query(F.data == "aqua_show:key")

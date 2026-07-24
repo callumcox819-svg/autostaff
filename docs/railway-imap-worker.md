@@ -2,20 +2,14 @@
 
 Один репозиторий, **два сервиса**, одна **PostgreSQL**.
 
-| Сервис | Start Command | Роль |
-|--------|---------------|------|
-| **newbot** | `python bot.py` | Telegram, рассылка, валидация, ответы |
-| **imap-worker** | `python imap_worker.py` | Только опрос IMAP → карточки в TG |
+| Сервис | `APP_ROLE` | Роль |
+|--------|------------|------|
+| **newbot** | `bot` или пусто | Telegram, рассылка |
+| **imap-worker** | `imap_worker` | Только IMAP |
 
-Оба используют **один `BOT_TOKEN`** (polling только на newbot; IMAP шлёт `send_message`).
-
-## 1. Postgres
-
-Уже есть → `DATABASE_URL` = `${{Postgres.DATABASE_URL}}` на **обоих** сервисах.
+Start Command в UI **задаётся в `railway.toml`**: `sh scripts/railway-start.sh` — менять команду в UI не нужно, только **`APP_ROLE`** на каждом сервисе.
 
 ## 2. Сервис newbot (основной)
-
-**Settings → Deploy → Custom Start Command:** `python bot.py` (или из `railway.toml`).
 
 **Variables:**
 
@@ -24,28 +18,24 @@ BOT_TOKEN=...
 DATABASE_URL=${{Postgres.DATABASE_URL}}
 ENV=production
 IMAP_DEDICATED_WORKER=1
+APP_ROLE=bot
 ```
 
 Не включай `ENABLE_INCOMING_MAIL` на newbot.
 
-Остальное как раньше: `GAG_API_BASE`, `VALIDEMAIL_API_KEYS`, прокси и т.д.
-
-## 3. Новый сервис imap-worker
+## 3. Сервис imap-worker
 
 1. Project → **+ New** → **GitHub Repo** → тот же репозиторий `newbot`.
 2. Переименуй сервис, например **imap-worker**.
-3. **Settings → Deploy → Custom Start Command:**
-   ```bash
-   python imap_worker.py
-   ```
+3. **Custom Start Command** будет из `railway.toml` (`sh scripts/railway-start.sh`) — это нормально.
 4. **Variables** (минимум):
 
 ```env
 BOT_TOKEN=${{newbot.BOT_TOKEN}}
 DATABASE_URL=${{Postgres.DATABASE_URL}}
 ENV=production
-ENABLE_INCOMING_MAIL=1
 APP_ROLE=imap_worker
+ENABLE_INCOMING_MAIL=1
 ```
 
 `BOT_TOKEN` можно reference с newbot или вставить тот же токен.

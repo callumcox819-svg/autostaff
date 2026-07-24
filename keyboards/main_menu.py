@@ -100,11 +100,11 @@ def main_menu_kb(user_id: int, *, show_admin: bool = False) -> ReplyKeyboardMark
             reply_button("stop", TEXT_STOP),
         ],
         [reply_button("status", TEXT_STATUS)],
+        [reply_button("test_mail", TEXT_TEST_MAIL)],
     ]
 
     if show_admin:
         rows.append([reply_button("admin", TEXT_ADMIN)])
-        rows.append([reply_button("test_mail", TEXT_TEST_MAIL)])
 
     return ReplyKeyboardMarkup(keyboard=rows, resize_keyboard=True)
 

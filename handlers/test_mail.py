@@ -127,10 +127,6 @@ async def _menu_text(session, user: User) -> str:
 
 
 async def _show_menu(message: Message, *, edit: bool = False) -> None:
-    from services.bot_roles import user_is_admin
-
-    if not await user_is_admin(message.from_user.id):
-        return await message.answer(f"{html_emoji('deny')} Тест маил только для админов.")
     async with async_session() as session:
         user = (
             await session.execute(select(User).where(User.telegram_id == int(message.from_user.id)))
@@ -167,10 +163,6 @@ async def test_mail_close(call: CallbackQuery, state: FSMContext) -> None:
 
 @router.callback_query(F.data == "test_mail:clear")
 async def test_mail_clear(call: CallbackQuery, state: FSMContext) -> None:
-    from services.bot_roles import user_is_admin
-
-    if not await user_is_admin(call.from_user.id):
-        return await call.answer("Нет доступа", show_alert=True)
     await state.clear()
     async with async_session() as session:
         user = (
@@ -185,10 +177,6 @@ async def test_mail_clear(call: CallbackQuery, state: FSMContext) -> None:
 
 @router.callback_query(F.data == "test_mail:edit")
 async def test_mail_edit_cb(call: CallbackQuery, state: FSMContext) -> None:
-    from services.bot_roles import user_is_admin
-
-    if not await user_is_admin(call.from_user.id):
-        return await call.answer("Нет доступа", show_alert=True)
     await state.set_state(TestMailStates.waiting_recipients)
     await call.answer()
     await call.message.answer(
@@ -203,12 +191,6 @@ async def test_mail_edit_cb(call: CallbackQuery, state: FSMContext) -> None:
 
 @router.message(TestMailStates.waiting_recipients)
 async def test_mail_save_recipients(message: Message, state: FSMContext) -> None:
-    from services.bot_roles import user_is_admin
-
-    if not await user_is_admin(message.from_user.id):
-        await state.clear()
-        return
-
     text = (message.text or "").strip()
     if text in ("-", "cancel") or text.lower() == "отмена":
         await state.clear()
@@ -243,10 +225,6 @@ async def test_mail_save_recipients(message: Message, state: FSMContext) -> None
 
 @router.callback_query(F.data == "test_mail:send")
 async def test_mail_send_cb(call: CallbackQuery, state: FSMContext) -> None:
-    from services.bot_roles import user_is_admin
-
-    if not await user_is_admin(call.from_user.id):
-        return await call.answer("Нет доступа", show_alert=True)
     await state.clear()
     await call.answer()
     await _run_mass_test(call.message, int(call.from_user.id))

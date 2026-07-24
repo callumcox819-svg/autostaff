@@ -321,7 +321,7 @@ async def admin_grant_admin_finish(message: Message, state: FSMContext) -> None:
         is_admin_user=True,
         text=(
             f"{html_emoji('admin')} Вам выданы права администратора.\n"
-            f"В меню: «{html_emoji('admin')} Админ-панель» и «{html_emoji('test_mail')} Тест маил»."
+            f"В меню появится «{html_emoji('admin')} Админ-панель»."
         ),
     ):
         await message.answer(

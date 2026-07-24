@@ -38,7 +38,7 @@ from services.aqua_keys import (
 from services.aqua_network import AquaError, generate_api_base, generate_api_configured, verify_gag_auth
 from services.user_settings import get_user_setting, set_user_setting
 from utils.secrets import clean_secret
-from utils.ui_emoji import html_emoji, inline_button, back_inline, menu_path, toast, msg_fail, msg_ok, msg_wait, msg_warn, unicode_fallback
+from utils.ui_emoji import html_emoji, inline_button, back_inline, back_kb, menu_path, toast, msg_fail, msg_ok, msg_wait, msg_warn, unicode_fallback
 
 router = Router(name="api_keys")
 
@@ -377,13 +377,23 @@ async def aqua_test_keys(callback: CallbackQuery) -> None:
 @router.callback_query(F.data == "aqua_set:user_key")
 async def aqua_set_user_key_begin(callback: CallbackQuery, state: FSMContext) -> None:
     await state.set_state(KeysState.waiting_value)
-    await callback.message.edit_text(
-        f"{html_emoji('write')} <b>Личный API-ключ</b>\n\n"
-        "Ваш <b>apikey</b> из панели GAG (например d1f491dc…).",
-        reply_markup=_back_kb(),
-        parse_mode="HTML",
-    )
-    await callback.answer()
+    try:
+        await callback.message.edit_text(
+            f"{html_emoji('write')} <b>Личный API-ключ</b>\n\n"
+            "Отправь <b>apikey</b> из панели GAG <b>одним сообщением</b>.\n"
+            "<i>Пример: d1f491dce948267abdf321c800ec6c73</i>\n\n"
+            "Отмена: «Назад» в меню настроек.",
+            reply_markup=_back_kb(),
+            parse_mode="HTML",
+        )
+    except TelegramBadRequest:
+        await callback.message.answer(
+            f"{html_emoji('write')} <b>Личный API-ключ</b>\n\n"
+            "Отправь <b>apikey</b> одним сообщением.",
+            reply_markup=_back_kb(),
+            parse_mode="HTML",
+        )
+    await callback.answer("Жду ключ…")
 
 
 @router.message(KeysState.waiting_value)

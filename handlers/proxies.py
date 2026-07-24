@@ -29,7 +29,7 @@ from services.proxy_verify import (
 )
 from proxy_manager import normalize_proxy_type
 from utils.bg_jobs import is_running as bg_is_running, start as bg_start
-from utils.ui_emoji import html_emoji, inline_button, icon_button, menu_path, msg_fail, msg_ok, msg_wait, msg_warn
+from utils.ui_emoji import html_emoji, inline_button, icon_button, menu_path, msg_fail, msg_ok, msg_wait, msg_warn, toast
 
 router = Router()
 logger = logging.getLogger(__name__)

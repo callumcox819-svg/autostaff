@@ -162,27 +162,90 @@ def _len_for_limits(local_part: str) -> int:
 
 
 def _is_api_failure(_ok: bool, raw: object) -> bool:
-    """Только HTTP/сеть/rate limit — не «undeliverable» и не HTTP 200."""
+    """Сбой API/сети. Ответ «ящик не существует» (HTTP 200 / undeliverable) — не ошибка."""
     if _ok:
         return False
     if not isinstance(raw, dict):
         return True
     try:
-        st = int(raw.get("_http_status"))
+        st = int(raw.get("_http_status") or 0)
     except (TypeError, ValueError):
         st = 0
     if st == 200:
         return False
+
+    reason = str(raw.get("reason") or raw.get("Reason") or "").lower().strip()
+    if reason in ("connection_error", "timeout"):
+        return True
+    if reason in _DEFINITIVE_BAD_REASONS:
+        return False
+
+    status = str(raw.get("status") or raw.get("State") or raw.get("state") or "").lower().strip()
+    if status in (
+        "deliverable",
+        "undeliverable",
+        "unknown",
+        "risky",
+        "invalid",
+        "not deliverable",
+    ):
+        return False
+    if any(k in raw for k in ("isDeliverable", "IsValid", "isValid", "score", "Score")):
+        return False
+
     if raw.get("_api_key_error"):
         return True
     if st in (401, 403, 402, 429) or st >= 500:
         return True
-    reason = str(raw.get("reason") or raw.get("Reason") or "").lower().strip()
-    if reason in ("connection_error", "timeout"):
-        return True
-    err = str(raw.get("error") or "").lower()
-    if any(x in err for x in ("timeout", "connect", "connection", "clientconnector")):
-        return True
+
+    err = raw.get("error")
+    if err is None:
+        err = raw.get("message")
+    if err is not None:
+        es = str(err or "").strip().lower()
+        if es in ("", "empty", "no api key"):
+            return False
+        benign = (
+            "invalid email",
+            "not valid",
+            "undeliverable",
+            "not deliverable",
+            "does not exist",
+            "doesn't exist",
+            "no mx",
+            "mailbox",
+            "rejected",
+            "disposable",
+            "unverified",
+            "unknown user",
+            "user unknown",
+            "address not found",
+            "no such user",
+        )
+        if any(p in es for p in benign):
+            return False
+        if any(
+            x in es
+            for x in (
+                "timeout",
+                "connect",
+                "connection",
+                "clientconnector",
+                "rate limit",
+                "too many",
+                "429",
+                "402",
+                "403",
+                "401",
+                "500",
+                "502",
+                "503",
+                "504",
+            )
+        ):
+            return True
+        return False
+
     return False
 
 
@@ -393,13 +456,10 @@ async def _validate_offers_old(
     url = str(cfg.validation_url or DEFAULT_VALIDEMAIL_URL).strip()
 
     from services.validemail_keys import (
-        domain_probe_wave_size,
         seller_parallel_per_key,
         validation_concurrency_plan,
         validation_pool_size,
     )
-
-    domain_chunk = domain_probe_wave_size()
 
     n_keys = max(1, len(api_keys))
     per_key_limit, parallel_pool = validation_concurrency_plan(n_keys)
@@ -506,31 +566,6 @@ async def _validate_offers_old(
         eligible_o = int(stats.get("offers_eligible") or len(prepared))
         stats["offers_remaining"] = max(0, eligible_o - sellers_found)
 
-    async def _probe_local_domains(seller_i: int, local: str, api_key: str) -> None:
-        """Все домены приоритета, волнами по domain_chunk (меньше 429)."""
-        if found_by_idx[seller_i] or not domains_clean:
-            return
-        loc = (local or "").strip().lower()
-        if not loc:
-            return
-        n = len(domains_clean)
-        off = 0
-        while off < n and not found_by_idx[seller_i]:
-            chunk = domains_clean[off : off + domain_chunk]
-            off += len(chunk)
-            batch = [f"{loc}@{dom}".lower() for dom in chunk]
-            results = await _run_batch(
-                batch,
-                seller_i=seller_i,
-                dom=chunk[0] if chunk else "",
-                api_key=api_key,
-            )
-            cv = await _consume_results(seller_i, results)
-            async with state_lock:
-                if stats is not None:
-                    stats["combinations_valid"] = int(stats.get("combinations_valid") or 0) + cv
-                _refresh_stats()
-
     async def _validate_seller(i: int, api_key: str) -> None:
         row = prepared[i]
         async with state_lock:
@@ -545,7 +580,15 @@ async def _validate_offers_old(
         extra_locals = locals_list[1:]
 
         if not found_by_idx[i]:
-            await _probe_local_domains(i, primary, api_key)
+            batch = [f"{primary}@{dom}".lower() for dom in domains_clean]
+            results = await _run_batch(
+                batch, seller_i=i, dom=domains_clean[0] if domains_clean else "", api_key=api_key
+            )
+            cv = await _consume_results(i, results)
+            async with state_lock:
+                if stats is not None:
+                    stats["combinations_valid"] = int(stats.get("combinations_valid") or 0) + cv
+                _refresh_stats()
 
         if found_by_idx[i]:
             nk = str(prepared[i].get("name_key") or "").strip()
@@ -555,10 +598,22 @@ async def _validate_offers_old(
                     pending_seller_names.add(nk)
             return
 
-        for local in extra_locals:
-            if found_by_idx[i]:
-                break
-            await _probe_local_domains(i, local, api_key)
+        if not extra_locals:
+            return
+
+        batch = [
+            f"{local}@{dom}".lower()
+            for dom in domains_clean
+            for local in extra_locals
+        ]
+        results = await _run_batch(
+            batch, seller_i=i, dom=domains_clean[0] if domains_clean else "", api_key=api_key
+        )
+        cv = await _consume_results(i, results)
+        async with state_lock:
+            if stats is not None:
+                stats["combinations_valid"] = int(stats.get("combinations_valid") or 0) + cv
+            _refresh_stats()
 
         if found_by_idx[i]:
             nk = str(prepared[i].get("name_key") or "").strip()

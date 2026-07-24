@@ -24,6 +24,26 @@ REGULAR_PRESETS_EMPTY_HINT = (
     "Нажми «Добавить пресет»: сначала имя для кнопки, затем текст письма."
 )
 
+TEXT_PRESETS_PAGE_SIZE = 20
+
+
+def preset_page_count(total_items: int, page_size: int = TEXT_PRESETS_PAGE_SIZE) -> int:
+    if total_items <= 0:
+        return 1
+    return (total_items + page_size - 1) // page_size
+
+
+def clamp_preset_page(page: int, total_items: int, page_size: int = TEXT_PRESETS_PAGE_SIZE) -> int:
+    pages = preset_page_count(total_items, page_size)
+    p = max(0, int(page))
+    return min(p, pages - 1)
+
+
+def preset_last_page(total_items: int, page_size: int = TEXT_PRESETS_PAGE_SIZE) -> int:
+    if total_items <= 0:
+        return 0
+    return (total_items - 1) // page_size
+
 
 def render_text_presets_page(
     header_html: str,
@@ -32,6 +52,8 @@ def render_text_presets_page(
     empty_hint: str | None = None,
     footer_note: str | None = None,
     max_show: int = 40,
+    page: int = 0,
+    page_size: int | None = None,
 ) -> str:
     if not texts:
         hint = empty_hint or (
@@ -40,20 +62,57 @@ def render_text_presets_page(
         )
         return f"{header_html}\n\n{hint}\n\n{FOOTER_VARIABLES}\n{FOOTER_SPINTAX}"
 
+    psz = int(page_size if page_size is not None else max_show)
+    total = len(texts)
+    pg = clamp_preset_page(page, total, psz)
+    pages = preset_page_count(total, psz)
+    start = pg * psz
+    chunk = texts[start : start + psz]
+    preview_len = 220 if psz <= TEXT_PRESETS_PAGE_SIZE else 500
+
     lines: List[str] = [header_html, ""]
-    for i, raw in enumerate(texts[:max_show], start=1):
+    for i, raw in enumerate(chunk, start=start + 1):
         txt = escape((raw or "").strip().replace("\n", " "))
-        if len(txt) > 500:
-            txt = txt[:497] + "…"
+        if len(txt) > preview_len:
+            txt = txt[: preview_len - 1] + "…"
         lines.append(f"<b>Пресет #{i}</b>\n<code>{txt}</code>\n")
-    if len(texts) > max_show:
-        lines.append(f"…и ещё {len(texts) - max_show}")
+    if pages > 1:
+        lines.append(f"<i>Страница {pg + 1} / {pages} · всего {total}</i>")
+    elif total > len(chunk):
+        lines.append(f"…и ещё {total - len(chunk)}")
     lines.append("")
     lines.append(FOOTER_VARIABLES)
     lines.append(FOOTER_SPINTAX)
     if footer_note:
         lines.append(footer_note)
     return "\n".join(lines)
+
+
+def with_text_presets_pagination(
+    kb: InlineKeyboardMarkup,
+    *,
+    page: int,
+    total_items: int,
+    page_cb_prefix: str,
+    page_size: int = TEXT_PRESETS_PAGE_SIZE,
+) -> InlineKeyboardMarkup:
+    pages = preset_page_count(total_items, page_size)
+    if pages <= 1:
+        return kb
+    pg = clamp_preset_page(page, total_items, page_size)
+    nav: List[InlineKeyboardButton] = []
+    if pg > 0:
+        nav.append(InlineKeyboardButton(text="◀️", callback_data=f"{page_cb_prefix}:{pg - 1}"))
+    else:
+        nav.append(InlineKeyboardButton(text=" ", callback_data=f"{page_cb_prefix}:noop"))
+    nav.append(InlineKeyboardButton(text=f"{pg + 1} / {pages}", callback_data=f"{page_cb_prefix}:noop"))
+    if pg < pages - 1:
+        nav.append(InlineKeyboardButton(text="▶️", callback_data=f"{page_cb_prefix}:{pg + 1}"))
+    else:
+        nav.append(InlineKeyboardButton(text=" ", callback_data=f"{page_cb_prefix}:noop"))
+    rows = [list(r) for r in kb.inline_keyboard]
+    rows.insert(-1, nav)
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def text_presets_manage_kb(

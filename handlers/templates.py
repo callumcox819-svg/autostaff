@@ -28,6 +28,9 @@ from utils.preset_list_ui import (
     named_presets_pick_kb,
     render_named_presets_page,
     render_text_presets_page,
+    TEXT_PRESETS_PAGE_SIZE,
+    with_text_presets_pagination,
+    preset_last_page,
     text_presets_manage_kb,
     text_presets_pick_kb,
 )
@@ -88,8 +91,8 @@ def parse_preset_name_dash_text(raw: str) -> tuple[str, str] | None:
     return None
 
 
-def _smart_presets_kb(has_any: bool) -> InlineKeyboardMarkup:
-    return text_presets_manage_kb(
+def _smart_presets_kb(has_any: bool, *, page: int = 0, total: int = 0) -> InlineKeyboardMarkup:
+    base = text_presets_manage_kb(
         add_cb="stmpl_add",
         edit_cb="stmpl_edit",
         del_cb="stmpl_del",
@@ -98,6 +101,23 @@ def _smart_presets_kb(has_any: bool) -> InlineKeyboardMarkup:
         hide_cb="stmpl_hide",
         has_any=has_any,
         add_txt_cb="stmpl_add_txt",
+    )
+    return with_text_presets_pagination(
+        base,
+        page=page,
+        total_items=total,
+        page_cb_prefix="stmpl_page",
+        page_size=TEXT_PRESETS_PAGE_SIZE,
+    )
+
+
+def _smart_presets_list_text(texts: list[str], *, page: int = 0) -> str:
+    return render_text_presets_page(
+        f"{html_emoji('presets')} <b>Ваши умные пресеты:</b>",
+        texts,
+        footer_note=NOTE_SMART_PRESETS,
+        page=page,
+        page_size=TEXT_PRESETS_PAGE_SIZE,
     )
 
 
@@ -450,8 +470,10 @@ async def _restore_smart_list(message: Message, state_data: dict, tg_id: int) ->
             f"{html_emoji('presets')} <b>Ваши умные пресеты:</b>",
             texts,
             footer_note=NOTE_SMART_PRESETS,
+            page=0,
+            page_size=TEXT_PRESETS_PAGE_SIZE,
         ),
-        reply_markup=_smart_presets_kb(bool(texts)),
+        reply_markup=_smart_presets_kb(bool(texts), page=0, total=len(texts)),
     )
 
 
@@ -489,15 +511,12 @@ async def _send_presets_menu_message(message: Message, tg_id: int) -> None:
     )
 
 
-async def _send_smart_menu_message(message: Message, tg_id: int) -> None:
+async def _send_smart_menu_message(message: Message, tg_id: int, *, page: int | None = None) -> None:
     texts = await load_smart_texts(tg_id)
+    pg = preset_last_page(len(texts)) if page is None else page
     await message.answer(
-        render_text_presets_page(
-            f"{html_emoji('presets')} <b>Ваши умные пресеты:</b>",
-            texts,
-            footer_note=NOTE_SMART_PRESETS,
-        ),
-        reply_markup=_smart_presets_kb(bool(texts)),
+        _smart_presets_list_text(texts, page=pg),
+        reply_markup=_smart_presets_kb(bool(texts), page=pg, total=len(texts)),
         parse_mode="HTML",
         disable_web_page_preview=True,
     )
@@ -784,18 +803,33 @@ async def smart_presets_menu(call: CallbackQuery, state: FSMContext) -> None:
     )
     async with Session() as session:
         tg_id = await _user_tg_id(session, call.from_user.id)
+    await _edit_smart_presets_menu(call, tg_id, page=0)
+    await call.answer()
+
+
+@router.callback_query(F.data.startswith("stmpl_page:"))
+async def stmpl_page_nav(call: CallbackQuery, state: FSMContext) -> None:
+    raw = (call.data or "").split(":", 1)[-1].strip()
+    if raw == "noop":
+        return await call.answer()
+    try:
+        page = int(raw)
+    except ValueError:
+        return await call.answer()
+    async with Session() as session:
+        tg_id = await _user_tg_id(session, call.from_user.id)
+    await _edit_smart_presets_menu(call, tg_id, page=page)
+    await call.answer()
+
+
+async def _edit_smart_presets_menu(call: CallbackQuery, tg_id: int, *, page: int) -> None:
     texts = await load_smart_texts(tg_id)
     await call.message.edit_text(
-        render_text_presets_page(
-            f"{html_emoji('presets')} <b>Ваши умные пресеты:</b>",
-            texts,
-            footer_note=NOTE_SMART_PRESETS,
-        ),
-        reply_markup=_smart_presets_kb(bool(texts)),
+        _smart_presets_list_text(texts, page=page),
+        reply_markup=_smart_presets_kb(bool(texts), page=page, total=len(texts)),
         parse_mode="HTML",
         disable_web_page_preview=True,
     )
-    await call.answer()
 
 
 @router.callback_query(F.data == "stmpl_hide")

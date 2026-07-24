@@ -208,22 +208,19 @@ async def _notify_reply_sent(bot, chat_id: int, ctx: ReplyNotifyCtx) -> None:
 
     from_acc = _e(ctx.account_email or "—")
     to_addr = _e(ctx.to_email or "—")
-    incoming = _e(ctx.incoming_from or ctx.to_email or "—")
     anchor = int(ctx.anchor_message_id)
 
+    kind = ""
     if ctx.is_html:
-        main = (
-            f"{html_emoji('burst')} Ответ: <b>[HTML]</b> успешно отправлен на <code>{to_addr}</code> "
-            f"с аккаунта <code>{from_acc}</code> {html_emoji('burst')}\n"
-            f"От кого было входящее: <code>{incoming}</code>"
-        )
-    else:
-        preview = _preview_reply_body(ctx.body_text, is_html=False)
-        main = (
-            f"{html_emoji('burst')} <code>{from_acc}</code> — <b>{_e(preview)}</b> — <code>{to_addr}</code>\n\n"
-            f"успешно отправлен на <code>{to_addr}</code> с аккаунта <code>{from_acc}</code> {html_emoji('burst')}\n"
-            f"От кого было входящее: <code>{incoming}</code>"
-        )
+        kind = " [HTML]"
+    elif ctx.is_preset:
+        kind = " [пресет]"
+
+    main = (
+        f"{html_emoji('burst')} <b>Ответ{kind} — успешно отправлен на</b> "
+        f"<code>{to_addr}</code> <b>с аккаунта</b> <code>{from_acc}</code> "
+        f"{html_emoji('burst')}"
+    )
 
     try:
         await bot.send_message(
@@ -234,6 +231,11 @@ async def _notify_reply_sent(bot, chat_id: int, ctx: ReplyNotifyCtx) -> None:
         )
     except Exception:
         await bot.send_message(int(chat_id), main, parse_mode="HTML")
+
+    try:
+        await _try_pin(bot, int(chat_id), anchor)
+    except Exception:
+        pass
 
     if ctx.is_html and ctx.html_attachment:
         fname = (ctx.html_filename or "reply.html").strip() or "reply.html"
@@ -251,15 +253,9 @@ async def _notify_reply_sent(bot, chat_id: int, ctx: ReplyNotifyCtx) -> None:
         except Exception:
             pass
 
-    footer: str | None = None
-    if ctx.is_preset:
-        footer = msg_ok("Пресет отправлен")
-    elif ctx.is_html:
-        footer = msg_ok("HTML отправлен")
-    elif ctx.is_link:
+    # Короткое подтверждение — только если нужен отдельный toast (ссылка и т.д.)
+    if ctx.is_link:
         footer = msg_ok("Ссылка создана")
-
-    if footer:
         try:
             await bot.send_message(
                 int(chat_id),
@@ -1085,8 +1081,8 @@ async def _send_generated_link_card_to_chat(
     card_text = (
         f"{head}"
         f"{html_emoji('burst')} <b>Объявления » {_e(service_label)}</b>\n\n"
-        f"{html_emoji('pin')} <b>Название:</b> {_e((offer_title or '').strip()) or '—'}\n"
-        f"💰 <b>Цена:</b> {_e((offer_price or '').strip()) or '—'}\n"
+        f"{html_emoji('pin')} <b>{_e((offer_title or '').strip()) or '—'}</b>\n"
+        f"{html_emoji('price')} <b>Цена:</b> {_e((offer_price or '').strip()) or '—'} {html_emoji('price')}\n"
         f"{html_emoji('user')} <b>Профиль:</b> <code>{_e((profile_display or '').strip()) or '—'}</code>\n\n"
         f"{html_emoji('link')} <b>Ссылка:</b>\n{_e(link)}"
     )

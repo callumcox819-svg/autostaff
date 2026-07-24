@@ -61,6 +61,7 @@ _UNICODE_FALLBACK: dict[str, str] = {
     "user": "👤",
     "warn": "⚠️",
     "mail": "✉️",
+    "camera": "📷",
 }
 
 

@@ -939,12 +939,12 @@ def render_mail_text_chunks(
     link_id: str | None = None,
     service_label: str | None = None,
     product_title: str | None = None,
+    offer_price: str | None = None,
     translation: str | None = None,
 ) -> list[str]:
     shown = _ensure_multiline_for_expandable(_clean_mail_body_for_card((body or "").strip()))
 
     extra = ""
-    # ID только из сгенерированной AQUA-ссылки (не внутренний offer_id в БД).
     lid = (link_id or "").strip()
     if lid:
         extra += f"<b>ID:</b> <code>{_e(lid)}</code>\n"
@@ -952,20 +952,24 @@ def render_mail_text_chunks(
         extra += f"<b>Сервис:</b> {_service_html(service_label)}\n"
     if product_title:
         extra += f"<b>Товар:</b> <code>{_e(product_title)}</code>\n"
+    price_s = (offer_price or "").strip()
+    if price_s:
+        extra += f"<b>Цена:</b> <code>{_e(price_s)}</code>\n"
     if extra:
         extra = "\n" + extra
 
+    burst = html_emoji("burst")
     label = (inbox_label or "").strip()
     if label:
-        label_line = f'⚡ Получено сообщение на "<b>{_e(label)}</b>"'
+        label_line = f'{burst} Получено сообщение на "<b>{_e(label)}</b>"'
     else:
-        label_line = f"{html_emoji('burst')} Получено сообщение на <code>{_e(account_email)}</code>"
+        label_line = f"{burst} Получено сообщение на <code>{_e(account_email)}</code>"
 
     from_disp = (from_name or "").strip() or from_email
     head = (
         f"{label_line}\n"
         f"<code>{_e(account_email)}</code>\n"
-        f'от "<code>{_e(from_disp)}</code>" <code>{_e(from_email)}</code>\n'
+        f'от "<b>{_e(from_disp)}</b>" <code>{_e(from_email)}</code>\n'
         f"{extra}\n"
         f"<b>Тема:</b>\n<blockquote><code>{_e(subject or '—')}</code></blockquote>\n\n"
         f"<b>Текст:</b>\n"
@@ -981,6 +985,23 @@ def render_mail_text_chunks(
             f"<blockquote expandable><code>{_e(tr)}</code></blockquote>"
         )
     return [msg]
+
+
+def format_first_incoming_photo_caption(
+    *,
+    product_title: str | None,
+    offer_price: str | None,
+) -> str:
+    """Reply-фото к первому письму продавца (как в старых ботах)."""
+    lines: list[str] = []
+    title = (product_title or "").strip()
+    if title:
+        lines.append(f"{html_emoji('pin')} <b>{_e(title)}</b>")
+    lines.append(f"{html_emoji('camera')} Фото товара")
+    price_s = (offer_price or "").strip()
+    if price_s:
+        lines.append(f"{html_emoji('price')} <b>Цена:</b> {_e(price_s)} {html_emoji('price')}")
+    return "\n".join(lines)
 
 
 def build_kb(
@@ -1154,7 +1175,7 @@ async def build_mail_card_from_mail(
         except Exception:
             inbox_label = None
 
-    oid, service_label, product_title, _photo, _price = await mail_card_offer_meta(
+    oid, service_label, product_title, _photo, offer_price = await mail_card_offer_meta(
         session,
         user_id=int(mail.user_id),
         from_email=str(getattr(mail, "from_email", "") or ""),
@@ -1193,6 +1214,7 @@ async def build_mail_card_from_mail(
         link_id=link_id,
         service_label=service_label,
         product_title=product_title,
+        offer_price=offer_price,
         translation=translation,
     )
     text = (chunks[0] if chunks else "—")[:4096]
@@ -1702,9 +1724,10 @@ async def _process_mails_for_account_impl(
 
                     if is_first:
                         photo_to_send = photo_url
-                        photo_caption = "📷 Фото товара (первый ответ)"
-                        if offer_price:
-                            photo_caption += f"\n💰 Цена: {offer_price} 💰"
+                        photo_caption = format_first_incoming_photo_caption(
+                            product_title=product_title,
+                            offer_price=offer_price,
+                        )
                 except Exception:
                     photo_to_send = None
 
@@ -1719,6 +1742,7 @@ async def _process_mails_for_account_impl(
                 link_id=link_id,
                 service_label=service_label,
                 product_title=product_title,
+                offer_price=offer_price,
             )
             if smtp_block_bounce and chunks:
                 chunks[0] += (
@@ -1814,7 +1838,11 @@ async def _process_mails_for_account_impl(
                     await bot.send_photo(
                         chat_id=tg_id,
                         photo=photo_to_send,
-                        caption=(photo_caption or "📷 Фото товара (первый ответ)"),
+                        caption=photo_caption or format_first_incoming_photo_caption(
+                            product_title=product_title,
+                            offer_price=offer_price,
+                        ),
+                        parse_mode="HTML",
                         reply_to_message_id=int(m.message_id),
                     )
                 except Exception:

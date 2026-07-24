@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import logging
 import os
 import random
@@ -56,6 +57,12 @@ _SMTP_SOCKET_ORIG = _smtplib.socket
 _SOCKET_GETADDRINFO_ORIG = None
 _SMTP_TEST_HOST = (os.getenv("SMTP_TEST_HOST") or "smtp.gmail.com").strip()
 _SMTP_TEST_PORT = int(os.getenv("SMTP_TEST_PORT") or "587")
+
+_HTTP_SMTP_PROXY_CTX: contextvars.ContextVar[Proxy | None] = contextvars.ContextVar(
+    "http_smtp_proxy",
+    default=None,
+)
+_SMTP_GETSOCKET_PATCHED = False
 
 SOCKS5_TYPES = frozenset({"socks5", "socks5h"})
 SOCKS4_TYPES = frozenset({"socks4", "socks4a"})
@@ -147,6 +154,52 @@ def _mailing_proxy_credentials(proxy: Proxy) -> tuple[str, int, str | None, str 
     return host, port, username, password
 
 
+def _http_proxy_tunnel_socket(
+    proxy: Proxy,
+    dest_host: str,
+    dest_port: int,
+    *,
+    timeout: float,
+) -> _stdlib_socket.socket:
+    """
+    HTTP CONNECT с Proxy-Authorization (PySocks для HTTP часто даёт 407 у residential-провайдеров).
+    """
+    import base64
+    import http.client
+
+    px_host, px_port, username, password = _mailing_proxy_credentials(proxy)
+    conn = http.client.HTTPConnection(px_host, px_port, timeout=float(timeout))
+    headers: dict[str, str] = {}
+    if username and password:
+        token = base64.b64encode(f"{username}:{password}".encode("utf-8")).decode("ascii")
+        headers["Proxy-Authorization"] = f"Basic {token}"
+    conn.set_tunnel(str(dest_host).strip(), int(dest_port), headers=headers)
+    conn.connect()
+    sock = conn.sock
+    if sock is None:
+        raise OSError("HTTP CONNECT: прокси не вернул сокет")
+    sock.settimeout(float(timeout))
+    return sock
+
+
+def _ensure_smtp_http_connect_patch() -> None:
+    global _SMTP_GETSOCKET_PATCHED
+    if _SMTP_GETSOCKET_PATCHED:
+        return
+
+    _orig_get_socket = _smtplib.SMTP._get_socket
+
+    def _get_socket(self, host, port, timeout):  # type: ignore[no-untyped-def]
+        p = _HTTP_SMTP_PROXY_CTX.get()
+        if p is not None and is_http_proxy(p):
+            t = float(timeout if timeout is not None else 20)
+            return _http_proxy_tunnel_socket(p, host, port, timeout=t)
+        return _orig_get_socket(self, host, port, timeout)
+
+    _smtplib.SMTP._get_socket = _get_socket  # type: ignore[method-assign]
+    _SMTP_GETSOCKET_PATCHED = True
+
+
 def connect_via_mailing_proxy(
     proxy: Proxy,
     dest_host: str,
@@ -157,13 +210,21 @@ def connect_via_mailing_proxy(
     """
     TCP до dest через SOCKS4/5 или HTTP CONNECT — как при рассылке (изолированный сокет).
     """
-    import socks
-
     if not is_mailing_proxy(proxy):
         raise ValueError(
             f"Неподдерживаемый тип прокси: {proxy_type_name(proxy)!r} "
             f"(нужен socks5, socks4, http)"
         )
+
+    if is_http_proxy(proxy):
+        return _http_proxy_tunnel_socket(
+            proxy,
+            str(dest_host).strip(),
+            int(dest_port),
+            timeout=float(timeout),
+        )
+
+    import socks
 
     px_host, px_port, username, password = _mailing_proxy_credentials(proxy)
     kind = socks_proxy_type_for(proxy)
@@ -240,11 +301,8 @@ async def choose_proxy_for_user(
 
 
 def apply_proxy_to_smtplib(proxy: Proxy) -> None:
-    """SOCKS5 или HTTP → PySocks → smtplib."""
+    """SOCKS → PySocks; HTTP → CONNECT через stdlib (Proxy-Authorization)."""
     global _SOCKET_GETADDRINFO_ORIG
-
-    import socks
-    import smtplib
 
     if not is_mailing_proxy(proxy):
         raise ValueError(
@@ -256,6 +314,21 @@ def apply_proxy_to_smtplib(proxy: Proxy) -> None:
     port = int(proxy.port or 0)
     if not host or not port:
         raise ValueError("Proxy host/port is empty")
+
+    if is_http_proxy(proxy):
+        _ensure_smtp_http_connect_patch()
+        try:
+            reset_smtplib_proxy()
+        except Exception:
+            pass
+        _HTTP_SMTP_PROXY_CTX.set(proxy)
+        logger.info("SMTP HTTP proxy applied: %s:%s", host, port)
+        return
+
+    _HTTP_SMTP_PROXY_CTX.set(None)
+
+    import socks
+    import smtplib
 
     username = (proxy.username or "").strip() or None
     password = (proxy.password or "").strip() or None
@@ -389,6 +462,8 @@ def reset_smtplib_proxy() -> None:
     global _SOCKET_GETADDRINFO_ORIG
 
     import smtplib
+
+    _HTTP_SMTP_PROXY_CTX.set(None)
 
     try:
         import socks  # type: ignore

@@ -99,10 +99,10 @@ def _validemail_api_timeout() -> int:
     try:
         from config import config
 
-        base = int(getattr(config, "VALIDEMAIL_API_TIMEOUT", 5))
+        base = int(getattr(config, "VALIDEMAIL_API_TIMEOUT", 6))
     except Exception:
         try:
-            base = int(os.getenv("VALIDEMAIL_API_TIMEOUT", "5"))
+            base = int(os.getenv("VALIDEMAIL_API_TIMEOUT", "6"))
         except (TypeError, ValueError):
             base = 8
     return max(2, min(30, base))

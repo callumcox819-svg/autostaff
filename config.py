@@ -53,7 +53,7 @@ def _validemail_seller_parallel_per_key() -> int:
 
 
 def _validemail_domain_wave_size() -> int:
-    raw = (os.getenv("VALIDEMAIL_DOMAIN_WAVE_SIZE") or "2").strip()
+    raw = (os.getenv("VALIDEMAIL_DOMAIN_WAVE_SIZE") or "3").strip()
     try:
         return max(1, min(8, int(raw)))
     except (TypeError, ValueError):
@@ -61,7 +61,7 @@ def _validemail_domain_wave_size() -> int:
 
 
 def _validemail_max_domains_probe() -> int:
-    raw = (os.getenv("VALIDEMAIL_MAX_DOMAINS_PROBE") or "8").strip()
+    raw = (os.getenv("VALIDEMAIL_MAX_DOMAINS_PROBE") or "0").strip()
     try:
         return max(0, min(32, int(raw)))
     except (TypeError, ValueError):
@@ -97,8 +97,8 @@ class Config:
     else:
         n_k = max(1, len(VALIDEMAIL_API_KEYS))
         VALIDEMAIL_CONCURRENCY = max(2, VALIDEMAIL_CONCURRENCY_PER_KEY * n_k)
-    VALIDEMAIL_API_TIMEOUT = max(2, min(30, int(os.getenv("VALIDEMAIL_API_TIMEOUT", "4"))))
-    VALIDEMAIL_MAX_RETRIES = max(1, min(5, int(os.getenv("VALIDEMAIL_MAX_RETRIES", "1"))))
+    VALIDEMAIL_API_TIMEOUT = max(2, min(30, int(os.getenv("VALIDEMAIL_API_TIMEOUT", "6"))))
+    VALIDEMAIL_MAX_RETRIES = max(1, min(5, int(os.getenv("VALIDEMAIL_MAX_RETRIES", "2"))))
 
     GLOBAL_SUBJECT_TEMPLATE = os.getenv("GLOBAL_SUBJECT_TEMPLATE", "Re: OFFER").strip() or "Re: OFFER"
 

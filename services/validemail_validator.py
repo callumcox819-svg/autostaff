@@ -637,16 +637,14 @@ async def _validate_offers_old(
     async def _probe_local_by_priority(seller_i: int, local: str, api_key: str) -> None:
         """
         1-й домен — отдельно (строгий приоритет).
-        Дальше — волны по wave_size; после N подряд «undeliverable» — хвост доменов не трогаем.
+        Дальше — волны по wave_size. Все домены из приоритета (без раннего стопа по умолчанию).
         """
         if found_by_idx[seller_i] or not domains_clean:
             return
         try:
-            stop_tail_after = max(
-                4, int(os.getenv("VALIDEMAIL_STOP_AFTER_INVALID_STREAK", "6"))
-            )
+            stop_tail_after = int(os.getenv("VALIDEMAIL_STOP_AFTER_INVALID_STREAK", "0"))
         except (TypeError, ValueError):
-            stop_tail_after = 6
+            stop_tail_after = 0
 
         streak_invalid = 0
         probes_done = 0
@@ -661,7 +659,7 @@ async def _validate_offers_old(
         idx = 1
         n = len(domains_clean)
         while idx < n and not found_by_idx[seller_i]:
-            if streak_invalid >= stop_tail_after and probes_done >= stop_tail_after:
+            if stop_tail_after > 0 and streak_invalid >= stop_tail_after and probes_done >= stop_tail_after:
                 break
             chunk = domains_clean[idx : idx + wave_size]
             idx += len(chunk)

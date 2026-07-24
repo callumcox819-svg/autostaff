@@ -1,0 +1,11 @@
+# Сервис newbot (по умолчанию): Telegram polling + рассылка, без IMAP.
+# Отдельный IMAP: второй сервис в Railway, Start Command → python imap_worker.py
+# См. docs/railway-imap-worker.md
+
+[build]
+builder = "NIXPACKS"
+
+[deploy]
+startCommand = "python bot.py"
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 5

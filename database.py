@@ -19,7 +19,13 @@ _LOCAL_SQLITE_FALLBACK = "sqlite+aiosqlite:///./bot.db"
 
 def is_production_runtime() -> bool:
     env = (os.getenv("ENV") or os.getenv("APP_ENV") or "").strip().lower()
-    return env in {"production", "prod"}
+    if env in {"production", "prod"}:
+        return True
+    if env in {"development", "dev", "local"}:
+        return False
+    if (os.getenv("RAILWAY_ENVIRONMENT") or os.getenv("RAILWAY_PROJECT_ID") or "").strip():
+        return True
+    return False
 
 
 def resolve_database_url() -> str:

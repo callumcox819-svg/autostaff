@@ -29,6 +29,10 @@ from services.offer_matching import resolve_offer_for_incoming as _resolve_offer
 
 logger = logging.getLogger(__name__)
 
+IMAP_DIAG_DB_KEY = "imap_worker_diag_v1"
+_DIAG_PERSIST_INTERVAL_SEC = 45
+_last_diag_persist_at: float = 0.0
+
 # ---- CONFIG ----
 USE_IMAP_IDLE = False              # только round-robin polling (не поток на ящик)
 IDLE_TIMEOUT_SEC = 60
@@ -2227,6 +2231,7 @@ async def _idle_manager_loop(bot: Bot, *, poll_seconds: int) -> None:
 
     while True:
         _SCHEDULER_LAST_TICK = _now()
+        await _maybe_persist_imap_diag()
         cycle_pause = IMAP_CYCLE_SLEEP_SEC
         polled_this_cycle = 0
         try:
@@ -2293,6 +2298,76 @@ async def _idle_manager_loop(bot: Bot, *, poll_seconds: int) -> None:
             logger.exception("Incoming mail manager loop error")
 
         await asyncio.sleep(max(3, cycle_pause))
+
+
+async def _maybe_persist_imap_diag() -> None:
+    """Пульс отдельного IMAP-сервиса → Postgres (для /imap_diag на newbot)."""
+    global _last_diag_persist_at
+    now = _now()
+    if now - _last_diag_persist_at < _DIAG_PERSIST_INTERVAL_SEC:
+        return
+    _last_diag_persist_at = now
+    try:
+        import json
+        import os
+
+        from services.settings import set_setting
+
+        diag = incoming_mail_diag_snapshot()
+        diag["worker_role"] = (os.getenv("APP_ROLE") or "incoming_mail").strip()
+        diag["persisted_at"] = now
+        diag["worker_host"] = (
+            os.getenv("RAILWAY_SERVICE_NAME")
+            or os.getenv("RAILWAY_REPLICA_ID")
+            or os.getenv("HOSTNAME")
+            or "?"
+        )
+        async with _imap_db_session() as session:
+            await set_setting(
+                session,
+                IMAP_DIAG_DB_KEY,
+                json.dumps(diag, ensure_ascii=False),
+            )
+    except Exception:
+        logger.debug("persist imap diag failed", exc_info=True)
+
+
+async def load_imap_diag_from_db(session) -> dict[str, Any] | None:
+    import json
+
+    from services.settings import get_setting
+
+    raw = await get_setting(session, IMAP_DIAG_DB_KEY)
+    if not raw:
+        return None
+    try:
+        data = json.loads(raw)
+        if not isinstance(data, dict):
+            return None
+        if data.get("persisted_at"):
+            data["remote_heartbeat_ago_sec"] = max(0, int(_now() - float(data["persisted_at"])))
+        return data
+    except Exception:
+        return None
+
+
+async def incoming_mail_diag_merged(session) -> dict[str, Any]:
+    """Локальный воркер или снимок из БД (отдельный imap-worker на Railway)."""
+    local = incoming_mail_diag_snapshot()
+    tick = local.get("scheduler_last_tick_ago_sec")
+    if tick is not None and int(tick) < 300:
+        local["diag_source"] = "local_process"
+        return local
+
+    remote = await load_imap_diag_from_db(session)
+    if remote:
+        ago = remote.get("remote_heartbeat_ago_sec")
+        if ago is not None and int(ago) < 600:
+            remote["diag_source"] = "dedicated_worker"
+            return remote
+
+    local["diag_source"] = "no_active_worker"
+    return local
 
 
 def incoming_mail_diag_snapshot() -> dict[str, Any]:

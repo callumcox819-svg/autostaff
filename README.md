@@ -66,13 +66,22 @@ utils/                 — emoji, bg jobs, secrets
 tests/                 — unit-тесты
 ```
 
-## IMAP worker (опционально)
+## IMAP worker (отдельный сервер / Railway)
+
+**newbot:** `IMAP_DEDICATED_WORKER=1`, без `ENABLE_INCOMING_MAIL`.
+
+**imap-worker:** тот же репо, start `python imap_worker.py`, `ENABLE_INCOMING_MAIL=1`, общий `DATABASE_URL` и `BOT_TOKEN`.
+
+Подробно: [docs/railway-imap-worker.md](docs/railway-imap-worker.md).
+
+Локально:
 
 ```bash
+# терминал 1
+IMAP_DEDICATED_WORKER=1 python bot.py
+# терминал 2
 ENABLE_INCOMING_MAIL=1 python imap_worker.py
 ```
-
-На основном боте: `IMAP_DEDICATED_WORKER=1`.
 
 ## Тесты
 

@@ -13,7 +13,6 @@ os.environ.setdefault("APP_ROLE", "imap_worker")
 
 import asyncio
 import logging
-import os
 import sys
 
 from aiogram import Bot

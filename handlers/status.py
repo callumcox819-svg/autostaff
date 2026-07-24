@@ -268,10 +268,10 @@ async def cmd_imap_diag(message: Message) -> None:
     """Проверка: жив ли IMAP-воркер и есть ли входящие в БД."""
     tg_user_id = message.from_user.id
     wait_msg = await message.answer(f"{html_emoji('wait')} Смотрю IMAP и входящие в БД…")
-    from services.incoming_mail_worker import incoming_mail_diag_snapshot
-
-    snap = incoming_mail_diag_snapshot()
     async with db_session() as session:
+        from services.incoming_mail_worker import incoming_mail_diag_merged
+
+        snap = await incoming_mail_diag_merged(session)
         user = await get_or_create_user(session, tg_user_id)
         accs = (
             await session.execute(
@@ -291,8 +291,15 @@ async def cmd_imap_diag(message: Message) -> None:
         breakdown = await build_incoming_breakdown(session, int(user.id))
         breakdown_html = format_incoming_breakdown_html(breakdown)
 
+    src = snap.get("diag_source") or "—"
+    host = snap.get("worker_host") or "—"
+    hb = snap.get("remote_heartbeat_ago_sec")
+    if hb is None:
+        hb = snap.get("scheduler_last_tick_ago_sec")
+    hb_line = f", пульс <b>{hb}</b>s назад" if hb is not None else ""
     lines = [
         "<b>IMAP</b>",
+        f"Воркер: <code>{src}</code> · <code>{host}</code>{hb_line}",
         f"Режим: <code>{snap.get('scheduler', '—')}</code>, "
         f"интервал ящика: <code>{snap.get('per_account_interval_sec', '—')}s</code>, "
         f"пауза рассылки: <code>{snap.get('mailing_pause', '—')}</code>",
@@ -323,7 +330,7 @@ async def cmd_imap_diag(message: Message) -> None:
         for a in accs[:15]:
             st = (a.status or "—").strip()
             uid = getattr(a, "last_seen_uid", None)
-            bo = snap["backoff_sec_by_account"].get(int(a.id))
+            bo = (snap.get("backoff_sec_by_account") or {}).get(int(a.id))
             extra = f", пауза IMAP {bo}с" if bo else ""
             lines.append(
                 f"• <code>{a.email}</code> — {st}, last_uid={uid if uid is not None else 'новый'}{extra}"

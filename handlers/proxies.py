@@ -582,6 +582,11 @@ async def proxy_add_process(message: Message, state: FSMContext):
         return await message.answer(f"{html_emoji('wait')} Добавление прокси уже идёт. Подождите завершения.")
 
 
+def _e(s: str) -> str:
+    import html
+    return html.escape(s or "", quote=False)
+
+
 async def _proxy_add_work(
     message: Message,
     state: FSMContext,
@@ -592,82 +597,106 @@ async def _proxy_add_work(
     ok_count = 0
     fail_count = 0
     details: List[str] = []
-
-    async with Session() as session:
-        res_user = await session.execute(
-            select(User).where(User.telegram_id == telegram_id)
-        )
-        user = res_user.scalar_one_or_none()
-        if not user:
-            user = User(telegram_id=telegram_id)
-            session.add(user)
-            await session.commit()
-            await session.refresh(user)
-
-        for original_text, parsed in parsed_items:
-            if not parsed:
-                fail_count += 1
-                # показываем кратко (чтобы не залить чат огромным блоком)
-                preview = original_text.replace("\n", " / ")
-                if len(preview) > 120:
-                    preview = preview[:120] + "…"
-                details.append(f"{html_emoji('fail')} `{preview}` — неправильный формат")
-                continue
-
-            try:
-                ok, info = await asyncio.wait_for(test_proxy(parsed, timeout=22), timeout=55)
-            except asyncio.TimeoutError:
-                ok, info = False, "Timeout: проверка прокси заняла слишком долго"
-            except Exception as e:
-                ok, info = False, f"{type(e).__name__}: {e}"
-
-            proxy = Proxy(
-                user_id=user.id,
-                host=parsed["host"],
-                port=parsed["port"],
-                username=parsed.get("username"),
-                password=parsed.get("password"),
-                type=normalize_proxy_type(parsed.get("type")),
-                is_active=True if ok else None,
-                last_error=None if ok else info,
-            )
-            apply_proxy_check_to_row(proxy, ok, info or "")
-
-            try:
-                session.add(proxy)
-                await session.commit()
-                preview = original_text.replace("\n", " / ")
-                if len(preview) > 120:
-                    preview = preview[:120] + "…"
-                if ok:
-                    ok_count += 1
-                    details.append(f"{html_emoji('ok')} `{preview}` — {info}")
-                else:
-                    fail_count += 1
-                    details.append(f"{html_emoji('fail')} `{preview}` — {info}")
-            except Exception as e:
-                logger.exception("Error saving proxy")
-                fail_count += 1
-                preview = original_text.replace("\n", " / ")
-                if len(preview) > 120:
-                    preview = preview[:120] + "…"
-                details.append(f"{html_emoji('fail')} `{preview}` — ошибка сохранения: {e}")
-
-    summary = (
-        "Готово.\n\n"
-        f"Успешно добавлено: {ok_count}\n"
-        f"Ошибок: {fail_count}\n\n" +
-        "\n".join(details[:50])  # ограничим, чтобы не словить лимиты
-    )
-    if len(details) > 50:
-        summary += f"\n…и ещё {len(details) - 50} строк"
+    total = len(parsed_items)
 
     try:
-        await status_msg.edit_text(summary[:4000], parse_mode="Markdown")
-    except Exception:
-        await message.answer(summary, parse_mode="Markdown")
-    await state.clear()
-    await render_proxy_menu(message, telegram_id)
+        async with Session() as session:
+            res_user = await session.execute(
+                select(User).where(User.telegram_id == telegram_id)
+            )
+            user = res_user.scalar_one_or_none()
+            if not user:
+                user = User(telegram_id=telegram_id)
+                session.add(user)
+                await session.commit()
+                await session.refresh(user)
+
+            for idx, (original_text, parsed) in enumerate(parsed_items, start=1):
+                try:
+                    await status_msg.edit_text(
+                        f"{html_emoji('wait')} Проверка <b>{idx}/{total}</b>…\n"
+                        "<i>Не отправляйте новый список, пока идёт проверка.</i>",
+                        parse_mode="HTML",
+                    )
+                except Exception:
+                    pass
+
+                preview = original_text.replace("\n", " / ")
+                if len(preview) > 120:
+                    preview = preview[:120] + "…"
+
+                if not parsed:
+                    fail_count += 1
+                    details.append(f"{html_emoji('fail')} <code>{preview}</code> — неправильный формат")
+                    continue
+
+                try:
+                    ok, info = await asyncio.wait_for(
+                        test_proxy(parsed, timeout=16, retries=1),
+                        timeout=38,
+                    )
+                except asyncio.TimeoutError:
+                    ok, info = False, "Timeout: проверка прокси заняла слишком долго"
+                except Exception as e:
+                    ok, info = False, f"{type(e).__name__}: {e}"
+
+                proxy = Proxy(
+                    user_id=user.id,
+                    host=parsed["host"],
+                    port=parsed["port"],
+                    username=parsed.get("username"),
+                    password=parsed.get("password"),
+                    type=normalize_proxy_type(parsed.get("type")),
+                    is_active=True if ok else None,
+                    last_error=None if ok else (info or "")[:500],
+                )
+                apply_proxy_check_to_row(proxy, ok, info or "")
+
+                try:
+                    session.add(proxy)
+                    await session.commit()
+                    if ok:
+                        ok_count += 1
+                        details.append(
+                            f"{html_emoji('ok')} <code>{preview}</code> — {_e(str(info or '')[:200])}"
+                        )
+                    else:
+                        fail_count += 1
+                        details.append(
+                            f"{html_emoji('fail')} <code>{preview}</code> — {_e(str(info or '')[:200])}"
+                        )
+                except Exception as e:
+                    logger.exception("Error saving proxy")
+                    fail_count += 1
+                    details.append(
+                        f"{html_emoji('fail')} <code>{preview}</code> — ошибка сохранения: {_e(str(e)[:120])}"
+                    )
+
+        summary = (
+            f"{html_emoji('ok')} <b>Готово</b>\n\n"
+            f"Успешно: <b>{ok_count}</b> · Ошибок: <b>{fail_count}</b>\n\n"
+            + "\n".join(details[:50])
+        )
+        if len(details) > 50:
+            summary += f"\n…и ещё {len(details) - 50} строк"
+
+        try:
+            await status_msg.edit_text(summary[:4000], parse_mode="HTML")
+        except Exception:
+            await message.answer(summary[:4000], parse_mode="HTML")
+        await render_proxy_menu(message, telegram_id)
+    except Exception as e:
+        logger.exception("proxy_add_work failed tg=%s", telegram_id)
+        err = (
+            f"{html_emoji('fail')} <b>Не удалось завершить проверку</b>\n"
+            f"<code>{_e(str(e)[:300])}</code>"
+        )
+        try:
+            await status_msg.edit_text(err, parse_mode="HTML")
+        except Exception:
+            await message.answer(err, parse_mode="HTML")
+    finally:
+        await state.clear()
 
 
 # ======================

@@ -150,21 +150,23 @@ def heal_proxy_rows_from_stale_check_markers(proxies: list[Proxy]) -> None:
 
 
 async def _test_proxy_once(proxy: Proxy | dict[str, Any], *, timeout: int = 20) -> Tuple[bool, str]:
-    """Одна попытка: SMTP+STARTTLS как при /send."""
+    """Сначала быстрый туннель (без lock), затем SMTP+STARTTLS как при /send."""
     d = proxy_to_dict(proxy)
     ptype = normalize_proxy_type(d.get("type"))
     if ptype not in MAILING_PROXY_TYPES:
         return False, "Нужен socks5, socks4 или http прокси."
 
-    smtp_timeout = max(20, int(timeout))
+    tunnel_timeout = max(8, min(int(timeout), 16))
+    tunnel_ok, tunnel_info = await _test_proxy_tunnel_handshake(proxy, timeout=tunnel_timeout)
+    if not tunnel_ok:
+        return False, tunnel_info
+
+    smtp_timeout = max(12, min(int(timeout), 22))
     smtp_ok, smtp_info = await test_smtp_tunnel(proxy, timeout=smtp_timeout)
     if smtp_ok:
         return True, smtp_info
-
-    tunnel_timeout = max(12, min(smtp_timeout, 20))
-    tunnel_ok, tunnel_info = await _test_proxy_tunnel_handshake(proxy, timeout=tunnel_timeout)
-    if tunnel_ok:
-        return True, f"Туннель до SMTP OK ({tunnel_info})"
+    if "занят" in (smtp_info or "").lower():
+        return True, f"Туннель OK ({tunnel_info}). SMTP отложен: {smtp_info}"
     return False, f"SMTP: {smtp_info} · туннель: {tunnel_info}"
 
 

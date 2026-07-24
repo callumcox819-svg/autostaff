@@ -299,10 +299,31 @@ def apply_proxy_to_smtplib(proxy: Proxy) -> None:
     )
 
 
-async def test_smtp_tunnel_async(proxy: Proxy, *, timeout: int = 20) -> tuple[bool, str]:
+async def test_smtp_tunnel_async(
+    proxy: Proxy,
+    *,
+    timeout: int = 20,
+    lock_timeout: float | None = None,
+) -> tuple[bool, str]:
     """SMTP-проверка под lock — без гонок при параллельных тестах."""
-    async with _PROXY_LOCK:
+    lt = lock_timeout
+    if lt is None:
+        try:
+            lt = float(os.getenv("PROXY_SMTP_LOCK_TIMEOUT_SEC", "18"))
+        except (TypeError, ValueError):
+            lt = 18.0
+    lt = max(3.0, min(60.0, float(lt)))
+    try:
+        await asyncio.wait_for(_PROXY_LOCK.acquire(), timeout=lt)
+    except asyncio.TimeoutError:
+        return False, "Бот занят (рассылка/IMAP). Повторите проверку через минуту."
+    try:
         return await asyncio.to_thread(test_smtp_tunnel_sync, proxy, timeout=timeout)
+    finally:
+        try:
+            _PROXY_LOCK.release()
+        except Exception:
+            pass
 
 
 def test_smtp_tunnel_sync(proxy: Proxy, *, timeout: int = 20) -> tuple[bool, str]:

@@ -106,7 +106,8 @@ _PROXY_SCHEME_TOKENS = frozenset({"socks5", "socks5h", "socks4", "socks4a", "htt
 
 
 def _is_proxy_scheme_token(token: str) -> bool:
-    return normalize_proxy_type(token) in _PROXY_SCHEME_TOKENS
+    t = (token or "").strip().lower()
+    return t in _PROXY_SCHEME_TOKENS
 
 
 def _parse_colon_parts(parts: list[str], *, default_type: str = "socks5") -> Optional[dict]:
@@ -199,6 +200,12 @@ def parse_proxy_string(raw: str) -> Optional[dict]:
     if not raw:
         return None
 
+    # user:pass@host:port — до префикса type: (иначе luxsocks:… путается с socks5)
+    if "@" in raw:
+        parsed_at = _parse_proxy_at_formats(raw)
+        if parsed_at:
+            return parsed_at
+
     # http:host:port:user:pass (без //) или socks5:host:port:...
     first_colon = raw.find(":")
     if first_colon > 0 and not raw.lower().startswith(("http://", "https://", "socks5://", "socks4://")):
@@ -218,7 +225,7 @@ def parse_proxy_string(raw: str) -> Optional[dict]:
         scheme_part, _, rest = raw.partition("://")
         scheme = normalize_proxy_type(scheme_part)
         # http://host:port:user:pass — без @ (Loma и др.)
-        if _is_proxy_scheme_token(scheme) and "@" not in rest:
+        if _is_proxy_scheme_token(scheme_part) and "@" not in rest:
             colon_parsed = _parse_colon_parts(
                 [p.strip() for p in rest.split(":")],
                 default_type=scheme,
@@ -247,66 +254,65 @@ def parse_proxy_string(raw: str) -> Optional[dict]:
             logger.warning("URL proxy parse failed for '%s': %s", raw, e)
             return None
 
-    # ---------- 2) user:pass@host:port ----------
-    if "@" in raw:
-        # A) user:pass@host:port(:type?)  или user:pass@host:port|type
-        try:
-            left, right = raw.rsplit("@", 1)
-            # возможен суффикс :type после port
-            proto = None
-
-            # right может быть host:port или host:port:type
-            rparts = right.split(":")
-            if len(rparts) >= 2:
-                host = rparts[0].strip()
-                port_s = rparts[1].strip()
-                if len(rparts) >= 3:
-                    proto = rparts[2].strip()
-                if not _is_probable_host(host):
-                    raise ValueError("bad host")
-                port_i = int(port_s)
-
-                if ":" in left:
-                    user, pwd = left.split(":", 1)
-                else:
-                    user, pwd = left, ""
-
-                return {
-                    "host": host,
-                    "port": port_i,
-                    "username": user or None,
-                    "password": pwd or None,
-                    "type": normalize_proxy_type(proto or "socks5"),
-                }
-        except Exception:
-            pass
-
-        # B) host:port@user:pass
-        try:
-            hostport, creds = raw.split("@", 1)
-            if ":" not in hostport or ":" not in creds:
-                raise ValueError("not host:port@user:pass")
-            host, port_s = hostport.split(":", 1)
-            user, pwd = creds.split(":", 1)
-            if not _is_probable_host(host):
-                raise ValueError("bad host")
-            return {
-                "host": host.strip(),
-                "port": int(port_s.strip()),
-                "username": user.strip() or None,
-                "password": pwd.strip() or None,
-                "type": "socks5",
-            }
-        except Exception:
-            pass
-
-    # ---------- 3) через ':' ----------
-    parts = [p.strip() for p in raw.split(":") if p is not None]
-    parsed = _parse_colon_parts(parts, default_type="socks5")
-    if parsed:
-        return parsed
+    parsed_colon = _parse_proxy_colon_only(raw)
+    if parsed_colon:
+        return parsed_colon
 
     return None
+
+
+def _parse_proxy_at_formats(raw: str) -> Optional[dict]:
+    # A) user:pass@host:port(:type?)
+    try:
+        left, right = raw.rsplit("@", 1)
+        proto = None
+        rparts = right.split(":")
+        if len(rparts) >= 2:
+            host = rparts[0].strip()
+            port_s = rparts[1].strip()
+            if len(rparts) >= 3:
+                proto = rparts[2].strip()
+            if not _is_probable_host(host):
+                raise ValueError("bad host")
+            port_i = int(port_s)
+            if ":" in left:
+                user, pwd = left.split(":", 1)
+            else:
+                user, pwd = left, ""
+            return {
+                "host": host,
+                "port": port_i,
+                "username": user.strip() or None,
+                "password": pwd.strip() or None,
+                "type": normalize_proxy_type(proto or "socks5"),
+            }
+    except Exception:
+        pass
+
+    # B) host:port@user:pass
+    try:
+        hostport, creds = raw.split("@", 1)
+        if ":" not in hostport or ":" not in creds:
+            raise ValueError("not host:port@user:pass")
+        host, port_s = hostport.split(":", 1)
+        user, pwd = creds.split(":", 1)
+        if not _is_probable_host(host):
+            raise ValueError("bad host")
+        return {
+            "host": host.strip(),
+            "port": int(port_s.strip()),
+            "username": user.strip() or None,
+            "password": pwd.strip() or None,
+            "type": "socks5",
+        }
+    except Exception:
+        pass
+    return None
+
+
+def _parse_proxy_colon_only(raw: str) -> Optional[dict]:
+    parts = [p.strip() for p in raw.split(":") if p is not None]
+    return _parse_colon_parts(parts, default_type="socks5")
 
 
 def parse_proxy_block(text: str) -> Optional[dict]:

@@ -91,6 +91,34 @@ def _is_probable_host(host: str) -> bool:
     return False
 
 
+def heal_misparsed_proxy_row(row: Proxy) -> bool:
+    """
+    Старый баг парсера: host = luxsocks@213.199.56.46 без login/pass.
+    Восстанавливаем IP в host и логин из части до @.
+    """
+    h = (row.host or "").strip()
+    if "@" not in h:
+        return False
+    user_part, _, ip_part = h.rpartition("@")
+    ip_part = ip_part.strip()
+    if not _is_probable_host(ip_part):
+        return False
+    changed = False
+    if row.host != ip_part:
+        row.host = ip_part
+        changed = True
+    if not (row.username or "").strip() and user_part.strip():
+        if ":" in user_part:
+            u, p = user_part.split(":", 1)
+            row.username = u.strip() or None
+            if not (row.password or "").strip():
+                row.password = p.strip() or None
+        else:
+            row.username = user_part.strip()
+        changed = True
+    return changed
+
+
 def _strip_comments(s: str) -> str:
     """убираем комментарии типа '... # comment'"""
     if not s:
@@ -469,6 +497,12 @@ async def render_proxy_menu(message_or_cb, telegram_id: int):
                 select(Proxy).where(Proxy.user_id == user.id)
             )
             proxies = list(result.scalars())
+            dirty = False
+            for p in proxies:
+                if heal_misparsed_proxy_row(p):
+                    dirty = True
+            if dirty:
+                await session.commit()
 
     ok_n, unk_n, bad_n = _proxy_counts(proxies)
     g, y, r = html_emoji("green"), html_emoji("yellow"), html_emoji("red")

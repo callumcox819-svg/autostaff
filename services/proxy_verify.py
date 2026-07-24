@@ -33,6 +33,13 @@ def proxy_to_dict(proxy: Proxy | dict[str, Any]) -> dict[str, Any]:
         d = dict(proxy)
         d["type"] = normalize_proxy_type(d.get("type"))
         return d
+    if isinstance(proxy, Proxy):
+        try:
+            from handlers.proxies import heal_misparsed_proxy_row
+
+            heal_misparsed_proxy_row(proxy)
+        except Exception:
+            pass
     return {
         "host": proxy.host,
         "port": int(proxy.port),
@@ -228,6 +235,14 @@ async def refresh_proxies_status(
     )
     if not proxies:
         return 0, 0, 0
+
+    try:
+        from handlers.proxies import heal_misparsed_proxy_row
+
+        if any(heal_misparsed_proxy_row(p) for p in proxies):
+            await session.commit()
+    except Exception:
+        logger.exception("heal_misparsed_proxy_row failed")
 
     sem = asyncio.Semaphore(max(1, concurrency))
     results: list[tuple[Proxy, bool, str]] = []

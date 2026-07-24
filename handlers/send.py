@@ -205,7 +205,7 @@ async def _build_message_for_target(
 
     body = finalize_mailing_body(body, item_title)
 
-    subject, body = finalize_inbox_mail(subject, body)
+    subject, body = finalize_inbox_mail(subject, body, offer_title=item_title)
     return subject, body
 
 

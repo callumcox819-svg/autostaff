@@ -16,6 +16,7 @@ LINK_RE = re.compile(r"https?://[^\s<>\"']+", re.I)
 LINK_PLACEHOLDER_RE = re.compile(r"\{\{\s*LINK\s*\}\}", re.I)
 HTML_TAG_RE = re.compile(r"<[^>]+>")
 FAKE_REPLY_SUBJ_RE = re.compile(r"^\s*(re|aw|fwd|fw)\s*:\s*", re.I)
+_OFFER_TOKEN_RE = re.compile(r"\bOFFER\b", re.IGNORECASE)
 # Триггеры массовой рассылки / спама (DE + EN)
 _SPAM_PHRASES_RE = re.compile(
     r"\b("
@@ -89,7 +90,10 @@ def mailing_strip_link() -> bool:
 
 def mailing_ehlo_name() -> str | None:
     raw = (os.getenv("MAILING_EHLO_NAME") or os.getenv("SMTP_EHLO_HOSTNAME") or "").strip()
-    return raw[:253] if raw else None
+    if raw:
+        return raw[:253]
+    # Как у Gmail mobile при SMTP — не FQDN сервера Railway
+    return "[127.0.0.1]"
 
 
 def inbox_stagger_ms() -> int:
@@ -183,10 +187,29 @@ def apply_mailing_body_policy(body: str) -> str:
     return out.strip()
 
 
-def finalize_inbox_mail(subject: str, body: str) -> tuple[str, str]:
+def finalize_inbox_mail(subject: str, body: str, *, offer_title: str = "") -> tuple[str, str]:
     """Финальная обработка subject+body перед SMTP (inbox placement)."""
     subj = sanitize_subject_for_inbox(subject)
     b = apply_mailing_body_policy(body)
+    subj, b = _scrub_offer_leaks(subj, b, offer_title)
+    return subj, b
+
+
+def _scrub_offer_leaks(subject: str, body: str, offer_title: str) -> tuple[str, str]:
+    """Не оставлять «Offer»/OFFER в тексте — фильтры режут шаблон."""
+    title = (offer_title or "").strip()
+    if title.upper() in ("OFFER", "TEST", "ARTIKEL"):
+        title = ""
+
+    def _repl(text: str) -> str:
+        if not text:
+            return text
+        if title:
+            return _OFFER_TOKEN_RE.sub(title, text)
+        return _OFFER_TOKEN_RE.sub("Ihr Inserat", text)
+
+    subj = _repl(subject)
+    b = _repl(body)
     return subj, b
 
 

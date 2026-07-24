@@ -292,7 +292,7 @@ async def _build_test_message(
     from services.offer_text import finalize_mailing_body
 
     body = finalize_mailing_body(body, item_title)
-    subject, body = finalize_inbox_mail(subject, body)
+    subject, body = finalize_inbox_mail(subject, body, offer_title=item_title)
     return subject, body, item_title
 
 

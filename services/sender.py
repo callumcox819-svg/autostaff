@@ -112,6 +112,17 @@ def _plain_body_content_transfer_encoding(body: str) -> str:
         return "quoted-printable"
 
 
+def _gmail_like_msgid(from_addr: str) -> str:
+    """Формат Message-ID как у писем через smtp.gmail.com (см. экспорт .eml)."""
+    import random
+    import time
+
+    domain = (from_addr.split("@")[-1] if "@" in from_addr else "gmail.com").strip() or "gmail.com"
+    ts = int(time.time() * 1000)
+    tail = random.randrange(10**18, 10**19 - 1)
+    return f"<{ts}.1.{tail}@{domain}>"
+
+
 def _set_message_headers(
     msg: EmailMessage,
     *,
@@ -120,7 +131,15 @@ def _set_message_headers(
     subj: str,
     disp_name: Optional[str],
     minimal: bool = False,
+    for_mailing: bool = False,
 ) -> None:
+    domain = from_addr.split("@")[-1] if "@" in from_addr else None
+    if for_mailing:
+        msg_date = formatdate(localtime=False)
+        msg_id = _gmail_like_msgid(from_addr)
+    else:
+        msg_date = formatdate(localtime=True)
+        msg_id = make_msgid(domain=domain)
     if minimal:
         if disp_name:
             msg["From"] = formataddr((disp_name, from_addr))
@@ -128,10 +147,8 @@ def _set_message_headers(
             msg["From"] = from_addr
         msg["To"] = to_addr
         msg["Subject"] = subj
-        msg["Date"] = formatdate(localtime=True)
-        msg["Message-ID"] = make_msgid(
-            domain=(from_addr.split("@")[-1] if "@" in from_addr else None)
-        )
+        msg["Date"] = msg_date
+        msg["Message-ID"] = msg_id
         msg["Reply-To"] = from_addr
         return
     if disp_name:
@@ -140,10 +157,8 @@ def _set_message_headers(
         msg["From"] = from_addr
     msg["To"] = to_addr
     msg["Subject"] = subj
-    msg["Date"] = formatdate(localtime=True)
-    msg["Message-ID"] = make_msgid(
-        domain=(from_addr.split("@")[-1] if "@" in from_addr else None)
-    )
+    msg["Date"] = msg_date
+    msg["Message-ID"] = msg_id
     msg["Reply-To"] = from_addr
 
 
@@ -222,6 +237,7 @@ def _build_message(
             subj=subj,
             disp_name=disp_name,
             minimal=minimal_headers,
+            for_mailing=for_mailing,
         )
         return msg
 
@@ -241,6 +257,7 @@ def _build_message(
         subj=subj,
         disp_name=disp_name,
         minimal=minimal_headers,
+        for_mailing=for_mailing,
     )
     return msg
 

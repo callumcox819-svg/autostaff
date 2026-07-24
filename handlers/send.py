@@ -164,6 +164,16 @@ async def _build_message_for_target(
 
     offer = await offer_for_mailing_target(session, tgt)
     item_title = offer_effective_title(offer)
+
+    from services.mailing_deliverability import (
+        build_inbox_mailing_copy,
+        finalize_inbox_mail,
+        mailing_inbox_success_profile,
+    )
+
+    if mailing_inbox_success_profile():
+        return build_inbox_mailing_copy(item_title or "")
+
     price = (getattr(offer, "price", "") or "").strip() if offer else ""
     link = (getattr(offer, "link", "") or "").strip() if offer else ""
     image_url = (getattr(offer, "photo", "") or "").strip() if offer else ""
@@ -172,7 +182,6 @@ async def _build_message_for_target(
     buyer_name = ((await get_user_setting(session, user, AQUA_PROFILE_NAME_KEY)) or "").strip()
     address = ((await get_user_setting(session, user, AQUA_PROFILE_ADDRESS_KEY)) or "").strip()
 
-    from services.mailing_deliverability import finalize_inbox_mail
     from services.subject_offer import global_mailing_subject
 
     subject = global_mailing_subject(item_title or "")

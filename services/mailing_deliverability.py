@@ -58,6 +58,45 @@ _INBOX_CLOSINGS: tuple[str, ...] = (
     "Vielen Dank im Voraus",
 )
 
+# Короткие тексты как в успешном inbox .eml (без OFFER/ссылок в теле)
+INBOX_SUCCESS_BODIES: tuple[str, ...] = (
+    "Guten Tag, ist Ihr Inserat noch zu haben?",
+    "Hallo, ist Ihr Inserat noch verfügbar?",
+    "Grüezi, ist Ihr Inserat noch aktuell?",
+    "Guten Tag, ist der Artikel noch zu haben?",
+    "Hallo, noch zu verkaufen?",
+)
+
+
+def mailing_inbox_success_profile() -> bool:
+    """Тема из CH-пресетов + короткое «Inserat»-тело (проверенный inbox-профиль)."""
+    return _env_on("MAILING_INBOX_SUCCESS_PROFILE", default="1")
+
+
+def pick_inbox_success_body() -> str:
+    return random.choice(INBOX_SUCCESS_BODIES)
+
+
+def mailing_subject_display_title(offer_title: str) -> str:
+    """В теме — короткая подпись; в спам уходит голое OFFER или простыня."""
+    t = (offer_title or "").strip()
+    if len(t) < 3 or t.upper() in ("OFFER", "TEST", "ARTIKEL", "—", "-"):
+        return "Anzeige"
+    if len(t) > 56:
+        return t[:53].rstrip() + "…"
+    return t
+
+
+def build_inbox_mailing_copy(offer_title: str) -> tuple[str, str]:
+    """
+    Subject + body как в успешном Kurze Anfrage zu Anzeige.eml:
+    plain, короткий DE, без Re: и без шаблонного OFFER в теле.
+    """
+    label = mailing_subject_display_title(offer_title)
+    subj = pick_rotating_subject(label, presets_only=True)
+    body = pick_inbox_success_body()
+    return finalize_inbox_mail(subj, body, offer_title=label)
+
 
 def _env_on(name: str, *, default: str = "1") -> bool:
     return (os.getenv(name, default) or "").strip().lower() in (
@@ -213,16 +252,23 @@ def _scrub_offer_leaks(subject: str, body: str, offer_title: str) -> tuple[str, 
     return subj, b
 
 
-def pick_rotating_subject(offer_title: str, *, user_template: str | None = None) -> str:
+def pick_rotating_subject(
+    offer_title: str,
+    *,
+    user_template: str | None = None,
+    presets_only: bool = False,
+) -> str:
     from services.subject_offer import global_subject_template, render_subject_with_offer
 
     pool: list[str] = list(CH_INBOX_SUBJECT_PRESETS)
     ut = (user_template or "").strip()
     if ut:
         pool = [ut]
-    else:
+    elif not presets_only:
         gt = (global_subject_template() or "").strip()
-        if gt:
+        if gt and not gt.lower().startswith("re:"):
+            pool.append(gt)
+        elif gt and not mailing_inbox_success_profile():
             pool.append(gt)
     tpl = random.choice(pool)
     return render_subject_with_offer(tpl, offer_title)
@@ -230,8 +276,9 @@ def pick_rotating_subject(offer_title: str, *, user_template: str | None = None)
 
 def log_deliverability_profile(logger) -> None:
     logger.info(
-        "Inbox placement: plain=%s minimal_hdr=%s body_var=%s no_links=%s "
+        "Inbox placement: success_profile=%s plain=%s minimal_hdr=%s body_var=%s no_links=%s "
         "stagger_ms=%s wave_gap=%.2fs burst_target=%.0fs ehlo=%s",
+        mailing_inbox_success_profile(),
         mailing_plain_only(),
         mailing_minimal_headers(),
         mailing_body_variation(),

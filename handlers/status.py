@@ -1,4 +1,5 @@
 from __future__ import annotations
+from utils.ui_emoji import html_emoji, menu_path, msg_fail, msg_ok, msg_wait, msg_warn
 
 import logging
 import os
@@ -148,13 +149,13 @@ def render_status_text(
     if running:
         if current_to:
             progress_line = (
-                f"\n⏳ Сейчас: <code>{current_to}</code>\n"
-                f"Прогресс: <b>{processed}/{total_run or '?'}</b> (✅ {sent} · ❌ {failed})"
+                f"\n{html_emoji('wait')} Сейчас: <code>{current_to}</code>\n"
+                f"Прогресс: <b>{processed}/{total_run or '?'}</b> ({html_emoji('ok')} {sent} · {html_emoji('fail')} {failed})"
             )
         elif total_run > 0:
             progress_line = (
                 f"\nПрогресс: <b>{processed}/{total_run}</b> "
-                f"(✅ {sent} · ❌ {failed} · в очереди {pending_now})"
+                f"({html_emoji('ok')} {sent} · {html_emoji('fail')} {failed} · в очереди {pending_now})"
             )
         elif pending_now > 0:
             progress_line = f"\nПрогресс: <b>{sent}/{pending_now}</b>"
@@ -165,8 +166,8 @@ def render_status_text(
         ish = int(inbox_seller_hits)
         inbox_line = (
             f"\n\n<b>Входящие в БД</b>\n"
-            f"↩️ Отбои (mailer-daemon): <b>{ib}</b>\n"
-            f"🟢 Ответ продавца (email в базе): <b>{ish}</b>\n"
+            f"{html_emoji('restore')} Отбои (mailer-daemon): <b>{ib}</b>\n"
+            f"{html_emoji('green')} Ответ продавца (email в базе): <b>{ish}</b>\n"
             "<i>Много отбоев при нуле «продавец» — плохая база или прокси, не «тишина».</i>"
         )
 
@@ -185,9 +186,9 @@ def render_status_text(
         f"{progress_line}"
         f"{last_err_line}\n\n"
         "<b>В базе данных</b>\n"
-        f"📄 Объявлений: <b>{offers_total}</b>\n"
-        f"📧 Email в очереди: <b>{pending_now}</b>\n"
-        f"📮 Аккаунты: <b>{acc_a}/{acc_t}</b> активных"
+        f"{html_emoji('presets')} Объявлений: <b>{offers_total}</b>\n"
+        f"{html_emoji('email')} Email в очереди: <b>{pending_now}</b>\n"
+        f"{html_emoji('email')} Аккаунты: <b>{acc_a}/{acc_t}</b> активных"
         f"{inbox_line}"
         f"{verify_hint}"
     )
@@ -300,7 +301,7 @@ async def cmd_imap_diag(message: Message) -> None:
     ]
     if snap.get("backoff_sec_by_account"):
         lines.append(
-            f"⚠️ Пауза после ошибок IMAP (acc_id→сек): <code>{snap['backoff_sec_by_account']}</code>"
+            f"{html_emoji('warn')} Пауза после ошибок IMAP (acc_id→сек): <code>{snap['backoff_sec_by_account']}</code>"
         )
     if not accs:
         lines.append("\n❌ Нет почтовых аккаунтов — IMAP не к чему подключаться.")
@@ -310,7 +311,7 @@ async def cmd_imap_diag(message: Message) -> None:
         ]
         if blocked_accs:
             lines.append(
-                f"\n<b>🟡 SMTP заблокировано ({len(blocked_accs)})</b> — только IMAP, рассылка снята:"
+                f"\n<b>{html_emoji('yellow')} SMTP заблокировано ({len(blocked_accs)})</b> — только IMAP, рассылка снята:"
             )
             for a in blocked_accs[:12]:
                 err = ((a.last_error or "").strip()[:80] or "Message blocked / лимит")

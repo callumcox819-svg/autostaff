@@ -12,8 +12,11 @@ import aiohttp
 from config import config
 from region import format_item_price
 from services.aqua_keys import normalize_aqua_api_key
+from utils.ui_emoji import menu_path
 
 logger = logging.getLogger(__name__)
+
+_SETTINGS_KEY = menu_path(("settings", ""), ("key", ""))
 
 
 class AquaError(Exception):
@@ -95,7 +98,7 @@ async def _post_generate(body: dict[str, Any], *, timeout_sec: float = 30.0) -> 
 
     apikey = normalize_aqua_api_key(str(body.get("apikey") or ""))
     if not apikey:
-        raise AquaError("Не задан личный API key (⚙️ → 🔑)")
+        raise AquaError(f"Не задан личный API key ({_SETTINGS_KEY})")
 
     payload = dict(body)
     payload["apikey"] = apikey
@@ -120,7 +123,7 @@ async def _post_generate(body: dict[str, Any], *, timeout_sec: float = 30.0) -> 
                     if resp.status in (401, 403):
                         raise AquaError(
                             f"HTTP {resp.status}: неверный apikey или доступ запрещён.\n\n"
-                            "Проверь личный ключ в ⚙️→🔑 (из панели GAG)."
+                            f"Проверь личный ключ в {_SETTINGS_KEY} (из панели GAG)."
                         ) from err
                     raise err
                 if not isinstance(data, dict):
@@ -142,7 +145,7 @@ async def verify_gag_auth(
     _ = team_api_key  # legacy, не используется
     key = normalize_aqua_api_key(user_api_key)
     if not key:
-        raise AquaError("Личный API key не задан (⚙️ → 🔑)")
+        raise AquaError(f"Личный API key не задан ({_SETTINGS_KEY})")
     if not generate_api_base():
         raise AquaError(
             "GAG_API_BASE не задан на сервере.\n"

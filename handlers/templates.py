@@ -19,7 +19,7 @@ from sqlalchemy import select
 from database import Session, db_session
 from models import EmailAccount
 from services.users import get_or_create_user
-from utils.ui_emoji import back_inline, html_emoji, inline_button, icon_button
+from utils.ui_emoji import html_emoji, inline_button, menu_path, msg_fail, msg_ok, msg_wait, msg_warn
 
 router = Router()
 

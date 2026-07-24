@@ -16,7 +16,7 @@ from services.users import get_or_create_user
 from services.user_settings import get_user_setting, set_user_setting
 from keyboards.main_menu import main_menu_kb
 from utils.callback_safe import callback_answer_safe
-from utils.ui_emoji import inline_button, back_inline, html_emoji
+from utils.ui_emoji import html_emoji, inline_button, menu_path, msg_fail, msg_ok, msg_wait, msg_warn
 
 
 def _back_kb(callback_data: str = "settings_open") -> InlineKeyboardMarkup:
@@ -234,11 +234,11 @@ async def _spoof_name_menu_payload(tg_user_id: int) -> tuple[str, InlineKeyboard
     label = _service_label(service)
     cur_line = cur if cur else "— не задано —"
     text = (
-        f"👤 <b>HTML: имя и тема</b>\n"
+        f"{html_emoji('user')} <b>HTML: имя и тема</b>\n"
         f"Сервис: <b>{label}</b>\n"
-        f"Имя отправителя (при 🟢 Спуфинг): <b>{cur_line}</b>\n\n"
+        f"Имя отправителя (при {html_emoji('green')} Спуфинг): <b>{cur_line}</b>\n\n"
         f"Используется только при отправке <b>HTML</b>.\n"
-        f"Рассылка — отдельно: имя из «📧 E-mail», тема <code>OFFER</code>.\n\n"
+        f"Рассылка — отдельно: имя из «{html_emoji('email')} E-mail», тема <code>OFFER</code>.\n\n"
         f"📌 <b>Тема для HTML:</b> <code>{html_subj}</code>"
     )
     kb = InlineKeyboardMarkup(
@@ -254,7 +254,10 @@ async def _spoof_name_menu_payload(tg_user_id: int) -> tuple[str, InlineKeyboard
 async def _show_spoof_name_menu_message(message: Message, *, prompt_chat_id: int | None, prompt_msg_id: int | None) -> None:
     payload = await _spoof_name_menu_payload(message.from_user.id)
     if not payload:
-        await message.answer("Сначала заполните профиль: ⚙️ → 🧾 Профиль.")
+        await message.answer(
+            f"Сначала заполните профиль: {menu_path(('settings', ''), ('profile', 'Профиль'))}.",
+            parse_mode="HTML",
+        )
         return
     text, kb = payload
     if prompt_chat_id and prompt_msg_id:
@@ -323,7 +326,7 @@ async def spoof_name_save(message: Message, state: FSMContext) -> None:
     prompt_msg_id = data.get("spoof_prompt_msg_id")
     await state.clear()
 
-    await message.answer("✅ Имя добавлено")
+    await message.answer(msg_ok("Имя добавлено"), parse_mode="HTML")
     await _show_spoof_name_menu_message(
         message,
         prompt_chat_id=int(prompt_chat_id) if prompt_chat_id else None,
@@ -368,7 +371,7 @@ async def sender_name_menu(callback: CallbackQuery) -> None:
         ]
     )
     await callback.message.edit_text(
-        "📝 <b>Имя отправителя</b>\n\n"
+        f"{html_emoji('write')} <b>Имя отправителя</b>\n\n"
         f"Текущее имя: <code>{current}</code>\n\n"
         "Нажми «Установить», чтобы задать другое.",
         reply_markup=kb,
@@ -400,7 +403,7 @@ async def html_nick_menu(callback: CallbackQuery, state: FSMContext) -> None:
     )
 
     await callback.message.edit_text(
-        "📝 <b>Смена ника</b>\n\n"
+        f"{html_emoji('write')} <b>Смена ника</b>\n\n"
         f"Текущий ник: <code>{cur or '—'}</code>\n\n"
         "Нажми «Установить», чтобы задать другой.",
         reply_markup=kb,
@@ -416,7 +419,7 @@ async def html_nick_set_start(callback: CallbackQuery, state: FSMContext) -> Non
     await state.set_state(_SettingsInput.html_nick)
 
     await callback.message.edit_text(
-        "📝 <b>Смена ника</b>\n\n"
+        f"{html_emoji('write')} <b>Смена ника</b>\n\n"
         "Отправь новый ник одним сообщением (или «-», чтобы очистить).",
         reply_markup=InlineKeyboardMarkup(
             inline_keyboard=_back_kb("settings_open").inline_keyboard,
@@ -430,14 +433,14 @@ async def html_nick_set_start(callback: CallbackQuery, state: FSMContext) -> Non
 async def html_nick_set(message: Message, state: FSMContext) -> None:
     value = (message.text or "").strip()
     if not value:
-        await message.answer("❌ Пустое значение. Отправь ещё раз.")
+        await message.answer(msg_fail("Пустое значение. Отправь ещё раз."), parse_mode="HTML")
         return
     if value == "-":
         value = ""
     async with Session() as session:
         await save_html_nick(session, message.from_user.id, value)
     await state.clear()
-    await message.answer("✅ Сохранено.")
+    await message.answer(msg_ok("Сохранено."), parse_mode="HTML")
 
 
 @router.callback_query(F.data == "settings_back")
@@ -523,7 +526,7 @@ async def ref_open(callback: CallbackQuery, state: FSMContext):
     if screen == "commands":
         await state.clear()
         msg = (
-            "⌨️ <b>Команды</b>\n\n"
+            f"{html_emoji('write')} <b>Команды</b>\n\n"
             "Страна: <b>Швейцария (CH)</b>\n"
             "Команда: <b>GAG</b>\n"
             "Режим: <b>burst</b> (2–5 с, ротация ящиков и текстов)\n\n"
@@ -546,7 +549,7 @@ async def ref_open(callback: CallbackQuery, state: FSMContext):
         title = "📌 <b>Темы</b>" if screen == "themes" else "🏷 <b>Тема для HTML</b>"
         text = (
             f"{title}\n\n"
-            "В этом проекте темы/шаблоны управляются через «🧾 Пресеты».\n"
+            f"В этом проекте темы/шаблоны управляются через «{html_emoji('profile')} Пресеты».\n"
             "Если нужно — добавлю отдельный менеджер тем 1в1 (лист/добавить/удалить/выбрать)."
         )
         await callback.message.edit_text(text, reply_markup=_simple_back_kb(), parse_mode="HTML")
@@ -563,12 +566,12 @@ async def ref_open(callback: CallbackQuery, state: FSMContext):
     if screen in {"cases", "scenario_name", "rotation"}:
         await state.clear()
         labels = {
-            "cases": "🟢 <b>Сценарии</b>",
-            "scenario_name": "🧾 <b>Имя для сценариев</b>",
-            "rotation": "🔄 <b>Ротация</b>",
+            "cases": f"{html_emoji('green')} <b>Сценарии</b>",
+            "scenario_name": f"{html_emoji('profile')} <b>Имя для сценариев</b>",
+            "rotation": f"{html_emoji('refresh')} <b>Ротация</b>",
         }
         text = (
-            f"{labels.get(screen, 'ℹ️')}\n\n"
+            f"{labels.get(screen, html_emoji('info'))}\n\n"
             "Этот раздел в твоём проекте пока не был реализован как отдельный экран.\n"
             "Если хочешь 1в1 — напиши, какие именно действия там должны быть (по видео), и я добавлю."
         )
@@ -588,7 +591,7 @@ async def ref_open(callback: CallbackQuery, state: FSMContext):
 async def ref_open_commands(callback: CallbackQuery, state: FSMContext):
     await state.clear()
     text = (
-        "⌨️ <b>Команды</b>\n\n"
+        f"{html_emoji('write')} <b>Команды</b>\n\n"
         "/send — запустить рассылку\n"
         "/stop — остановить рассылку\n"
         "/reset — очистить очередь (лиды в БД остаются)\n"
@@ -675,7 +678,7 @@ async def themes_preset_set(callback: CallbackQuery, state: FSMContext) -> None:
         await set_user_setting(session, user, SUBJECT_TEMPLATE_KEY, tpl)
         await session.commit()
 
-    await callback.answer(f"✅ {tpl}")
+    await callback.answer(f"{html_emoji('ok')} {tpl}")
     await themes_menu(callback, state)
 
 @router.callback_query(F.data == "themes_edit")
@@ -777,7 +780,7 @@ async def html_theme_edit(callback: CallbackQuery, state: FSMContext):
     await state.clear()
     await state.set_state(_SettingsInput.html_theme)
     await _safe_send(callback.message.edit_text(
-        "🧾 <b>Тема для HTML</b>\n\nОтправь тему одной строкой.\n"
+        f"{html_emoji('profile')} <b>Тема для HTML</b>\n\nОтправь тему одной строкой.\n"
         "Чтобы удалить — отправь <code>-</code>.",
         reply_markup=_back_kb("spoof_name_menu"),
         parse_mode="HTML",
@@ -794,7 +797,7 @@ async def html_theme_set(message: Message, state: FSMContext):
         await set_user_setting(session, user, HTML_THEME_KEY, val)
     await state.clear()
     await message.answer(
-        "✅ Тема для HTML сохранена.\nПример: <code>Your item sold</code>",
+        f"{msg_ok('Тема для HTML сохранена.')}\nПример: <code>Your item sold</code>",
         reply_markup=await _settings_menu_kb_for_user(message.from_user.id),
     )
 
@@ -836,7 +839,7 @@ async def priority_menu(callback: CallbackQuery, state: FSMContext):
         _back_kb("settings_open").inline_keyboard[0],
     ])
     await _safe_send(callback.message.edit_text(
-        "📊 <b>Приоритет отправки</b>\n\n"
+        f"{html_emoji('status')} <b>Приоритет отправки</b>\n\n"
         "Домен №1 валидируется первым, потом №2 и т.д.\n\n"
         f"<b>Текущий приоритет:</b>\n{lst}",
         reply_markup=kb,
@@ -848,7 +851,7 @@ async def priority_edit(callback: CallbackQuery, state: FSMContext):
     await state.clear()
     await state.set_state(_SettingsInput.priority)
     await _safe_send(callback.message.edit_text(
-        "📊 <b>Приоритет отправки</b>\n\n"
+        f"{html_emoji('status')} <b>Приоритет отправки</b>\n\n"
         "Отправь домены списком (каждый с новой строки).\n"
         "Пример:\n<code>gmx.de\ngmail.com\n...</code>\n\n"
         "Чтобы очистить — отправь <code>-</code>",
@@ -868,7 +871,7 @@ async def priority_set(message: Message, state: FSMContext):
         user = await get_or_create_user(session, message.from_user.id)
         await set_user_setting(session, user, DOMAIN_PRIORITY_KEY, json.dumps(items))
     await state.clear()
-    await message.answer("✅ Сохранено.", reply_markup=await _settings_menu_kb_for_user(message.from_user.id))
+    await message.answer(msg_ok("Сохранено."), reply_markup=await _settings_menu_kb_for_user(message.from_user.id), parse_mode="HTML")
 
 @router.callback_query(F.data == "priority_reset")
 async def priority_reset(callback: CallbackQuery, state: FSMContext):

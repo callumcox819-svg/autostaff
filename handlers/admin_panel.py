@@ -18,7 +18,7 @@ from models import EmailAccount, SentEmail, OfferEmail, Offer, User
 from services.bot_roles import user_is_admin as is_admin, config_admin_ids
 from keyboards.main_menu import is_admin_trigger, main_menu_kb
 from middlewares.bot_access import invalidate_access_cache
-from utils.ui_emoji import back_inline, html_emoji, inline_button
+from utils.ui_emoji import html_emoji, inline_button, menu_path, msg_fail, msg_ok, msg_wait, msg_warn
 
 
 router = Router(name="admin_panel")
@@ -57,7 +57,7 @@ def admin_kb() -> InlineKeyboardMarkup:
 @router.message(F.func(lambda m: is_admin_trigger(getattr(m, "text", None))))
 async def open_admin(message: Message) -> None:
     if not await is_admin(message.from_user.id):
-        await message.answer("⛔ У тебя нет доступа к админ-панели.")
+        await message.answer(msg_fail("У тебя нет доступа к админ-панели."), parse_mode="HTML")
         return
     await message.answer(f"{html_emoji('admin')} <b>Админ-панель</b>", reply_markup=admin_kb(), parse_mode="HTML")
 
@@ -81,8 +81,8 @@ async def admin_allow_begin(callback: CallbackQuery, state: FSMContext) -> None:
         return
     await state.set_state(AdminState.waiting_allow)
     await callback.message.edit_text(
-        "✅ <b>Доступ к боту</b> (рассылка, настройки)\n\n"
-        "<i>Кнопки «👑 Админ-панель» не будет — для этого раздел «👑 Админ-права».</i>\n\n"
+        f"{html_emoji('ok')} <b>Доступ к боту</b> (рассылка, настройки)\n\n"
+        f"<i>Кнопки «{html_emoji('admin')} Админ-панель» не будет — для этого раздел «{html_emoji('admin')} Админ-права».</i>\n\n"
         "Отправь Telegram ID пользователя.",
         parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[[back_inline("admin_back")]]),
@@ -97,7 +97,7 @@ async def admin_allow_finish(message: Message, state: FSMContext) -> None:
     try:
         tid = int((message.text or "").strip())
     except Exception:
-        await message.answer("❌ Это не число. Отправь Telegram ID.")
+        await message.answer(msg_fail("Это не число. Отправь Telegram ID."), parse_mode="HTML")
         return
     async with Session() as session:
         u = await get_or_create_user(session, tid)
@@ -107,18 +107,18 @@ async def admin_allow_finish(message: Message, state: FSMContext) -> None:
     invalidate_access_cache(tid)
     await state.clear()
     await message.answer(
-        f"✅ Доступ к боту выдан: <code>{tid}</code>\n"
-        "<i>Админ-панель не выдана — при необходимости: 👑 Админ-права → ➕ Выдать.</i>",
+        f"{html_emoji('ok')} Доступ к боту выдан: <code>{tid}</code>\n"
+        f"<i>Админ-панель не выдана — при необходимости: {html_emoji('admin')} Админ-права → {html_emoji('add')} Выдать.</i>",
         parse_mode="HTML",
     )
     if not await _notify_user_menu(
         message.bot,
         tid,
         is_admin_user=False,
-        text="✅ Вам выдан доступ к боту. Нажмите /start, если меню не обновилось.",
+        text=f"{msg_ok('Вам выдан доступ к боту. Нажмите /start, если меню не обновилось.')}",
     ):
         await message.answer(
-            f"⚠️ Не удалось написать пользователю <code>{tid}</code> — пусть нажмёт /start.",
+            f"{html_emoji('warn')} Не удалось написать пользователю <code>{tid}</code> — пусть нажмёт /start.",
             parse_mode="HTML",
         )
     await message.answer(f"{html_emoji('admin')} <b>Админ-панель</b>", reply_markup=admin_kb(), parse_mode="HTML")
@@ -131,7 +131,8 @@ async def admin_deny_begin(callback: CallbackQuery, state: FSMContext) -> None:
         return
     await state.set_state(AdminState.waiting_deny)
     await callback.message.edit_text(
-        "⛔ <b>Удалить доступ</b>\n\nОтправь Telegram ID пользователя.",
+        f"{html_emoji('deny')} <b>Удалить доступ</b>\n\nОтправь Telegram ID пользователя.",
+        parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[[back_inline("admin_back")]]),
     )
     await callback.answer()
@@ -144,7 +145,7 @@ async def admin_deny_finish(message: Message, state: FSMContext) -> None:
     try:
         tid = int((message.text or "").strip())
     except Exception:
-        await message.answer("❌ Это не число. Отправь Telegram ID.")
+        await message.answer(msg_fail("Это не число. Отправь Telegram ID."), parse_mode="HTML")
         return
     async with Session() as session:
         u = await get_or_create_user(session, tid)
@@ -154,7 +155,7 @@ async def admin_deny_finish(message: Message, state: FSMContext) -> None:
         await session.commit()
     invalidate_access_cache(tid)
     await state.clear()
-    await message.answer(f"⛔ Доступ удалён: <code>{tid}</code>")
+    await message.answer(f"{html_emoji('deny')} Доступ удалён: <code>{tid}</code>", parse_mode="HTML")
     await message.answer(f"{html_emoji('admin')} <b>Админ-панель</b>", reply_markup=admin_kb(), parse_mode="HTML")
 
 @router.callback_query(F.data == "admin_user_stats")
@@ -167,7 +168,7 @@ async def admin_stats_menu(callback: CallbackQuery, state: FSMContext) -> None:
         # active = all known users in DB
         rows = (await session.execute(select(User.telegram_id).order_by(User.created_at.desc()))).scalars().all()
     ids = [str(x) for x in rows[:30]]
-    text = "📊 <b>Статистика пользователей</b>\n\n"
+    text = f"{html_emoji('status')} <b>Статистика пользователей</b>\n\n"
     text += f"Всего пользователей в БД: <b>{len(rows)}</b>\n\n"
     if ids:
         text += "Последние активные Telegram ID:\n" + "\n".join(f"• <code>{i}</code>" for i in ids)
@@ -192,7 +193,7 @@ async def admin_stats_begin(callback: CallbackQuery, state: FSMContext) -> None:
         return
     await state.set_state(AdminState.waiting_stats)
     await callback.message.edit_text(
-        "📊 <b>Статистика пользователя</b>\n\nОтправь Telegram ID пользователя.",
+        f"{html_emoji('status')} <b>Статистика пользователя</b>\n\nОтправь Telegram ID пользователя.",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[[back_inline("admin_user_stats")]]),
         parse_mode="HTML",
     )
@@ -206,7 +207,7 @@ async def admin_stats_finish(message: Message, state: FSMContext) -> None:
     try:
         tid = int((message.text or "").strip())
     except Exception:
-        await message.answer("❌ Это не число. Отправь Telegram ID.")
+        await message.answer(msg_fail("Это не число. Отправь Telegram ID."), parse_mode="HTML")
         return
 
     async with Session() as session:
@@ -221,14 +222,19 @@ async def admin_stats_finish(message: Message, state: FSMContext) -> None:
         )).scalar() or 0
 
     await state.clear()
+    access_ok = getattr(u, "access_granted", False) and not getattr(u, "is_banned", False)
+    access_line = f"{html_emoji('ok')} есть" if access_ok else f"{html_emoji('deny')} нет"
+    is_adm = getattr(u, "is_admin", False) or tid in config_admin_ids()
+    admin_line = f"{html_emoji('admin')} да" if is_adm else "нет"
     await message.answer(
-        "📊 <b>Статистика</b>\n"
+        f"{html_emoji('status')} <b>Статистика</b>\n"
         f"Telegram ID: <code>{tid}</code>\n"
-        f"Доступ: <b>{'✅ есть' if getattr(u, 'access_granted', False) and not getattr(u, 'is_banned', False) else '⛔ нет'}</b>\n"
-        f"Админ: <b>{'👑 да' if getattr(u, 'is_admin', False) or tid in config_admin_ids() else 'нет'}</b>\n\n"
-        f"📮 Аккаунтов: <b>{total_accounts}</b>\n"
-        f"📧 Валидных email: <b>{validated}</b>\n"
-        f"✉️ Отправлено (антидубль): <b>{sent_count}</b>",
+        f"Доступ: <b>{access_line}</b>\n"
+        f"Админ: <b>{admin_line}</b>\n\n"
+        f"{html_emoji('email')} Аккаунтов: <b>{total_accounts}</b>\n"
+        f"{html_emoji('email')} Валидных email: <b>{validated}</b>\n"
+        f"{html_emoji('mail')} Отправлено (антидубль): <b>{sent_count}</b>",
+        parse_mode="HTML",
     )
     await message.answer(f"{html_emoji('admin')} <b>Админ-панель</b>", reply_markup=admin_kb(), parse_mode="HTML")
 
@@ -242,7 +248,7 @@ async def admin_admins_menu(callback: CallbackQuery, state: FSMContext) -> None:
     async with Session() as session:
         rows = (await session.execute(select(User.telegram_id).where(User.is_admin == True).order_by(User.created_at.desc()))).scalars().all()
     ids = [str(x) for x in rows[:30]]
-    text = "👑 <b>Админ-права</b>\n\n"
+    text = f"{html_emoji('admin')} <b>Админ-права</b>\n\n"
     text += f"Админов сейчас: <b>{len(rows)}</b>\n\n"
     if ids:
         text += "Активные админы (Telegram ID):\n" + "\n".join(f"• <code>{i}</code>" for i in ids)
@@ -268,7 +274,7 @@ async def admin_grant_admin_begin(callback: CallbackQuery, state: FSMContext) ->
         return
     await state.set_state(AdminState.waiting_grant_admin)
     await callback.message.edit_text(
-        "➕ <b>Выдать админ права</b>\n\nОтправь Telegram ID пользователя.",
+        f"{html_emoji('add')} <b>Выдать админ права</b>\n\nОтправь Telegram ID пользователя.",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[[back_inline("admin_grant_admin")]]),
         parse_mode="HTML",
     )
@@ -282,7 +288,7 @@ async def admin_revoke_admin_begin(callback: CallbackQuery, state: FSMContext) -
         return
     await state.set_state(AdminState.waiting_revoke_admin)
     await callback.message.edit_text(
-        "➖ <b>Забрать админ права</b>\n\nОтправь Telegram ID пользователя.",
+        f"{html_emoji('delete')} <b>Забрать админ права</b>\n\nОтправь Telegram ID пользователя.",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[[back_inline("admin_grant_admin")]]),
         parse_mode="HTML",
     )
@@ -296,7 +302,7 @@ async def admin_grant_admin_finish(message: Message, state: FSMContext) -> None:
     try:
         tid = int((message.text or "").strip())
     except Exception:
-        await message.answer("❌ Неверный ID. Отправь число.")
+        await message.answer(msg_fail("Неверный ID. Отправь число."), parse_mode="HTML")
         return
     async with Session() as session:
         user = await get_or_create_user(session, tid)
@@ -305,18 +311,21 @@ async def admin_grant_admin_finish(message: Message, state: FSMContext) -> None:
         await session.commit()
     invalidate_access_cache(tid)
     await state.clear()
-    await message.answer(f"✅ Админ-права выданы: <code>{tid}</code> (сохранено в Postgres).")
+    await message.answer(
+        f"{html_emoji('ok')} Админ-права выданы: <code>{tid}</code> (сохранено в Postgres).",
+        parse_mode="HTML",
+    )
     if not await _notify_user_menu(
         message.bot,
         tid,
         is_admin_user=True,
         text=(
-            "👑 Вам выданы права администратора.\n"
-            "В меню: «👑 Админ-панель» и «🧪 Тест маил»."
+            f"{html_emoji('admin')} Вам выданы права администратора.\n"
+            f"В меню: «{html_emoji('admin')} Админ-панель» и «{html_emoji('test_mail')} Тест маил»."
         ),
     ):
         await message.answer(
-            f"⚠️ Не удалось отправить меню <code>{tid}</code>. Пусть нажмёт /start.",
+            f"{html_emoji('warn')} Не удалось отправить меню <code>{tid}</code>. Пусть нажмёт /start.",
             parse_mode="HTML",
         )
     await open_admin(message)
@@ -329,11 +338,11 @@ async def admin_revoke_admin_finish(message: Message, state: FSMContext) -> None
     try:
         tid = int((message.text or "").strip())
     except Exception:
-        await message.answer("❌ Неверный ID. Отправь число.")
+        await message.answer(msg_fail("Неверный ID. Отправь число."), parse_mode="HTML")
         return
     if tid in config_admin_ids():
         await message.answer(
-            "⛔ Этот ID в ADMIN_IDS на сервере — убрать из env, а не через бота.",
+            f"{html_emoji('deny')} Этот ID в ADMIN_IDS на сервере — убрать из env, а не через бота.",
             parse_mode="HTML",
         )
         return
@@ -343,7 +352,10 @@ async def admin_revoke_admin_finish(message: Message, state: FSMContext) -> None
         await session.commit()
     invalidate_access_cache(tid)
     await state.clear()
-    await message.answer(f"➖ Админ-права сняты: <code>{tid}</code>. Доступ к боту сохранён.")
+    await message.answer(
+        f"{html_emoji('delete')} Админ-права сняты: <code>{tid}</code>. Доступ к боту сохранён.",
+        parse_mode="HTML",
+    )
     await _notify_user_menu(
         message.bot,
         tid,

@@ -29,7 +29,7 @@ from services.proxy_verify import (
 )
 from proxy_manager import normalize_proxy_type
 from utils.bg_jobs import is_running as bg_is_running, start as bg_start
-from utils.ui_emoji import html_emoji, icon_button, inline_button
+from utils.ui_emoji import html_emoji, inline_button, menu_path, msg_fail, msg_ok, msg_wait, msg_warn
 
 router = Router()
 logger = logging.getLogger(__name__)
@@ -563,7 +563,7 @@ async def proxy_add_process(message: Message, state: FSMContext):
         return await message.answer("⏳ Добавление прокси уже идёт. Подождите завершения.")
 
     status_msg = await message.answer(
-        f"⏳ Проверяю <b>{len(parsed_items)}</b> прокси…\n"
+        f"{html_emoji('wait')} Проверяю <b>{len(parsed_items)}</b> прокси…\n"
         "<i>Не отправляйте новый список, пока идёт проверка.</i>",
         parse_mode="HTML",
     )
@@ -604,7 +604,7 @@ async def _proxy_add_work(
                 preview = original_text.replace("\n", " / ")
                 if len(preview) > 120:
                     preview = preview[:120] + "…"
-                details.append(f"❌ `{preview}` — неправильный формат")
+                details.append(f"{html_emoji('fail')} `{preview}` — неправильный формат")
                 continue
 
             try:
@@ -634,17 +634,17 @@ async def _proxy_add_work(
                     preview = preview[:120] + "…"
                 if ok:
                     ok_count += 1
-                    details.append(f"✅ `{preview}` — {info}")
+                    details.append(f"{html_emoji('ok')} `{preview}` — {info}")
                 else:
                     fail_count += 1
-                    details.append(f"❌ `{preview}` — {info}")
+                    details.append(f"{html_emoji('fail')} `{preview}` — {info}")
             except Exception as e:
                 logger.exception("Error saving proxy")
                 fail_count += 1
                 preview = original_text.replace("\n", " / ")
                 if len(preview) > 120:
                     preview = preview[:120] + "…"
-                details.append(f"❌ `{preview}` — ошибка сохранения: {e}")
+                details.append(f"{html_emoji('fail')} `{preview}` — ошибка сохранения: {e}")
 
     summary = (
         "Готово.\n\n"
@@ -809,7 +809,7 @@ async def proxies_check_all(callback: CallbackQuery) -> None:
 
     try:
         await callback.message.edit_text(
-            f"⏳ <b>Проверяю {len(proxies)} прокси…</b>\n\n"
+            f"{html_emoji('wait')} <b>Проверяю {len(proxies)} прокси…</b>\n\n"
             "<i>Прокси → SMTP smtp.gmail.com:587 (как при рассылке)\n"
             "Не нажимайте кнопку повторно — займёт до ~45 сек.</i>",
             parse_mode="HTML",
@@ -838,7 +838,7 @@ async def proxies_check_all(callback: CallbackQuery) -> None:
             try:
                 await callback.message.edit_text(
                     "✅ <b>Проверка завершена</b>\n\n"
-                    f"🟢 рабочих: <b>{ok_n}</b> · 🔴 неактивных: <b>{fail_n}</b>\n"
+                    f"{html_emoji('green')} рабочих: <b>{ok_n}</b> · {html_emoji('red')} неактивных: <b>{fail_n}</b>\n"
                     "<i>Статус обновлён в списке ниже.</i>",
                     parse_mode="HTML",
                 )

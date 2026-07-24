@@ -54,7 +54,41 @@ _UNICODE_FALLBACK: dict[str, str] = {
     "accounts": "📇",
     "pin": "📌",
     "check": "✅",
+    "info": "ℹ️",
+    "deny": "⛔",
+    "link": "🔗",
+    "price": "💶",
+    "user": "👤",
+    "warn": "⚠️",
+    "mail": "✉️",
 }
+
+
+def menu_path(*parts: tuple[str, str]) -> str:
+    """Навигация «⚙️ → Профиль» с premium emoji (HTML)."""
+    chunks: list[str] = []
+    for key, label in parts:
+        piece = html_emoji(key)
+        if label:
+            piece = f"{piece} {label}"
+        chunks.append(piece)
+    return " → ".join(chunks)
+
+
+def msg_ok(body: str) -> str:
+    return f"{html_emoji('ok')} {body}"
+
+
+def msg_fail(body: str) -> str:
+    return f"{html_emoji('fail')} {body}"
+
+
+def msg_wait(body: str) -> str:
+    return f"{html_emoji('wait')} {body}"
+
+
+def msg_warn(body: str) -> str:
+    return f"{html_emoji('warn')} {body}"
 
 
 @lru_cache(maxsize=1)

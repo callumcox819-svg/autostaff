@@ -23,7 +23,7 @@ from sqlalchemy import select, update, or_
 from database import Session, db_session
 from models import User, EmailAccount
 from keyboards.main_menu import is_quick_add_trigger
-from utils.ui_emoji import back_inline, html_emoji, icon_button, inline_button
+from utils.ui_emoji import html_emoji, inline_button, menu_path, msg_fail, msg_ok, msg_wait, msg_warn
 from utils.bg_jobs import is_running as bg_is_running, start as bg_start
 
 logger = logging.getLogger(__name__)
@@ -109,12 +109,12 @@ async def _edit_add_progress(
     speed = ""
     if elapsed_sec and elapsed_sec > 0 and current > 0:
         per_min = current / elapsed_sec * 60.0
-        speed = f"\n⚡ ~<b>{per_min:.1f}</b> акк./мин ({workers} потоков)"
+        speed = f"\n{html_emoji('burst')} ~<b>{per_min:.1f}</b> акк./мин ({workers} потоков)"
     try:
         await status_msg.edit_text(
             "⏳ <b>Добавление аккаунтов</b>\n\n"
             f"Проверка IMAP: <b>{current}/{total}</b>\n"
-            f"✅ успешно: <b>{ok}</b> · ❌ ошибки: <b>{fail}</b>"
+            f"{html_emoji('ok')} успешно: <b>{ok}</b> · {html_emoji('fail')} ошибки: <b>{fail}</b>"
             f"{speed}",
             parse_mode="HTML",
         )
@@ -171,9 +171,9 @@ async def _bulk_add_accounts(
         if ":" not in line:
             fail_count += 1
             if gmail_only:
-                details.append(f"❌ <code>{_e(line)}</code> — нет <code>:</code>")
+                details.append(f"{html_emoji('fail')} <code>{_e(line)}</code> — нет <code>:</code>")
             else:
-                details.append(f"❌ <code>{_e(line)}</code> — нет разделителя <code>:</code>")
+                details.append(f"{html_emoji('fail')} <code>{_e(line)}</code> — нет разделителя <code>:</code>")
             continue
 
         email, password = line.split(":", 1)
@@ -182,12 +182,12 @@ async def _bulk_add_accounts(
 
         if gmail_only and not _is_gmail_address(email):
             fail_count += 1
-            details.append(f"❌ <code>{_e(email)}</code> — только @gmail.com / @googlemail.com")
+            details.append(f"{html_emoji('fail')} <code>{_e(email)}</code> — только @gmail.com / @googlemail.com")
             continue
 
         if not email or not password:
             fail_count += 1
-            details.append(f"❌ <code>{_e(line)}</code> — пустой email или пароль")
+            details.append(f"{html_emoji('fail')} <code>{_e(line)}</code> — пустой email или пароль")
             continue
 
         to_check.append(_AccountLineWork(line=line, email=email, password=password))
@@ -218,7 +218,7 @@ async def _bulk_add_accounts(
         if not res.ok:
             fail_count += 1
             err_txt = _e(res.err or ("ошибка IMAP" if gmail_only else "ошибка при входе"))
-            details.append(f"❌ <code>{_e(res.work.email)}</code> — {err_txt}")
+            details.append(f"{html_emoji('fail')} <code>{_e(res.work.email)}</code> — {err_txt}")
         else:
             work = res.work
             existing_res = await session.execute(
@@ -246,9 +246,9 @@ async def _bulk_add_accounts(
                 )
             ok_count += 1
             if gmail_only:
-                details.append(f"✅ <code>{_e(work.email)}</code>")
+                details.append(f"{html_emoji('ok')} <code>{_e(work.email)}</code>")
             else:
-                details.append(f"✅ <code>{_e(work.email)}</code> — добавлен ({_e(prov)})")
+                details.append(f"{html_emoji('ok')} <code>{_e(work.email)}</code> — добавлен ({_e(prov)})")
 
         await _edit_add_progress(
             status_msg,
@@ -511,7 +511,7 @@ async def acc_check_smtp(callback: CallbackQuery) -> None:
     total_accounts = len(accounts_n)
     await callback.answer("Запускаю проверку SMTP…")
     status_msg = await callback.message.answer(
-        f"⏳ <b>Проверка SMTP</b>\n\n0/{total_accounts}\n"
+        f"{html_emoji('wait')} <b>Проверка SMTP</b>\n\n0/{total_accounts}\n"
         f"<i>Напрямую к SMTP (без прокси)</i>",
         parse_mode="HTML",
     )
@@ -541,7 +541,7 @@ async def acc_check_smtp(callback: CallbackQuery) -> None:
             em = f"<code>{_e(email)}</code>\n" if email else ""
             try:
                 await status_msg.edit_text(
-                    f"⏳ <b>Проверка SMTP</b>\n\n{done}/{tot}\n"
+                    f"{html_emoji('wait')} <b>Проверка SMTP</b>\n\n{done}/{tot}\n"
                     f"<i>прямое SMTP</i>\n{em}",
                     parse_mode="HTML",
                 )
@@ -615,7 +615,7 @@ async def acc_check_smtp(callback: CallbackQuery) -> None:
                         await session.delete(row)
                         await session.commit()
                         lines.append(
-                            f"🗑 <code>{_e(em)}</code> — удалён (нет доступа)\n"
+                            f"{html_emoji('delete')} <code>{_e(em)}</code> — удалён (нет доступа)\n"
                             f"   <i>{_e(reason)}</i>"
                         )
                         continue
@@ -627,7 +627,7 @@ async def acc_check_smtp(callback: CallbackQuery) -> None:
                         blocked_n += 1
                         reason = short_block_reason(row.last_error)
                         lines.append(
-                            f"🟡 <code>{_e(res.email)}</code> — smtp_blocked (рассылка)\n"
+                            f"{html_emoji('yellow')} <code>{_e(res.email)}</code> — smtp_blocked (рассылка)\n"
                             f"   <i>{_e(reason or 'лимит/блок Gmail')}</i>\n"
                             f"   <i>«Проверить SMTP» не снимает блок — только вручную</i>"
                         )
@@ -640,14 +640,14 @@ async def acc_check_smtp(callback: CallbackQuery) -> None:
                     if st == "active":
                         ok_n += 1
                         if prev != "active":
-                            lines.append(f"🟢 <code>{_e(res.email)}</code> — снова активен (SMTP)")
+                            lines.append(f"{html_emoji('green')} <code>{_e(res.email)}</code> — снова активен (SMTP)")
                         else:
-                            lines.append(f"🟢 <code>{_e(res.email)}</code> — SMTP OK")
+                            lines.append(f"{html_emoji('green')} <code>{_e(res.email)}</code> — SMTP OK")
                     elif st == "smtp_blocked":
                         blocked_n += 1
                         reason = short_block_reason(err)
                         lines.append(
-                            f"🟡 <code>{_e(res.email)}</code> — лимит/блок SMTP\n"
+                            f"{html_emoji('yellow')} <code>{_e(res.email)}</code> — лимит/блок SMTP\n"
                             f"   <i>{_e(reason)}</i>"
                         )
                     else:
@@ -659,9 +659,9 @@ async def acc_check_smtp(callback: CallbackQuery) -> None:
 
             summary = (
                 "✅ <b>Проверка SMTP завершена</b>\n\n"
-                f"🟢 активны (SMTP OK): <b>{ok_n}</b>\n"
-                f"🟡 лимит/блок (smtp_blocked): <b>{blocked_n}</b>\n"
-                f"🗑 удалено (нет доступа): <b>{deleted_n}</b>\n"
+                f"{html_emoji('green')} активны (SMTP OK): <b>{ok_n}</b>\n"
+                f"{html_emoji('yellow')} лимит/блок (smtp_blocked): <b>{blocked_n}</b>\n"
+                f"{html_emoji('delete')} удалено (нет доступа): <b>{deleted_n}</b>\n"
                 f"⏭ проверка не удалась (ящик <u>не</u> трогали): <b>{skip_n}</b>\n\n"
                 + _trim_details(lines, limit=25)
             )
@@ -682,7 +682,7 @@ async def acc_check_smtp(callback: CallbackQuery) -> None:
             err_txt = _e(str(e))[:400]
             try:
                 await status_msg.edit_text(
-                    f"❌ <b>Проверка SMTP упала</b>\n\n<code>{err_txt}</code>",
+                    f"{html_emoji('fail')} <b>Проверка SMTP упала</b>\n\n<code>{err_txt}</code>",
                     parse_mode="HTML",
                 )
             except TelegramBadRequest as te:
@@ -791,7 +791,7 @@ async def quick_gmail_creds(message: Message, state: FSMContext) -> None:
             )
             await session.commit()
         summary = (
-            f"⚡ <b>Готово</b>\n\n"
+            f"{html_emoji('burst')} <b>Готово</b>\n\n"
             f"Имя отправителя: <b>{_e(sender_name)}</b>\n"
             f"Аккаунтов добавлено: <b>{ok_count}</b>\n"
             f"Ошибок: <b>{fail_count}</b>\n\n"

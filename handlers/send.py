@@ -1,6 +1,7 @@
 """GAG /send — только burst-рассылка (2–5 с), ротация ящиков и текстов."""
 
 from __future__ import annotations
+from utils.ui_emoji import html_emoji, menu_path, msg_fail, msg_ok, msg_wait, msg_warn
 
 import asyncio
 import logging
@@ -495,7 +496,7 @@ async def _burst_sending_loop(*, bot: Bot, chat_id: int, tg_user_id: int) -> Non
                 return
 
             state.last_status = "BURST"
-            state.current_to = f"⚡ burst × {len(targets)}"
+            state.current_to = f"{html_emoji('burst')} burst × {len(targets)}"
             set_sending_state(tg_user_id, state=state)
 
             async def build_message(session: AsyncSession, tgt: OfferEmail) -> Tuple[str, str]:

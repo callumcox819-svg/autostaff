@@ -12,6 +12,7 @@ from database import db_session
 from keyboards.main_menu import is_main_menu_text
 from services.bot_roles import config_admin_ids
 from services.users import get_or_create_user
+from utils.ui_emoji import html_emoji, inline_button, menu_path, msg_fail, msg_ok, msg_wait, msg_warn
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +30,7 @@ def invalidate_access_cache(telegram_id: int | None = None) -> None:
     _ACCESS_CACHE.pop(int(telegram_id), None)
 
 ACCESS_DENIED_TEXT = (
-    "⛔ У тебя нет доступа к использованию этого бота. Обратись к администратору."
+    f"{html_emoji('deny')} У тебя нет доступа к использованию этого бота. Обратись к администратору."
 )
 
 
@@ -178,7 +179,7 @@ class BotAccessMiddleware(BaseMiddleware):
             if isinstance(event, Message):
                 try:
                     await event.answer(
-                        "⏳ База данных занята (идёт валидация или рассылка). "
+                        f"{msg_wait('База данных занята (идёт валидация или рассылка).')} "
                         "Подожди 15–30 сек и повтори.",
                     )
                 except Exception:

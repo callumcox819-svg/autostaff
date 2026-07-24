@@ -1,6 +1,7 @@
 """Команда /reset — очистить очередь рассылки, лиды в БД остаются."""
 
 from __future__ import annotations
+from utils.ui_emoji import html_emoji, menu_path, msg_fail, msg_ok, msg_wait, msg_warn
 
 import logging
 
@@ -55,7 +56,7 @@ async def cmd_reset(message: Message) -> None:
             f"Убрано из очереди: <b>{removed}</b> адресов.",
             "📧 <b>Объявления в БД</b> — без изменений.",
             "📨 Следующая валидация <b>не вернёт</b> эти email в рассылку.",
-            f"🔒 Запомнено адресов после сброса: <b>{skip_n}</b>.",
+            f"{html_emoji('key')} Запомнено адресов после сброса: <b>{skip_n}</b>.",
             "▶️ <code>/send</code> — только email, добавленные после сброса.",
             "📊 <code>/stat</code> — очередь должна быть <b>0</b>.",
         ]

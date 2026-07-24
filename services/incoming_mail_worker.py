@@ -17,7 +17,7 @@ from typing import Optional, List, Tuple, Dict, Any
 
 from aiogram import Bot
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-from utils.ui_emoji import inline_button
+from utils.ui_emoji import html_emoji, inline_button, menu_path, msg_fail, msg_ok, msg_wait, msg_warn
 from sqlalchemy import select as sa_select, or_ as sa_or, func
 from sqlalchemy.exc import OperationalError
 
@@ -955,7 +955,7 @@ def render_mail_text_chunks(
     if label:
         label_line = f'⚡ Получено сообщение на "<b>{_e(label)}</b>"'
     else:
-        label_line = f"⚡ Получено сообщение на <code>{_e(account_email)}</code>"
+        label_line = f"{html_emoji('burst')} Получено сообщение на <code>{_e(account_email)}</code>"
 
     from_disp = (from_name or "").strip() or from_email
     head = (

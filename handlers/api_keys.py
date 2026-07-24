@@ -32,7 +32,7 @@ from services.aqua_keys import (
 from services.aqua_network import AquaError, generate_api_base, generate_api_configured, verify_gag_auth
 from services.user_settings import set_user_setting
 from utils.secrets import clean_secret
-from utils.ui_emoji import back_inline, back_kb, html_emoji, inline_button
+from utils.ui_emoji import html_emoji, inline_button, menu_path, msg_fail, msg_ok, msg_wait, msg_warn
 
 router = Router(name="api_keys")
 
@@ -292,7 +292,7 @@ async def aqua_test_keys(callback: CallbackQuery) -> None:
             await verify_gag_auth(user_api_key=user_key)
         except AquaError as e:
             return await callback.message.answer(
-                f"❌ <b>GAG API</b>\n<code>{html.escape(str(e)[:400])}</code>",
+                f"{html_emoji('fail')} <b>GAG API</b>\n<code>{html.escape(str(e)[:400])}</code>",
                 parse_mode="HTML",
             )
     await callback.message.answer("✅ Ключи работают (GAG API).", parse_mode="HTML")

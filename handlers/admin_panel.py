@@ -18,7 +18,7 @@ from models import EmailAccount, SentEmail, OfferEmail, Offer, User
 from services.bot_roles import user_is_admin as is_admin, config_admin_ids
 from keyboards.main_menu import is_admin_trigger, main_menu_kb
 from middlewares.bot_access import invalidate_access_cache
-from utils.ui_emoji import html_emoji, inline_button, menu_path, toast, msg_fail, msg_ok, msg_wait, msg_warn
+from utils.ui_emoji import html_emoji, inline_button, back_inline, menu_path, toast, msg_fail, msg_ok, msg_wait, msg_warn
 
 
 router = Router(name="admin_panel")

@@ -23,7 +23,7 @@ from sqlalchemy import select, update, or_
 from database import Session, db_session
 from models import User, EmailAccount
 from keyboards.main_menu import is_quick_add_trigger
-from utils.ui_emoji import html_emoji, inline_button, menu_path, msg_fail, msg_ok, msg_wait, msg_warn
+from utils.ui_emoji import html_emoji, inline_button, back_inline, menu_path, msg_fail, msg_ok, msg_wait, msg_warn
 from utils.bg_jobs import is_running as bg_is_running, start as bg_start
 
 logger = logging.getLogger(__name__)

@@ -64,7 +64,7 @@ from services.translate import translate_to_ru, _strip_html
 # Email reply "presets" must use the same storage/UI as ⚡ Шаблоны (handlers/templates.py)
 from handlers.templates import load_templates, TemplateItem
 from utils.bg_jobs import is_running as bg_is_running, start as bg_start
-from utils.ui_emoji import html_emoji, inline_button, menu_path, msg_fail, msg_ok, msg_wait, msg_warn
+from utils.ui_emoji import html_emoji, inline_button, back_inline, menu_path, msg_fail, msg_ok, msg_wait, msg_warn
 
 router = Router()
 

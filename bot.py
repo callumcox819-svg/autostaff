@@ -76,7 +76,18 @@ def _bind_priority_dispatcher_handlers(dp: Dispatcher) -> None:
     from aiogram.filters import Command
     from aiogram.types import Message
 
-    from handlers.admin_panel import open_admin
+    from handlers.admin_panel import (
+        admin_admins_menu,
+        admin_allow_begin,
+        admin_back,
+        admin_deny_begin,
+        admin_grant_admin_begin,
+        admin_revoke_admin_begin,
+        admin_restart,
+        admin_stats_begin,
+        admin_stats_menu,
+        open_admin,
+    )
     from handlers.accounts import open_accounts_from_settings, quick_gmail_from_main_menu
     from handlers.api_keys import aqua_show_key, aqua_show_profile
     from handlers.proxies import open_proxies
@@ -159,9 +170,24 @@ def _bind_priority_dispatcher_handlers(dp: Dispatcher) -> None:
     for cb, flt in bindings:
         dp.callback_query.register(cb, flt)
 
+    admin_bindings = (
+        (admin_back, F.data == "admin_back"),
+        (admin_allow_begin, F.data == "admin_allow"),
+        (admin_deny_begin, F.data == "admin_deny"),
+        (admin_stats_menu, F.data == "admin_user_stats"),
+        (admin_stats_begin, F.data == "admin_user_stats_check"),
+        (admin_admins_menu, F.data == "admin_grant_admin"),
+        (admin_grant_admin_begin, F.data == "admin_admin_grant_begin"),
+        (admin_revoke_admin_begin, F.data == "admin_admin_revoke_begin"),
+        (admin_restart, F.data == "admin_restart"),
+    )
+    for cb, flt in admin_bindings:
+        dp.callback_query.register(cb, flt)
+
     logger.info(
-        "Привязано к Dispatcher: reply-меню + %d callback настроек (GAG / CH)",
+        "Привязано к Dispatcher: reply-меню + %d callback настроек + %d admin (GAG / CH)",
         len(bindings),
+        len(admin_bindings),
     )
 
 

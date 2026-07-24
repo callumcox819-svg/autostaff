@@ -40,6 +40,18 @@ _DEFINITIVE_BAD_REASONS = frozenset(
 )
 
 _SESSION: aiohttp.ClientSession | None = None
+_KEY_SEMAPHORES: dict[str, asyncio.Semaphore] = {}
+_KEY_SEM_LIMITS: dict[str, int] = {}
+
+
+def _semaphore_for_api_key(api_key: str, limit: int) -> asyncio.Semaphore:
+    """Один общий лимит in-flight на ключ (5 ключей × 40 = не создавать sem на каждый batch)."""
+    k = (api_key or "").strip()
+    lim = max(1, int(limit))
+    if k not in _KEY_SEMAPHORES or _KEY_SEM_LIMITS.get(k) != lim:
+        _KEY_SEMAPHORES[k] = asyncio.Semaphore(lim)
+        _KEY_SEM_LIMITS[k] = lim
+    return _KEY_SEMAPHORES[k]
 
 
 def _cache_key(url: str, email: str) -> str:
@@ -149,7 +161,7 @@ async def _get_session() -> aiohttp.ClientSession:
     timeout = aiohttp.ClientTimeout(
         total=total, connect=8, sock_connect=8, sock_read=api_t + 8
     )
-    connector = aiohttp.TCPConnector(limit=300, ttl_dns_cache=300)
+    connector = aiohttp.TCPConnector(limit=512, ttl_dns_cache=300)
     _SESSION = aiohttp.ClientSession(timeout=timeout, connector=connector)
     return _SESSION
 
@@ -482,7 +494,7 @@ async def _validate_emails_single_key(
 
     limit = max(2, int(concurrency))
     display_limit = int(shared_limit) if shared_limit is not None else limit
-    sem = asyncio.Semaphore(limit)
+    sem = _semaphore_for_api_key(api_key, limit)
     lock = asyncio.Lock()
 
     local_counters = counters if counters is not None else {

@@ -264,16 +264,7 @@ async def _build_test_message(
         ).first()
         item_title = (row[0] if row else "") or "OFFER"
 
-    from services.mailing_deliverability import (
-        build_inbox_mailing_copy,
-        finalize_inbox_mail,
-        mailing_inbox_success_profile,
-    )
-
-    if mailing_inbox_success_profile():
-        subject, body = build_inbox_mailing_copy(item_title or "")
-        return subject, body, item_title
-
+    from services.mailing_deliverability import finalize_inbox_mail
     from services.subject_offer import global_mailing_subject
 
     subject = global_mailing_subject(item_title or "")
@@ -287,6 +278,7 @@ async def _build_test_message(
 
     ctx = {
         "ITEM_TITLE": item_title,
+        "OFFER": item_title,
         "PRICE": price,
         "BUYER_NAME": buyer_name,
         "ADDRESS": address,

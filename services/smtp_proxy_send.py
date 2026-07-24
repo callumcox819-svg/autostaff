@@ -27,9 +27,9 @@ logger = logging.getLogger(__name__)
 
 NO_ACTIVE_PROXY = "PROXY_ERROR|no_active_proxy|No active proxy configured"
 
-# Быстрый ответ в чате (пресет/HTML/текст).
-REPLY_SMTP_TIMEOUT_SEC = max(15, min(60, int(os.getenv("REPLY_SMTP_TIMEOUT_SEC", "28"))))
-REPLY_SMTP_MAX_PROXIES = max(1, min(6, int(os.getenv("REPLY_SMTP_MAX_PROXIES", "2"))))
+# Ответ продавцу: тот же запас по времени, что и рассылка (login + DATA дольше, чем EHLO).
+REPLY_SMTP_TIMEOUT_SEC = max(20, min(90, int(os.getenv("REPLY_SMTP_TIMEOUT_SEC", "45"))))
+REPLY_SMTP_MAX_PROXIES = max(1, min(6, int(os.getenv("REPLY_SMTP_MAX_PROXIES", "3"))))
 
 # Рассылка /send: несколько SOCKS5, таймаут на каждую попытку.
 MAIL_SMTP_TIMEOUT_SEC = max(20, min(90, int(os.getenv("MAIL_SMTP_TIMEOUT_SEC", "45"))))

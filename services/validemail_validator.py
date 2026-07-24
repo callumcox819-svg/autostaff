@@ -14,16 +14,18 @@ from sqlalchemy import select
 
 from database import Session
 from models import User
-from services.validemail_fast import validate_emails_fast
+from services.validemail_fast import validate_emails_fast, _DEFINITIVE_BAD_REASONS
 from utils.ui_emoji import html_emoji
 from services.seller_name import (
     MIN_NAME_TOKEN_LEN,
+    MIN_SELLER_LETTERS,
     normalize_seller_name,
     pick_handle_locals,
     pick_name_tokens,
     pick_name_tokens_for_email,
     seller_name_eligible_for_validation,
     seller_name_from_item,
+    seller_name_too_short,
 )
 
 logger = logging.getLogger(__name__)
@@ -70,6 +72,10 @@ def _pick_first_last_alpha_tokens(name: str) -> tuple[str, str]:
 
 
 def _name_is_usable(name: str, *, require_first_and_last: bool) -> bool:
+    if seller_name_too_short(name):
+        return False
+    if pick_handle_locals(name):
+        return not require_first_and_last
     if not seller_name_eligible_for_validation(name):
         return False
     tokens = _pick_alpha_tokens(name)
@@ -99,7 +105,7 @@ def _make_local_part_variants(name: str, *, require_first_and_last: bool) -> lis
     parts = [p for p in re.split(r"[\s\-']+", norm) if p.strip()]
 
     def _add(local: str) -> None:
-        local = re.sub(r"[^a-z0-9._+\-]", "", (local or "").lower())
+        local = re.sub(r"[^a-z0-9._+\-_]", "", (local or "").lower())
         local = re.sub(r"\.+", ".", local).strip(".")
         if not local or local in seen:
             return
@@ -156,12 +162,26 @@ def _len_for_limits(local_part: str) -> int:
 
 
 def _is_api_failure(_ok: bool, raw: object) -> bool:
-    """Сбой API/сети. Ответ «email не существует» — не ошибка."""
+    """Сбой API/сети. «Email не существует» / undeliverable — не ошибка."""
     if not isinstance(raw, dict):
         return True
     reason = str(raw.get("reason") or raw.get("Reason") or "").lower().strip()
     if reason in ("connection_error", "timeout"):
         return True
+    if reason in _DEFINITIVE_BAD_REASONS:
+        return False
+    status = str(raw.get("status") or raw.get("State") or raw.get("state") or "").lower().strip()
+    if status in (
+        "deliverable",
+        "undeliverable",
+        "unknown",
+        "risky",
+        "invalid",
+        "not deliverable",
+    ):
+        return False
+    if any(k in raw for k in ("isDeliverable", "IsValid", "isValid", "score", "Score")):
+        return False
     try:
         st = int(raw.get("_http_status"))
         if raw.get("_api_key_error"):
@@ -380,10 +400,13 @@ async def _validate_offers_old(
         locals_list: list[str] = []
         for local in _make_local_part_variants(raw_name, require_first_and_last=require_fl):
             ln = _len_for_limits(local)
-            if int(cfg.min_len) <= ln <= int(cfg.max_len):
+            min_local = MIN_SELLER_LETTERS if pick_handle_locals(raw_name) else int(cfg.min_len)
+            if min_local <= ln <= int(cfg.max_len):
                 locals_list.append(local)
 
         if not locals_list:
+            if stats is not None:
+                stats["short_nicks"] = int(stats.get("short_nicks") or 0) + 1
             continue
 
         prepared.append({
@@ -431,10 +454,15 @@ async def _validate_offers_old(
             api_keys = [single]
     url = str(cfg.validation_url or DEFAULT_VALIDEMAIL_URL).strip()
 
-    from services.validemail_keys import validation_concurrency_plan, validation_pool_size
+    from services.validemail_keys import (
+        seller_parallel_per_key,
+        validation_concurrency_plan,
+        validation_pool_size,
+    )
 
     n_keys = max(1, len(api_keys))
     per_key_limit, parallel_pool = validation_concurrency_plan(n_keys)
+    sellers_parallel = seller_parallel_per_key()
     limit = max(2, int(cfg.concurrency) or validation_pool_size(n_keys))
     parallel_pool = max(parallel_pool, min(limit, per_key_limit * n_keys))
 
@@ -448,12 +476,17 @@ async def _validate_offers_old(
     state_lock = asyncio.Lock()
     sellers_completed = 0
 
+    if stats is not None:
+        stats["validemail_per_key"] = per_key_limit
+        stats["validemail_threads"] = n_keys
+
     if n_keys >= 2:
         logger.info(
-            "validemail: %s keys in parallel (stride), concurrency/key=%s pool=%s sellers=%s",
+            "validemail: %s keys × %s req/key, pool=%s, seller_parallel/key=%s, sellers=%s",
             n_keys,
             per_key_limit,
             parallel_pool,
+            sellers_parallel,
             len(prepared),
         )
 
@@ -545,18 +578,16 @@ async def _validate_offers_old(
         primary = locals_list[0]
         extra_locals = locals_list[1:]
 
-        for dom in domains_clean:
-            if found_by_idx[i]:
-                break
-            batch = [f"{primary}@{dom}".lower()]
-            results = await _run_batch(batch, seller_i=i, dom=dom, api_key=api_key)
+        if not found_by_idx[i]:
+            batch = [f"{primary}@{dom}".lower() for dom in domains_clean]
+            results = await _run_batch(
+                batch, seller_i=i, dom=domains_clean[0] if domains_clean else "", api_key=api_key
+            )
             cv = await _consume_results(i, results)
             async with state_lock:
                 if stats is not None:
                     stats["combinations_valid"] = int(stats.get("combinations_valid") or 0) + cv
                 _refresh_stats()
-            if found_by_idx[i]:
-                break
 
         if found_by_idx[i]:
             nk = str(prepared[i].get("name_key") or "").strip()
@@ -569,18 +600,19 @@ async def _validate_offers_old(
         if not extra_locals:
             return
 
-        for dom in domains_clean:
-            if found_by_idx[i]:
-                break
-            batch = [f"{local}@{dom}".lower() for local in extra_locals]
-            results = await _run_batch(batch, seller_i=i, dom=dom, api_key=api_key)
-            cv = await _consume_results(i, results)
-            async with state_lock:
-                if stats is not None:
-                    stats["combinations_valid"] = int(stats.get("combinations_valid") or 0) + cv
-                _refresh_stats()
-            if found_by_idx[i]:
-                break
+        batch = [
+            f"{local}@{dom}".lower()
+            for dom in domains_clean
+            for local in extra_locals
+        ]
+        results = await _run_batch(
+            batch, seller_i=i, dom=domains_clean[0] if domains_clean else "", api_key=api_key
+        )
+        cv = await _consume_results(i, results)
+        async with state_lock:
+            if stats is not None:
+                stats["combinations_valid"] = int(stats.get("combinations_valid") or 0) + cv
+            _refresh_stats()
 
         if found_by_idx[i]:
             nk = str(prepared[i].get("name_key") or "").strip()
@@ -592,8 +624,33 @@ async def _validate_offers_old(
     async def _worker(key_idx: int) -> None:
         nonlocal sellers_completed
         my_key = api_keys[key_idx]
-        for i in range(key_idx, len(prepared), n_keys):
-            await _validate_seller(i, my_key)
+        indices = list(range(key_idx, len(prepared), n_keys))
+        seller_slot = asyncio.Semaphore(max(1, sellers_parallel))
+
+        async def _run_seller(i: int) -> None:
+            nonlocal sellers_completed
+            async with seller_slot:
+                await _validate_seller(i, my_key)
+                async with state_lock:
+                    sellers_completed += 1
+                    if stats is not None:
+                        stats["seller_index"] = sellers_completed
+                        stats["sellers_total"] = len(prepared)
+                    _refresh_stats()
+
+        await asyncio.gather(*(_run_seller(i) for i in indices))
+
+    # 2) Продавцы: при 2+ ключах — два потока (каждый ключ свой), иначе последовательно
+    n_sellers = len(prepared)
+    if stats is not None:
+        stats["sellers_total"] = n_sellers
+
+    seller_sem = asyncio.Semaphore(max(2, parallel_pool))
+
+    async def _validate_seller_limited(i: int, api_key: str) -> None:
+        nonlocal sellers_completed
+        async with seller_sem:
+            await _validate_seller(i, api_key)
             async with state_lock:
                 sellers_completed += 1
                 if stats is not None:
@@ -601,20 +658,12 @@ async def _validate_offers_old(
                     stats["sellers_total"] = len(prepared)
                 _refresh_stats()
 
-    # 2) Продавцы: при 2+ ключах — два потока (каждый ключ свой), иначе последовательно
-    n_sellers = len(prepared)
-    if stats is not None:
-        stats["sellers_total"] = n_sellers
-
     if n_keys >= 2:
         await asyncio.gather(*(_worker(k) for k in range(n_keys)))
     else:
-        for i in range(n_sellers):
-            await _validate_seller(i, api_keys[0])
-            sellers_completed = i + 1
-            if stats is not None:
-                stats["seller_index"] = sellers_completed
-            _refresh_stats()
+        await asyncio.gather(
+            *(_validate_seller_limited(i, api_keys[0]) for i in range(n_sellers))
+        )
 
     found_count = sum(1 for f in found_by_idx if f)
     if stats is not None:

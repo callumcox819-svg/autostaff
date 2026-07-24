@@ -16,6 +16,7 @@ from models import Offer, OfferEmail, Domain
 from services.users import get_or_create_user
 from config import config
 from services.validemail_keys import (
+    per_key_concurrency_limit,
     resolve_validemail_api_keys,
     validation_pool_size,
 )
@@ -25,7 +26,11 @@ from services.validemail_validator import (
     validate_offers,
 )
 from services.offer_storage import save_all_offers_from_import
-from services.seller_name import MIN_NAME_TOKEN_LEN, seller_name_eligible_for_validation, seller_name_from_item
+from services.seller_name import (
+    MIN_SELLER_LETTERS,
+    seller_name_eligible_for_validation,
+    seller_name_from_item,
+)
 from services.sending_state import get_sending_state, set_sending_state
 from services.mailing_active_db import is_user_mailing_active
 from utils.bg_jobs import is_running as bg_is_running, start as bg_start
@@ -72,6 +77,8 @@ def _format_validation_status(
     errors: int,
     validemail_keys: int = 0,
     validemail_pool: int = 0,
+    validemail_per_key: int = 0,
+    validemail_threads: int = 0,
 ) -> str:
     title = (
         f"{html_emoji('ok')} Подбор завершён"
@@ -86,7 +93,12 @@ def _format_validation_status(
     ]
     vk = validemail_keys if not finished else 0
     if vk > 0:
-        lines.append(f"ValidEmail: <b>{vk}</b> ключ(ей), пул <b>{validemail_pool}</b> запросов")
+        th = validemail_threads or vk
+        pk = validemail_per_key or max(1, validemail_pool // max(1, vk))
+        lines.append(
+            f"{html_emoji('key')} Ключей API: <b>{vk}</b> · потоков: <b>{th}</b> · "
+            f"до <b>{pk}</b> запросов/ключ"
+        )
     lines.extend([
         "",
         f"{html_emoji('presets')} Объявлений обработано: <b>{processed}/{total}</b>",
@@ -181,10 +193,13 @@ _WORD_RE = re.compile(r"[A-Za-zÀ-ÿ0-9]+")
 
 
 def _normalize_person_name(raw_name: str) -> str:
-    """Нормализовать имя продавца для отображения (1+ слово)."""
+    """Нормализовать имя продавца; ники с _ или без пробелов — как в JSON."""
     s = (raw_name or "").strip()
     if not s:
         return ""
+    compact = re.sub(r"\s+", "", s)
+    if " " not in s and re.fullmatch(r"[A-Za-z0-9_]+", compact):
+        return s.strip()
     words = _WORD_RE.findall(s)
     if not words:
         return s
@@ -422,6 +437,7 @@ async def _run_validation_pipeline(message: Message, status_msg: Message, items:
 
     n_keys = len(api_keys)
     pool = validation_pool_size(n_keys)
+    per_key_lim = per_key_concurrency_limit()
     cfg = ValidationConfig(
         validemail_api_keys=api_keys,
         validation_url=config.VALIDEMAIL_URL,
@@ -429,7 +445,7 @@ async def _run_validation_pipeline(message: Message, status_msg: Message, items:
         max_emails_per_seller=MAX_EMAILS_PER_SELLER,
         require_first_and_last=REQUIRE_FIRST_AND_LAST,
         max_len=40,
-        min_len=MIN_NAME_TOKEN_LEN,
+        min_len=MIN_SELLER_LETTERS,
         seller_name_keys=name_keys,
     )
 
@@ -437,6 +453,8 @@ async def _run_validation_pipeline(message: Message, status_msg: Message, items:
         "offers_total": total_offers,
         "validemail_keys": n_keys,
         "validemail_pool": pool,
+        "validemail_per_key": per_key_lim,
+        "validemail_threads": n_keys,
     }
     ui_state = {"last_text": ""}
     stop_evt = asyncio.Event()
@@ -477,6 +495,8 @@ async def _run_validation_pipeline(message: Message, status_msg: Message, items:
             errors=err,
             validemail_keys=int(vstats.get("validemail_keys") or 0),
             validemail_pool=int(vstats.get("validemail_pool") or 0),
+            validemail_per_key=int(vstats.get("validemail_per_key") or 0),
+            validemail_threads=int(vstats.get("validemail_threads") or 0),
         )
 
     try:

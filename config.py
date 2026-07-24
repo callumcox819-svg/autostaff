@@ -37,9 +37,17 @@ def _parse_validemail_api_keys() -> list[str]:
 
 
 def _validemail_per_key_concurrency() -> int:
-    raw = (os.getenv("VALIDEMAIL_CONCURRENCY_PER_KEY") or "6").strip()
+    raw = (os.getenv("VALIDEMAIL_CONCURRENCY_PER_KEY") or "40").strip()
     try:
-        return max(1, min(12, int(raw)))
+        return max(1, min(64, int(raw)))
+    except (TypeError, ValueError):
+        return 40
+
+
+def _validemail_seller_parallel_per_key() -> int:
+    raw = (os.getenv("VALIDEMAIL_SELLER_PARALLEL_PER_KEY") or "6").strip()
+    try:
+        return max(1, min(32, int(raw)))
     except (TypeError, ValueError):
         return 6
 
@@ -64,6 +72,7 @@ class Config:
     VALIDEMAIL_URL = os.getenv("VALIDEMAIL_URL", "https://validemail.co/api/v1/validate").strip()
     VALIDEMAIL_API_KEYS = _parse_validemail_api_keys()
     VALIDEMAIL_CONCURRENCY_PER_KEY = _validemail_per_key_concurrency()
+    VALIDEMAIL_SELLER_PARALLEL_PER_KEY = _validemail_seller_parallel_per_key()
     _conc_env = (os.getenv("VALIDEMAIL_CONCURRENCY") or "").strip()
     if _conc_env.isdigit():
         VALIDEMAIL_CONCURRENCY = max(2, int(_conc_env))

@@ -6,8 +6,9 @@ import re
 import unicodedata
 from typing import Any
 
-# Слова короче 4 букв не участвуют в подстановке доменов.
+# Слова короче 4 букв не участвуют в first.last; ник ≥3 букв валидируем целиком.
 MIN_NAME_TOKEN_LEN = 4
+MIN_SELLER_LETTERS = 3
 
 
 def seller_name_from_item(item: dict[str, Any]) -> str:
@@ -112,21 +113,35 @@ def pick_name_tokens(name: str, *, min_len: int = MIN_NAME_TOKEN_LEN) -> list[st
     return out
 
 
-def _is_handle_token(h: str, *, min_len: int = 3) -> bool:
-    """Ник вида Semiuel2421 / alinafor20: латиница+цифры."""
-    if len(h) < min_len or len(h) > 64:
+def seller_name_letter_count(name: str) -> int:
+    return sum(1 for c in normalize_seller_name(name) if c.isalpha())
+
+
+def seller_name_too_short(name: str, *, min_letters: int = MIN_SELLER_LETTERS) -> bool:
+    """Меньше 3 букв в имени — не валидируем."""
+    if not (name or "").strip():
+        return True
+    return seller_name_letter_count(name) < int(min_letters)
+
+
+def _is_handle_token(h: str, *, min_letters: int = MIN_SELLER_LETTERS) -> bool:
+    """Ник: Bird19, mar_l5z6, sportstar3000 — буквы/цифры/_, ≥3 букв."""
+    if len(h) < min_letters or len(h) > 64:
         return False
-    if not h.isalnum():
+    if not re.fullmatch(r"[A-Za-z0-9_]+", h):
+        return False
+    if seller_name_letter_count(h) < min_letters:
         return False
     return any(c.isalpha() for c in h)
 
 
-def pick_handle_locals(name: str, *, min_len: int = 3) -> list[str]:
+def pick_handle_locals(name: str) -> list[str]:
     """
-    Никнеймы: Semiuel2421, alinafor20 — одно слово или часть с цифрами.
+    Никнеймы как в JSON: Bird19, mar_l5z6, sportstar3000 — local-part как есть (lower).
+    Имя «Имя Фамилия» сюда не попадает (только first.last).
     """
     s = normalize_seller_name(name)
-    if not s:
+    if not s or seller_name_too_short(s):
         return []
 
     parts = [p for p in re.split(r"[\s\-']+", s) if p.strip()]
@@ -135,19 +150,23 @@ def pick_handle_locals(name: str, *, min_len: int = 3) -> list[str]:
     single_part = len(parts) <= 1
 
     for p in parts:
-        h = re.sub(r"[^A-Za-z0-9]", "", p)
-        if not _is_handle_token(h, min_len=min_len):
+        h = re.sub(r"[^A-Za-z0-9_]", "", p)
+        if not _is_handle_token(h):
             continue
-        if single_part or any(c.isdigit() for c in h):
-            hl = h.lower()
-            if hl not in seen:
-                seen.add(hl)
-                out.append(hl)
+        looks_like_nick = single_part or any(c.isdigit() for c in h) or "_" in h
+        if not looks_like_nick:
+            continue
+        hl = h.lower()
+        if hl not in seen:
+            seen.add(hl)
+            out.append(hl)
     return out
 
 
 def seller_name_eligible_for_validation(name: str, *, min_token_len: int = MIN_NAME_TOKEN_LEN) -> bool:
-    """Имя подходит для имя@домен: слово ≥4 букв, пара слов ≥2 букв, или ник."""
+    """Имя подходит для имя@домен: ник ≥3 букв, слово ≥4 букв, или пара слов (Andrey Porstad)."""
+    if seller_name_too_short(name):
+        return False
     if pick_handle_locals(name):
         return True
     if pick_name_tokens(name, min_len=min_token_len):

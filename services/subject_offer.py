@@ -41,20 +41,15 @@ def global_subject_template() -> str:
 
 
 def render_subject_with_offer(subject_template: str, offer_title: str) -> str:
-    """OFFER и {{OFFER}} → название из Offer.title / item_title в raw_json."""
+    """OFFER и {{OFFER}} → название товара; без названия в шаблоне остаётся OFFER."""
     tpl = sanitize_email_subject((subject_template or "").strip() or global_subject_template())
-    title = sanitize_email_subject(_usable_offer_title(offer_title) or (offer_title or "").strip())
-    if not _usable_offer_title(title):
-        from services.mailing_deliverability import pick_rotating_subject
-
-        return pick_rotating_subject("Anzeige")
-    out = tpl.replace("{{OFFER}}", title)
-    out = _OFFER_WORD_RE.sub(title, out)
+    title = sanitize_email_subject((offer_title or "").strip())
+    replacement = title if title else "OFFER"
+    out = tpl.replace("{{OFFER}}", replacement)
+    out = _OFFER_WORD_RE.sub(replacement, out)
     out = sanitize_email_subject(out)
-    if _OFFER_WORD_RE.search(out):
-        out = _OFFER_WORD_RE.sub(title, out)
     if not out:
-        out = title or "Anfrage"
+        out = replacement or "Anfrage"
     if len(out) > 140:
         out = out[:137] + "…"
     return out

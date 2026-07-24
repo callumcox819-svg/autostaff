@@ -69,8 +69,8 @@ INBOX_SUCCESS_BODIES: tuple[str, ...] = (
 
 
 def mailing_inbox_success_profile() -> bool:
-    """Тема из CH-пресетов + короткое «Inserat»-тело (проверенный inbox-профиль)."""
-    return _env_on("MAILING_INBOX_SUCCESS_PROFILE", default="1")
+    """Опционально: короткий inbox-текст без умных пресетов (выкл. по умолчанию)."""
+    return _env_on("MAILING_INBOX_SUCCESS_PROFILE", default="0")
 
 
 def pick_inbox_success_body() -> str:
@@ -235,21 +235,17 @@ def finalize_inbox_mail(subject: str, body: str, *, offer_title: str = "") -> tu
 
 
 def _scrub_offer_leaks(subject: str, body: str, offer_title: str) -> tuple[str, str]:
-    """Не оставлять «Offer»/OFFER в тексте — фильтры режут шаблон."""
+    """Убрать необработанный Offer/OFFER только из тела (тема уже из GLOBAL_SUBJECT_TEMPLATE)."""
     title = (offer_title or "").strip()
-    if title.upper() in ("OFFER", "TEST", "ARTIKEL"):
-        title = ""
 
-    def _repl(text: str) -> str:
+    def _repl_body(text: str) -> str:
         if not text:
             return text
         if title:
             return _OFFER_TOKEN_RE.sub(title, text)
         return _OFFER_TOKEN_RE.sub("Ihr Inserat", text)
 
-    subj = _repl(subject)
-    b = _repl(body)
-    return subj, b
+    return subject, _repl_body(body)
 
 
 def pick_rotating_subject(
@@ -266,9 +262,7 @@ def pick_rotating_subject(
         pool = [ut]
     elif not presets_only:
         gt = (global_subject_template() or "").strip()
-        if gt and not gt.lower().startswith("re:"):
-            pool.append(gt)
-        elif gt and not mailing_inbox_success_profile():
+        if gt:
             pool.append(gt)
     tpl = random.choice(pool)
     return render_subject_with_offer(tpl, offer_title)

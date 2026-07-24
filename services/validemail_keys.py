@@ -15,7 +15,17 @@ def resolve_validemail_api_keys() -> list[str]:
 
 def per_key_concurrency_limit() -> int:
     try:
-        return max(1, min(12, int(getattr(config, "VALIDEMAIL_CONCURRENCY_PER_KEY", 6) or 6)))
+        return max(1, min(64, int(getattr(config, "VALIDEMAIL_CONCURRENCY_PER_KEY", 40) or 40)))
+    except (TypeError, ValueError):
+        return 40
+
+
+def seller_parallel_per_key() -> int:
+    try:
+        return max(
+            1,
+            min(32, int(getattr(config, "VALIDEMAIL_SELLER_PARALLEL_PER_KEY", 6) or 6)),
+        )
     except (TypeError, ValueError):
         return 6
 
@@ -37,9 +47,11 @@ def validation_pool_size(num_keys: int | None = None) -> int:
 
 
 def validation_concurrency_plan(num_keys: int) -> tuple[int, int]:
-    """(лимит на один ключ, суммарный пул параллельных запросов)."""
+    """(лимит HTTP на один ключ, суммарный пул). Каждый ключ до per_key, если pool хватает."""
     n = max(1, num_keys)
     per = per_key_concurrency_limit()
     pool = validation_pool_size(n)
-    per_effective = min(per, max(1, pool // n))
+    if pool >= per * n:
+        return per, per * n
+    per_effective = max(1, pool // n)
     return per_effective, per_effective * n

@@ -107,7 +107,7 @@ def _format_validation_status(
         f"{html_emoji('fail')} Повтор продавца (пропуск): <b>{added_blacklist}</b>",
         f"{html_emoji('edit')} Коротких ников: <b>{short_nicks}</b>",
         f"{html_emoji('wait')} Без email: <b>{no_email}</b>",
-        f"{html_emoji('yellow')} Сбоев API: <b>{errors}</b>",
+        f"{html_emoji('yellow')} Сбоев API/сети: <b>{errors}</b>",
     ])
     return "\n".join(l for l in lines if l is not None)
 

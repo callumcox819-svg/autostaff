@@ -162,34 +162,48 @@ def _len_for_limits(local_part: str) -> int:
 
 
 def _is_api_failure(_ok: bool, raw: object) -> bool:
-    """Сбой API/сети. «Email не существует» / undeliverable — не ошибка."""
+    """Только сеть, rate limit, 5xx, мёртвый ключ — не «ящик не найден»."""
+    if _ok:
+        return False
     if not isinstance(raw, dict):
         return True
+
     reason = str(raw.get("reason") or raw.get("Reason") or "").lower().strip()
     if reason in ("connection_error", "timeout"):
         return True
     if reason in _DEFINITIVE_BAD_REASONS:
         return False
+
     status = str(raw.get("status") or raw.get("State") or raw.get("state") or "").lower().strip()
-    if status in (
-        "deliverable",
-        "undeliverable",
-        "unknown",
-        "risky",
-        "invalid",
-        "not deliverable",
+    if status:
+        return False
+
+    if any(
+        k in raw
+        for k in (
+            "isDeliverable",
+            "IsValid",
+            "isValid",
+            "score",
+            "Score",
+            "isFormatValid",
+            "isDomainValid",
+            "isDisposable",
+        )
     ):
         return False
-    if any(k in raw for k in ("isDeliverable", "IsValid", "isValid", "score", "Score")):
-        return False
+
     try:
         st = int(raw.get("_http_status"))
         if raw.get("_api_key_error"):
             return True
         if st in (401, 403, 402, 429) or st >= 500:
             return True
+        if 400 <= st < 500:
+            return False
     except (TypeError, ValueError):
         pass
+
     err = raw.get("error")
     if err is None:
         err = raw.get("message")
@@ -197,6 +211,22 @@ def _is_api_failure(_ok: bool, raw: object) -> bool:
         es = str(err or "").strip().lower()
         if es in ("", "empty", "no api key"):
             return False
+        infra = (
+            "rate limit",
+            "too many",
+            "timeout",
+            "timed out",
+            "connection",
+            "connect",
+            "network",
+            "temporarily unavailable",
+            "service unavailable",
+            "internal server",
+            "bad gateway",
+            "gateway timeout",
+        )
+        if any(p in es for p in infra):
+            return True
         benign = (
             "invalid email",
             "not valid",
@@ -213,31 +243,29 @@ def _is_api_failure(_ok: bool, raw: object) -> bool:
             "user unknown",
             "address not found",
             "no such user",
+            "could not",
+            "failed validation",
         )
         if any(p in es for p in benign):
             return False
-        return True
-    for key in (
-        "IsValid",
-        "isValid",
-        "State",
-        "state",
-        "Score",
-        "score",
-        "Reason",
-        "reason",
-        "is_valid",
-        "valid",
-        "status",
-        "result",
-        "isDeliverable",
-        "is_deliverable",
-        "deliverable",
-        "smtp_check",
+        try:
+            st = int(raw.get("_http_status"))
+            if st == 200:
+                return False
+        except (TypeError, ValueError):
+            pass
+
+    err_raw = str(raw.get("error") or "").lower()
+    if err_raw and any(
+        x in err_raw for x in ("timeout", "connect", "connection", "clientconnector", "ssl")
     ):
-        if key in raw:
-            return False
+        return True
+
     return False
+
+
+def _is_definitive_invalid(_ok: bool, raw: object) -> bool:
+    return not _ok and not _is_api_failure(_ok, raw)
 
 
 # -------------------------
@@ -580,12 +608,13 @@ async def _validate_offers_old(
         local: str,
         domain_chunk: list[str],
         api_key: str,
-    ) -> None:
+    ) -> bool:
+        """False = были только «ящик не найден», можно обрезать хвост доменов."""
         if found_by_idx[seller_i] or not domain_chunk:
-            return
+            return False
         loc = (local or "").strip().lower()
         if not loc:
-            return
+            return False
         batch = [f"{loc}@{dom}".lower() for dom in domain_chunk]
         dom_label = domain_chunk[0]
         results = await _run_batch(
@@ -599,21 +628,49 @@ async def _validate_offers_old(
             if stats is not None:
                 stats["combinations_valid"] = int(stats.get("combinations_valid") or 0) + cv
             _refresh_stats()
+        if found_by_idx[seller_i]:
+            return False
+        if not results:
+            return False
+        return all(_is_definitive_invalid(ok, raw) for _e, ok, raw in results)
 
     async def _probe_local_by_priority(seller_i: int, local: str, api_key: str) -> None:
         """
         1-й домен — отдельно (строгий приоритет).
-        Дальше — волны по wave_size доменов параллельно; нашли valid — стоп.
+        Дальше — волны по wave_size; после N подряд «undeliverable» — хвост доменов не трогаем.
         """
         if found_by_idx[seller_i] or not domains_clean:
             return
-        await _probe_domain_chunk(seller_i, local, domains_clean[:1], api_key)
+        try:
+            stop_tail_after = max(
+                4, int(os.getenv("VALIDEMAIL_STOP_AFTER_INVALID_STREAK", "6"))
+            )
+        except (TypeError, ValueError):
+            stop_tail_after = 6
+
+        streak_invalid = 0
+        probes_done = 0
+
+        inv = await _probe_domain_chunk(seller_i, local, domains_clean[:1], api_key)
+        probes_done += 1
+        if inv:
+            streak_invalid += 1
+        if found_by_idx[seller_i]:
+            return
+
         idx = 1
         n = len(domains_clean)
         while idx < n and not found_by_idx[seller_i]:
+            if streak_invalid >= stop_tail_after and probes_done >= stop_tail_after:
+                break
             chunk = domains_clean[idx : idx + wave_size]
             idx += len(chunk)
-            await _probe_domain_chunk(seller_i, local, chunk, api_key)
+            inv = await _probe_domain_chunk(seller_i, local, chunk, api_key)
+            probes_done += len(chunk)
+            if inv:
+                streak_invalid += len(chunk)
+            else:
+                streak_invalid = 0
 
     async def _validate_seller(i: int, api_key: str) -> None:
         row = prepared[i]

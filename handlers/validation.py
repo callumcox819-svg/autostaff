@@ -15,7 +15,10 @@ from database import Session
 from models import Offer, OfferEmail, Domain
 from services.users import get_or_create_user
 from config import config
-from services.validemail_keys import resolve_validemail_api_keys
+from services.validemail_keys import (
+    resolve_validemail_api_keys,
+    validation_pool_size,
+)
 from services.validemail_validator import (
     ValidationConfig,
     merge_validation_domains,
@@ -67,6 +70,8 @@ def _format_validation_status(
     short_nicks: int,
     no_email: int,
     errors: int,
+    validemail_keys: int = 0,
+    validemail_pool: int = 0,
 ) -> str:
     title = (
         f"{html_emoji('ok')} Подбор завершён"
@@ -78,6 +83,11 @@ def _format_validation_status(
         f"<b>{title}</b>",
         user_line,
         f"<code>{bar}</code> <b>{pct}%</b>",
+    ]
+    vk = validemail_keys if not finished else 0
+    if vk > 0:
+        lines.append(f"ValidEmail: <b>{vk}</b> ключ(ей), пул <b>{validemail_pool}</b> запросов")
+    lines.extend([
         "",
         f"{html_emoji('presets')} Объявлений обработано: <b>{processed}/{total}</b>",
         f"{html_emoji('email')} Добавлено: <b>{added}</b>",
@@ -86,7 +96,7 @@ def _format_validation_status(
         f"{html_emoji('edit')} Коротких ников: <b>{short_nicks}</b>",
         f"{html_emoji('wait')} Без email: <b>{no_email}</b>",
         f"{html_emoji('yellow')} Сбоев API: <b>{errors}</b>",
-    ]
+    ])
     return "\n".join(l for l in lines if l is not None)
 
 
@@ -352,7 +362,10 @@ async def _run_validation_pipeline(message: Message, status_msg: Message, items:
 
         if not api_keys:
             return await status_msg.edit_text(
-                f"{html_emoji('fail')} ValidEmail API keys не заданы в config.py.",
+                f"{html_emoji('fail')} Ключи ValidEmail не заданы.\n\n"
+                "В Variables (Railway / .env):\n"
+                "<code>VALIDEMAIL_API_KEYS=key1,key2,key3</code>\n"
+                "или <code>VALIDEMAIL_API_KEY_1=…</code>, <code>VALIDEMAIL_API_KEY_2=…</code>",
                 parse_mode="HTML",
             )
 
@@ -407,10 +420,12 @@ async def _run_validation_pipeline(message: Message, status_msg: Message, items:
 
         name_keys = await load_seller_name_keys(session, int(user_bl.id))
 
+    n_keys = len(api_keys)
+    pool = validation_pool_size(n_keys)
     cfg = ValidationConfig(
         validemail_api_keys=api_keys,
         validation_url=config.VALIDEMAIL_URL,
-        concurrency=max(8, int(getattr(config, "VALIDEMAIL_CONCURRENCY", 20) or 20)),
+        concurrency=max(2, pool),
         max_emails_per_seller=MAX_EMAILS_PER_SELLER,
         require_first_and_last=REQUIRE_FIRST_AND_LAST,
         max_len=40,
@@ -418,7 +433,11 @@ async def _run_validation_pipeline(message: Message, status_msg: Message, items:
         seller_name_keys=name_keys,
     )
 
-    live_stats: dict = {"offers_total": total_offers}
+    live_stats: dict = {
+        "offers_total": total_offers,
+        "validemail_keys": n_keys,
+        "validemail_pool": pool,
+    }
     ui_state = {"last_text": ""}
     stop_evt = asyncio.Event()
 
@@ -456,6 +475,8 @@ async def _run_validation_pipeline(message: Message, status_msg: Message, items:
             short_nicks=short_n,
             no_email=no_email,
             errors=err,
+            validemail_keys=int(vstats.get("validemail_keys") or 0),
+            validemail_pool=int(vstats.get("validemail_pool") or 0),
         )
 
     try:

@@ -236,10 +236,10 @@ async def _spoof_name_menu_payload(tg_user_id: int) -> tuple[str, InlineKeyboard
     text = (
         f"{html_emoji('user')} <b>HTML: имя и тема</b>\n"
         f"Сервис: <b>{label}</b>\n"
-        f"Имя отправителя (при {html_emoji('green')} Спуфинг): <b>{cur_line}</b>\n\n"
-        f"Используется только при отправке <b>HTML</b>.\n"
-        f"Рассылка — отдельно: имя из «{html_emoji('email')} E-mail», тема <code>OFFER</code>.\n\n"
-        f"{html_emoji('pin')} <b>Тема для HTML:</b> <code>{html_subj}</code>"
+        f"Имя и тема ниже — только при {html_emoji('green')} <b>Спуфинг</b> и отправке <b>HTML</b>.\n"
+        f"Имя отправителя: <b>{cur_line}</b>\n\n"
+        f"Ответы текстом / пресет и рассылка: имя из «{html_emoji('email')} E-mail», тема рассылки — глобальный <code>OFFER</code>.\n\n"
+        f"{html_emoji('pin')} <b>Тема для HTML (при спуфинге):</b> <code>{html_subj}</code>"
     )
     kb = InlineKeyboardMarkup(
         inline_keyboard=[
@@ -693,8 +693,8 @@ async def html_theme_menu(callback: CallbackQuery, state: FSMContext):
     cur_show = cur if cur else "—"
     txt = (
         f"{html_emoji('pin')} <b>Тема для HTML</b>\n\n"
-        "Используется только при отправке <b>HTML</b> (не при массовой рассылке).\n"
-        "Рассылка использует глобальный <code>OFFER</code> → название товара.\n\n"
+        "Только при 🟢 <b>Спуфинг</b> и отправке <b>HTML</b> (не для текста/пресета и не для рассылки).\n"
+        "Рассылка — глобальный <code>OFFER</code> → название товара.\n\n"
         f"Текущее значение:\n<code>{cur_show}</code>"
     )
     await _safe_send(callback.message.edit_text(txt, reply_markup=kb, parse_mode="HTML"))

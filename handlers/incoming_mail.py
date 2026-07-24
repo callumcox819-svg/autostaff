@@ -2189,6 +2189,8 @@ async def cb_mail_reply_preset_send(callback: CallbackQuery, state: FSMContext):
             if not acc:
                 return False, "SMTP аккаунт не найден"
             out_subject = _reply_subject(subject)
+            from services.html_reply import account_sender_display_name
+
             return await send_email_via_account_with_proxy(
                 session,
                 int(user.id),
@@ -2196,6 +2198,7 @@ async def cb_mail_reply_preset_send(callback: CallbackQuery, state: FSMContext):
                 to_email,
                 out_subject,
                 preset_body,
+                sender_name=account_sender_display_name(user),
                 fast=True,
             )
 
@@ -2504,6 +2507,8 @@ async def mail_reply_text(message: Message, state: FSMContext):
             owner_user_id = await _get_acc_owner_user_id(session, acc_id)
             if owner_user_id and int(owner_user_id) != int(user.id):
                 return False, "Этот ящик не принадлежит вам."
+            from services.html_reply import account_sender_display_name
+
             return await send_email_via_account_with_proxy(
                 session,
                 int(user.id),
@@ -2511,6 +2516,7 @@ async def mail_reply_text(message: Message, state: FSMContext):
                 to_email,
                 out_subject,
                 text,
+                sender_name=account_sender_display_name(user),
                 fast=True,
             )
 

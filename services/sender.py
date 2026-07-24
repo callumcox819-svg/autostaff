@@ -180,7 +180,7 @@ def _build_message(
         )
 
         minimal_headers = mailing_minimal_headers()
-        if minimal_headers:
+        if minimal_headers and not disp_name:
             disp_name = None
         if mailing_plain_only():
             is_html = False

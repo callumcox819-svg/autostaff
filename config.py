@@ -1,4 +1,5 @@
 import os
+import re
 
 try:
     from dotenv import load_dotenv
@@ -8,6 +9,39 @@ except ImportError:
     pass
 
 from region import TEAM_NAME
+
+
+def _parse_validemail_api_keys() -> list[str]:
+    """VALIDEMAIL_API_KEYS=a,b,c и/или VALIDEMAIL_API_KEY_1= … _32= (без дубликатов)."""
+    seen: set[str] = set()
+    out: list[str] = []
+
+    def add(raw: str) -> None:
+        k = (raw or "").strip()
+        if not k or k in seen:
+            return
+        seen.add(k)
+        out.append(k)
+
+    bulk = (os.getenv("VALIDEMAIL_API_KEYS") or "").strip()
+    if bulk:
+        for part in re.split(r"[,;\n]+", bulk):
+            add(part)
+
+    add((os.getenv("VALIDEMAIL_API_KEY") or "").strip())
+
+    for i in range(1, 33):
+        add((os.getenv(f"VALIDEMAIL_API_KEY_{i}") or "").strip())
+
+    return out
+
+
+def _validemail_per_key_concurrency() -> int:
+    raw = (os.getenv("VALIDEMAIL_CONCURRENCY_PER_KEY") or "6").strip()
+    try:
+        return max(1, min(12, int(raw)))
+    except (TypeError, ValueError):
+        return 6
 
 
 def _parse_admin_ids(raw: str) -> list[int]:
@@ -28,15 +62,15 @@ class Config:
     DATABASE_URL = (os.getenv("DATABASE_URL") or "").strip()
 
     VALIDEMAIL_URL = os.getenv("VALIDEMAIL_URL", "https://validemail.co/api/v1/validate").strip()
-    VALIDEMAIL_API_KEY_1 = os.getenv("VALIDEMAIL_API_KEY_1", "").strip()
-    VALIDEMAIL_API_KEY_2 = os.getenv("VALIDEMAIL_API_KEY_2", "").strip()
-    _keys_env = os.getenv("VALIDEMAIL_API_KEYS", "").strip()
-    if _keys_env:
-        VALIDEMAIL_API_KEYS = [x.strip() for x in _keys_env.split(",") if x.strip()]
+    VALIDEMAIL_API_KEYS = _parse_validemail_api_keys()
+    VALIDEMAIL_CONCURRENCY_PER_KEY = _validemail_per_key_concurrency()
+    _conc_env = (os.getenv("VALIDEMAIL_CONCURRENCY") or "").strip()
+    if _conc_env.isdigit():
+        VALIDEMAIL_CONCURRENCY = max(2, int(_conc_env))
     else:
-        VALIDEMAIL_API_KEYS = [k for k in (VALIDEMAIL_API_KEY_1, VALIDEMAIL_API_KEY_2) if k]
-    VALIDEMAIL_CONCURRENCY = int(os.getenv("VALIDEMAIL_CONCURRENCY", "24"))
-    VALIDEMAIL_API_TIMEOUT = int(os.getenv("VALIDEMAIL_API_TIMEOUT", "12"))
+        n_k = max(1, len(VALIDEMAIL_API_KEYS))
+        VALIDEMAIL_CONCURRENCY = max(2, VALIDEMAIL_CONCURRENCY_PER_KEY * n_k)
+    VALIDEMAIL_API_TIMEOUT = max(2, min(30, int(os.getenv("VALIDEMAIL_API_TIMEOUT", "8"))))
     VALIDEMAIL_MAX_RETRIES = int(os.getenv("VALIDEMAIL_MAX_RETRIES", "3"))
 
     GLOBAL_SUBJECT_TEMPLATE = os.getenv("GLOBAL_SUBJECT_TEMPLATE", "Re: OFFER").strip() or "Re: OFFER"

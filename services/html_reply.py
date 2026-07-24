@@ -13,14 +13,23 @@ HTML_THEME_KEY = "html_theme"
 
 async def get_html_reply_subject(session, user: User, *, fallback: str = "") -> str:
     """
-    Тема для HTML: задаёт пользователь в настройках (📌 Тема HTML).
-    Не путать с глобальным OFFER для массовой рассылки.
+    Тема для HTML при 🟢 Спуфинг: «Тема для HTML».
+    Иначе — как у обычного ответа (Re: …). Рассылка — отдельно, global OFFER.
     """
-    subj = sanitize_email_subject(await get_user_setting(session, user, HTML_THEME_KEY) or "")
-    if subj:
-        return subj[:140] if len(subj) > 140 else subj
+    from services.html_spoof import is_spoofing_enabled
+
+    if await is_spoofing_enabled(session, user):
+        subj = sanitize_email_subject(await get_user_setting(session, user, HTML_THEME_KEY) or "")
+        if subj:
+            return subj[:140] if len(subj) > 140 else subj
     fb = sanitize_email_subject(fallback or "")
     return fb[:140] if len(fb) > 140 else (fb or "Message")
+
+
+def account_sender_display_name(user: User) -> str | None:
+    """Имя From из настроек почты (рассылка и обычные ответы, без HTML-спуфа)."""
+    name = sanitize_email_subject((getattr(user, "sender_name", None) or "").strip())
+    return name or None
 
 
 async def get_html_sender_name(session, user: User) -> str | None:
@@ -31,8 +40,7 @@ async def get_html_sender_name(session, user: User) -> str | None:
     spoof = await get_spoof_display_name(session, user)
     if spoof:
         return sanitize_email_subject(spoof)
-    name = sanitize_email_subject((getattr(user, "sender_name", None) or "").strip())
-    return name or None
+    return account_sender_display_name(user)
 
 
 async def prepare_html_body(html: str, session, user: User) -> str:

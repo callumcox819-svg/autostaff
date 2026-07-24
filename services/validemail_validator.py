@@ -164,6 +164,8 @@ def _is_api_failure(_ok: bool, raw: object) -> bool:
         return True
     try:
         st = int(raw.get("_http_status"))
+        if raw.get("_api_key_error"):
+            return True
         if st in (401, 403, 402, 429) or st >= 500:
             return True
     except (TypeError, ValueError):
@@ -422,13 +424,6 @@ async def _validate_offers_old(
     if stats is not None:
         stats["emails_total"] = overall_total
 
-    limit = max(2, int(cfg.concurrency))
-    if progress_cb:
-        try:
-            progress_cb(0, overall_total, limit, 0)
-        except Exception:
-            pass
-
     api_keys = [str(k).strip() for k in (cfg.validemail_api_keys or []) if str(k).strip()]
     if not api_keys:
         single = str(cfg.validemail_api_key or "").strip()
@@ -436,17 +431,21 @@ async def _validate_offers_old(
             api_keys = [single]
     url = str(cfg.validation_url or DEFAULT_VALIDEMAIL_URL).strip()
 
+    from services.validemail_keys import validation_concurrency_plan, validation_pool_size
+
+    n_keys = max(1, len(api_keys))
+    per_key_limit, parallel_pool = validation_concurrency_plan(n_keys)
+    limit = max(2, int(cfg.concurrency) or validation_pool_size(n_keys))
+    parallel_pool = max(parallel_pool, min(limit, per_key_limit * n_keys))
+
+    if progress_cb:
+        try:
+            progress_cb(0, overall_total, parallel_pool, 0)
+        except Exception:
+            pass
+
     seen_valid_emails: set[str] = set()
     state_lock = asyncio.Lock()
-    n_keys = len(api_keys)
-    per_key_env = (os.getenv("VALIDEMAIL_CONCURRENCY_PER_KEY") or "").strip()
-    if per_key_env.isdigit():
-        per_key_limit = max(2, int(per_key_env))
-    elif n_keys > 1:
-        per_key_limit = max(4, limit // n_keys)
-    else:
-        per_key_limit = limit
-    parallel_pool = per_key_limit * n_keys if n_keys > 1 else limit
     sellers_completed = 0
 
     if n_keys >= 2:
@@ -708,10 +707,13 @@ async def _validate_offers_new(
         parse_mode="HTML",
     )
 
+    from services.validemail_keys import validation_pool_size
+
+    n_k = max(1, len(api_keys))
     results = await validate_emails_fast(
         uniq_emails,
         api_keys=api_keys,
-        concurrency=max(2, int(cfg.concurrency)),
+        concurrency=validation_pool_size(n_k),
         url=str(cfg.validation_url or DEFAULT_VALIDEMAIL_URL).strip(),
         use_ssl_verify=bool(cfg.use_ssl_verify),
         progress_cb=None,

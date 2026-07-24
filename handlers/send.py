@@ -547,7 +547,7 @@ async def _burst_sending_loop(*, bot: Bot, chat_id: int, tg_user_id: int) -> Non
                 tg_user_id=tg_user_id,
                 accounts=[a for a in accounts if int(a.id) not in blocked_account_ids],
                 targets=targets,
-                sender_name=None,
+                sender_name=sender_name,
                 build_message=build_message,
                 on_success=on_success,
                 on_failure=on_failure,

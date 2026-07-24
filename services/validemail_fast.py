@@ -1,3 +1,5 @@
+"""Параллельная проверка через validemail.co GET /api/v1/validate (Bearer, см. api-doc)."""
+
 from __future__ import annotations
 
 import asyncio
@@ -25,6 +27,7 @@ _CACHE_TTL_SEC = 60 * 60 * 6  # 6 часов
 
 _TRANSIENT_REASONS = frozenset({"connection_error", "timeout"})
 _TRANSIENT_HTTP = frozenset({408, 429, 500, 502, 503, 504})
+_NO_RETRY_HTTP = frozenset({402, 403, 405})
 _DEFINITIVE_BAD_REASONS = frozenset(
     {
         "invalid_smtp",
@@ -68,18 +71,29 @@ def _cache_set(url: str, email: str, ok: bool, raw: dict) -> None:
 
 
 def _validemail_api_timeout() -> int:
-    """Серверный SMTP-timeout (validemail.co query param, 2–30 с)."""
+    """Query param timeout (сервер SMTP), API: 2–30 с, default 4."""
     try:
-        return max(4, min(30, int(os.getenv("VALIDEMAIL_API_TIMEOUT", "15"))))
-    except (TypeError, ValueError):
-        return 15
+        from config import config
+
+        base = int(getattr(config, "VALIDEMAIL_API_TIMEOUT", 8))
+    except Exception:
+        try:
+            base = int(os.getenv("VALIDEMAIL_API_TIMEOUT", "8"))
+        except (TypeError, ValueError):
+            base = 8
+    return max(2, min(30, base))
 
 
 def _validemail_max_retries() -> int:
     try:
-        return max(1, min(5, int(os.getenv("VALIDEMAIL_MAX_RETRIES", "3"))))
-    except (TypeError, ValueError):
-        return 3
+        from config import config
+
+        return max(1, min(5, int(getattr(config, "VALIDEMAIL_MAX_RETRIES", 3))))
+    except Exception:
+        try:
+            return max(1, min(5, int(os.getenv("VALIDEMAIL_MAX_RETRIES", "3"))))
+        except (TypeError, ValueError):
+            return 3
 
 
 def _is_transient_failure(raw: object) -> bool:
@@ -92,9 +106,11 @@ def _is_transient_failure(raw: object) -> bool:
         return True
     try:
         st = int(raw.get("_http_status") or 0)
+        if st in _NO_RETRY_HTTP:
+            return False
         if st in _TRANSIENT_HTTP:
             return True
-        if st in (401, 403, 402):
+        if st in (401,):
             return True
     except (TypeError, ValueError):
         pass
@@ -163,9 +179,9 @@ def _validemail_min_score() -> int:
 
 _BAD_EMAIL_STATES = frozenset(
     {
+        "undeliverable",
         "unknown",
         "risky",
-        "undeliverable",
         "invalid",
         "not deliverable",
         "disposable",
@@ -176,6 +192,52 @@ _BAD_EMAIL_STATES = frozenset(
         "rejected",
     }
 )
+
+_GOOD_DELIVERABLE_REASONS = frozenset({"accepted", "other"})
+
+
+def _normalize_ok_v1(data: dict, *, strict: bool, min_score: int) -> bool:
+    """Ответ 200 по схеме validemail.co v1 (status, reason, score, isDeliverable, …)."""
+    status = str(data.get("status") or "").lower().strip()
+    reason = str(data.get("reason") or "").lower().strip()
+
+    if reason in _TRANSIENT_REASONS:
+        return False
+    if reason in _DEFINITIVE_BAD_REASONS:
+        return False
+    if data.get("isDisposable") is True:
+        return False
+    if data.get("isFormatValid") is False or data.get("isDomainValid") is False:
+        return False
+
+    if status == "undeliverable":
+        return False
+    if status == "unknown":
+        return False
+    if status == "risky":
+        if strict or not (os.getenv("VALIDEMAIL_ACCEPT_RISKY") or "").strip().lower() in (
+            "1",
+            "true",
+            "yes",
+            "on",
+        ):
+            return False
+
+    if status != "deliverable":
+        return False
+    if data.get("isDeliverable") is not True:
+        return False
+    if reason and reason not in _GOOD_DELIVERABLE_REASONS:
+        return False
+
+    if strict:
+        try:
+            score = int(data.get("score") if data.get("score") is not None else 0)
+            if score < min_score:
+                return False
+        except (TypeError, ValueError):
+            return False
+    return True
 
 
 def _normalize_ok(data: object) -> bool:
@@ -197,23 +259,10 @@ def _normalize_ok(data: object) -> bool:
     if reason in _TRANSIENT_REASONS:
         return False
 
-    # --- validemail.co v1 (официальный ответ) ---
-    if "isDeliverable" in data:
-        if reason in _DEFINITIVE_BAD_REASONS or status in _BAD_EMAIL_STATES:
-            return False
-        if data.get("isDeliverable") is True and status == "deliverable":
-            if strict:
-                try:
-                    score = int(data.get("score") if data.get("score") is not None else 0)
-                    if score < min_score:
-                        return False
-                except (TypeError, ValueError):
-                    pass
-            return True
-        if not strict and data.get("isDeliverable") is True:
-            return True
-        return False
+    if "isDeliverable" in data and "status" in data:
+        return _normalize_ok_v1(data, strict=strict, min_score=min_score)
 
+    # --- legacy / PascalCase ---
     state = status
     if state in _BAD_EMAIL_STATES:
         return False
@@ -277,7 +326,7 @@ def _build_request(url: str, api_key: str, email: str) -> tuple[dict, dict]:
     params: dict = {}
 
     if "validemail.co" in ul:
-        # https://validemail.co/api/v1/validate?email=...&timeout=...
+        headers["Accept"] = "application/json"
         if api_key:
             headers["Authorization"] = f"Bearer {api_key}"
         params["email"] = email
@@ -304,14 +353,25 @@ async def _fetch_validemail_once(
     headers, params = _build_request(url, api_key, email_lc)
     ssl = None if use_ssl_verify else False
     async with s.get(url, params=params, headers=headers, ssl=ssl) as r:
-        data = await r.json(content_type=None)
+        status = int(r.status)
+        try:
+            data = await r.json(content_type=None)
+        except Exception as e:
+            data = {"error": str(e)}
         raw = data if isinstance(data, dict) else {"raw": str(data)}
         if isinstance(raw, dict):
-            raw["_http_status"] = int(r.status)
+            raw["_http_status"] = status
             ra = r.headers.get("Retry-After")
             if ra:
                 raw["_retry_after"] = ra
-        ok = _normalize_ok(data) if int(r.status) == 200 else False
+            if status in _NO_RETRY_HTTP:
+                raw["_api_key_error"] = True
+                msg = raw.get("message") or raw.get("error") or raw.get("detail")
+                if msg:
+                    raw["_api_message"] = str(msg)
+        if status != 200:
+            return False, raw
+        ok = _normalize_ok(raw)
         return ok, raw
 
 
@@ -373,6 +433,11 @@ async def _check_one(
                     return email, True, last_raw
 
                 if not _is_transient_failure(last_raw) or attempt >= max_attempts - 1:
+                    if _should_cache_result(last_raw):
+                        _cache_set(url, email_lc, False, last_raw)
+                    return email, False, last_raw
+
+                if isinstance(last_raw, dict) and last_raw.get("_api_key_error"):
                     if _should_cache_result(last_raw):
                         _cache_set(url, email_lc, False, last_raw)
                     return email, False, last_raw
@@ -476,19 +541,26 @@ async def validate_emails_fast(
     if not keys:
         return [(e, False, {"error": "no api key"}) for e in emails_list]
 
+    from services.validemail_keys import per_key_concurrency_limit, validation_concurrency_plan
+
+    per_key_cap = per_key_concurrency_limit()
+
     if len(keys) == 1:
+        single_limit = min(per_key_cap, max(2, int(concurrency)))
         return await _validate_emails_single_key(
             emails_list,
             api_key=keys[0],
-            concurrency=concurrency,
+            concurrency=single_limit,
             url=url,
             use_ssl_verify=use_ssl_verify,
             progress_cb=progress_cb,
         )
 
     n_keys = len(keys)
-    per_key_limit = max(2, int(concurrency) // n_keys)
-    total_limit = per_key_limit * n_keys
+    per_key_limit, total_limit = validation_concurrency_plan(n_keys)
+    if int(concurrency) > 0:
+        per_key_limit = min(per_key_cap, max(2, int(concurrency) // n_keys))
+        total_limit = per_key_limit * n_keys
 
     buckets: list[list[tuple[int, str]]] = [[] for _ in range(n_keys)]
     for i, e in enumerate(emails_list):

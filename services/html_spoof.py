@@ -18,12 +18,16 @@ def _setting_on(val: object) -> bool:
     return str(val or "").strip().lower() in {"1", "true", "yes", "on", "y"}
 
 
+async def is_spoofing_enabled(session, user: User) -> bool:
+    return _setting_on(await get_user_setting(session, user, SPOOFING_KEY))
+
+
 async def get_spoof_display_name(session, user: User) -> str | None:
     """
     Имя для HTML / поля From, если 🟢 Спуфинг включён и задано в «👤 Имя для спуфинга».
     Иначе None — обычная отправка без подмены имени.
     """
-    if not _setting_on(await get_user_setting(session, user, SPOOFING_KEY)):
+    if not await is_spoofing_enabled(session, user):
         return None
     from services.aqua_keys import aqua_service_for_html_dir, get_user_aqua_service
 

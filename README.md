@@ -26,7 +26,8 @@ python bot.py
 ```env
 BOT_TOKEN=
 GAG_API_BASE=https://triangleblackword.cfd
-VALIDEMAIL_API_KEYS=
+VALIDEMAIL_API_KEYS=key1,key2
+# или VALIDEMAIL_API_KEY_1=… VALIDEMAIL_API_KEY_2=… (до 6 параллельных запросов на ключ)
 ROTATING_PROXY_ID=
 ```
 

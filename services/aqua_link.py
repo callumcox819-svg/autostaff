@@ -10,14 +10,13 @@ from services.aqua_keys import (
     aqua_service_for_api,
     get_user_aqua_api_keys_async,
     get_user_aqua_service,
-    get_user_generate_domain,
     get_user_profile_address,
     get_user_profile_buyer_name,
     is_valid_aqua_service,
     user_profile_fields_complete,
 )
 from services.aqua_network import AquaError, generate_aqua_link
-from services.gag_domains import get_domain_base, normalize_gag_generated_url
+from services.gag_domains import finalize_gag_generated_url, get_user_gag_domain_mode, gag_api_domain_for_mode
 from utils.ui_emoji import menu_path
 from services.offer_storage import offer_effective_photo, offer_effective_price, offer_effective_title
 
@@ -104,8 +103,8 @@ async def aqua_generate_for_offer(
 
     image = await resolve_aqua_image_url(session, user, offer)
     api_service = aqua_service_for_api(service)
-    domain_n = await get_user_generate_domain(session, user)
-    domain_base = await get_domain_base(session, user, domain_n)
+    mode = await get_user_gag_domain_mode(session, user)
+    api_domain = gag_api_domain_for_mode(mode)
 
     raw_link = await generate_aqua_link(
         user_api_key=user_key,
@@ -117,11 +116,9 @@ async def aqua_generate_for_offer(
         name=title,
         price=p,
         image=image or None,
-        domain=domain_n,
+        domain=api_domain,
     )
     try:
-        return normalize_gag_generated_url(
-            raw_link, domain_slot=domain_n, domain_base=domain_base
-        )
+        return finalize_gag_generated_url(raw_link, mode=mode)
     except ValueError as e:
         raise AquaError(str(e)) from e

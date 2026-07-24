@@ -23,7 +23,6 @@ from services.aqua_keys import (
     aqua_service_label,
     aqua_service_matches,
     get_user_aqua_service,
-    get_user_generate_domain,
     get_user_aqua_user_key_async,
     get_user_profile_address,
     get_user_profile_buyer_name,
@@ -33,19 +32,15 @@ from services.aqua_keys import (
     user_profile_fields_complete,
 )
 from services.gag_domains import (
-    clear_domain_base,
-    get_active_domain_slot,
-    get_domain_base,
-    profile_domain_summary,
-    set_active_domain_slot,
-    set_domain_base,
-    profile_domain_summary,
-    set_active_domain_slot,
+    domain_mode_menu_options,
+    get_user_gag_domain_mode,
+    profile_domain_label,
+    set_user_gag_domain_mode,
 )
 from services.aqua_network import AquaError, generate_api_base, generate_api_configured, verify_gag_auth
 from services.user_settings import get_user_setting, set_user_setting
 from utils.secrets import clean_secret
-from utils.ui_emoji import html_emoji, inline_button, back_inline, back_kb, icon_button, menu_path, toast, msg_fail, msg_ok, msg_wait, msg_warn, unicode_fallback
+from utils.ui_emoji import html_emoji, inline_button, back_inline, back_kb, menu_path, toast, msg_fail, msg_ok, msg_wait, msg_warn, unicode_fallback
 
 router = Router(name="api_keys")
 
@@ -58,10 +53,6 @@ class ProfileState(StatesGroup):
     title = State()
     buyer_name = State()
     address = State()
-
-
-class DomainState(StatesGroup):
-    waiting_base = State()
 
 
 def _back_kb() -> InlineKeyboardMarkup:
@@ -80,26 +71,25 @@ def profile_screen_kb() -> InlineKeyboardMarkup:
     )
 
 
-async def _domain_slots_kb(session, user) -> InlineKeyboardMarkup:
-    active = await get_active_domain_slot(session, user)
+def _domain_mode_kb(current: str) -> InlineKeyboardMarkup:
     rows: list[list[InlineKeyboardButton]] = []
-    for n in range(1, 9):
-        base = await get_domain_base(session, user, n)
-        if base and n == active:
-            lbl = f"Сменить #{n}"
-            cb = f"aqua_domain_edit:{n}"
-        elif base:
-            lbl = f"#{n} · выбрать"
-            cb = f"aqua_domain_use:{n}"
-        else:
-            lbl = f"Установить #{n}"
-            cb = f"aqua_domain_edit:{n}"
+    for code, label in domain_mode_menu_options():
+        icon = "green" if code == current else "yellow"
         rows.append([
-            InlineKeyboardButton(text=lbl, callback_data=cb),
-            icon_button("delete", callback_data=f"aqua_domain_clear:{n}"),
+            inline_button(icon, label, callback_data=f"aqua_domain_set:{code}"),
         ])
     rows.append([back_inline("aqua_show:profile")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def _domain_menu_text(mode: str) -> str:
+    _ = mode
+    return (
+        f"{html_emoji('link')} <b>Домен GAG</b>\n\n"
+        f"• {html_emoji('profile')} <b>Домен команды</b> — без поля <code>domain</code> в API\n"
+        f"• {html_emoji('edit')} <b>Домен 1–4</b> — в API: "
+        f"<code>5</code>, <code>6</code>, <code>7</code>, <code>8</code> (слот + 4)"
+    )
 
 
 def service_picker_kb(current: str) -> InlineKeyboardMarkup:
@@ -148,11 +138,10 @@ async def _render_profile_screen(callback: CallbackQuery) -> None:
         buyer = await get_user_profile_buyer_name(session, user)
         addr = await get_user_profile_address(session, user)
         service = await get_user_aqua_service(session, user)
-        domain_n = await get_user_generate_domain(session, user)
-        domain_base = await get_domain_base(session, user, domain_n)
+        mode = await get_user_gag_domain_mode(session, user)
         complete = await user_profile_fields_complete(session, user)
         await session.commit()
-        domain_line = profile_domain_summary(domain_n, domain_base)
+        domain_line = profile_domain_label(mode)
         status = (
             f"{html_emoji('green')} готов к генерации"
             if complete
@@ -247,108 +236,33 @@ async def aqua_domain_pick(callback: CallbackQuery, state: FSMContext) -> None:
     await state.clear()
     async with Session() as session:
         user = await get_or_create_user(session, callback.from_user.id)
-        active = await get_active_domain_slot(session, user)
-        base = await get_domain_base(session, user, active)
-        kb = await _domain_slots_kb(session, user)
-    text = (
-        f"{html_emoji('link')} <b>Домены GAG</b> (слоты 1–8)\n\n"
-        f"Активный: <b>{profile_domain_summary(active, base)}</b>\n"
-        f"В API уходит <code>domain={active}</code>, <code>version=lk</code> → <code>/get/…</code>\n\n"
-        "<b>Установить #N</b> — URL домена команды (https://…).\n"
-        "Если GAG отдаёт <code>undefined/get/…</code>, бот подставит ваш домен из слота.\n"
-        "<b>❌</b> — очистить слот."
-    )
-    await callback.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
-    await callback.answer()
-
-
-@router.callback_query(F.data.startswith("aqua_domain_edit:"))
-async def aqua_domain_edit_begin(callback: CallbackQuery, state: FSMContext) -> None:
-    slot = int((callback.data or "").split(":", 1)[1])
-    if not 1 <= slot <= 8:
-        return await callback.answer("Слот 1–8", show_alert=True)
-    async with Session() as session:
-        user = await get_or_create_user(session, callback.from_user.id)
-        cur = await get_domain_base(session, user, slot)
-    await state.set_state(DomainState.waiting_base)
-    await state.update_data(domain_slot=slot)
-    hint = f"\nСейчас: <code>{html.escape(cur)}</code>" if cur else ""
+        mode = await get_user_gag_domain_mode(session, user)
     await callback.message.edit_text(
-        f"{html_emoji('link')} <b>Домен команды #{slot}</b>{hint}\n\n"
-        "Отправь базовый URL одним сообщением.\n"
-        "<i>Пример: https://your-team-domain.cfd</i>\n\n"
-        "Без <code>/generate</code> и без пути — только домен.",
+        _domain_menu_text(mode),
+        reply_markup=_domain_mode_kb(mode),
         parse_mode="HTML",
-        reply_markup=InlineKeyboardMarkup(
-            inline_keyboard=[[back_inline("aqua_domain_pick", text="Отмена")]]
-        ),
     )
     await callback.answer()
 
 
-@router.message(DomainState.waiting_base)
-async def aqua_domain_save(message: Message, state: FSMContext) -> None:
-    data = await state.get_data()
-    slot = int(data.get("domain_slot") or 1)
-    raw = (message.text or "").strip()
-    if not raw or raw in ("-", "cancel", "отмена"):
-        await state.clear()
-        await message.answer(f"{html_emoji('fail')} Отменено.")
-        return
-    async with Session() as session:
-        user = await get_or_create_user(session, message.from_user.id)
-        await set_domain_base(session, user, slot, raw)
-        await set_active_domain_slot(session, user, slot)
-        await session.commit()
-    await state.clear()
-    await message.answer(
-        f"{html_emoji('ok')} Домен #{slot} сохранён и выбран для генерации.",
-        reply_markup=profile_screen_kb(),
-    )
-
-
-@router.callback_query(F.data.startswith("aqua_domain_clear:"))
-async def aqua_domain_clear_cb(callback: CallbackQuery, state: FSMContext) -> None:
-    await state.clear()
-    slot = int((callback.data or "").split(":", 1)[1])
-    if not 1 <= slot <= 8:
-        return await callback.answer()
+@router.callback_query(F.data.startswith("aqua_domain_set:"))
+async def aqua_domain_set(callback: CallbackQuery, state: FSMContext) -> None:
+    code = (callback.data or "").split(":", 1)[1].strip().lower()
+    allowed = {"team", "1", "2", "3", "4"}
+    if code not in allowed:
+        return await callback.answer("Неизвестный домен", show_alert=True)
     async with Session() as session:
         user = await get_or_create_user(session, callback.from_user.id)
-        await clear_domain_base(session, user, slot)
+        await set_user_gag_domain_mode(session, user, code)
         await session.commit()
-        kb = await _domain_slots_kb(session, user)
-        active = await get_active_domain_slot(session, user)
-        base = await get_domain_base(session, user, active)
-    await callback.message.edit_reply_markup(reply_markup=kb)
-    await callback.answer(f"Слот #{slot} очищен")
-
-
-@router.callback_query(F.data.startswith("aqua_domain_use:"))
-async def aqua_domain_use_cb(callback: CallbackQuery, state: FSMContext) -> None:
+        mode = await get_user_gag_domain_mode(session, user)
     await state.clear()
-    slot = int((callback.data or "").split(":", 1)[1])
-    if not 1 <= slot <= 8:
-        return await callback.answer()
-    async with Session() as session:
-        user = await get_or_create_user(session, callback.from_user.id)
-        if not await get_domain_base(session, user, slot):
-            return await callback.answer("Сначала Установить #N", show_alert=True)
-        await set_active_domain_slot(session, user, slot)
-        await session.commit()
-        kb = await _domain_slots_kb(session, user)
-        active = slot
-        base = await get_domain_base(session, user, active)
-    text = (
-        f"{html_emoji('link')} <b>Домены GAG</b> (слоты 1–8)\n\n"
-        f"Активный: <b>{profile_domain_summary(active, base)}</b>\n"
-        f"В API уходит <code>domain={active}</code>, <code>version=lk</code> → <code>/get/…</code>\n\n"
-        "<b>Установить #N</b> — URL домена команды (https://…).\n"
-        "Если GAG отдаёт <code>undefined/get/…</code>, бот подставит ваш домен из слота.\n"
-        "<b>❌</b> — очистить слот."
+    await callback.message.edit_text(
+        _domain_menu_text(mode),
+        reply_markup=_domain_mode_kb(mode),
+        parse_mode="HTML",
     )
-    await callback.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
-    await callback.answer(f"Активен #{slot}")
+    await callback.answer(toast("ok", profile_domain_label(mode)))
 
 
 @router.callback_query(F.data.startswith("aqua_service_set:"))

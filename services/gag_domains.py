@@ -1,4 +1,4 @@
-"""Домены GAG (слоты 1–8): базовый URL команды + активный слот для POST /generate."""
+"""Домен GAG в профиле: команда (без domain в API) или Домен 1–4 → API 5–8."""
 
 from __future__ import annotations
 
@@ -8,95 +8,97 @@ from models import User
 from services.user_settings import get_user_setting, set_user_setting
 
 AQUA_GENERATE_DOMAIN_KEY = "aqua_generate_domain"
-GAG_DOMAIN_BASE_PREFIX = "gag_domain_base_"
+
+DOMAIN_MODE_TEAM = "team"
+DOMAIN_MODES_NUMBERED = ("1", "2", "3", "4")
 
 _BAD_HOSTS = frozenset({"undefined", "null", "none", ""})
 
 
-def domain_base_setting_key(slot: int) -> str:
-    n = max(1, min(8, int(slot)))
-    return f"{GAG_DOMAIN_BASE_PREFIX}{n}"
-
-
-async def get_domain_base(session, user: User, slot: int) -> str:
-    key = domain_base_setting_key(slot)
-    raw = (await get_user_setting(session, user, key) or "").strip().rstrip("/")
-    if not raw:
-        return ""
-    if not raw.lower().startswith(("http://", "https://")):
-        raw = f"https://{raw.lstrip('/')}"
-    return raw.rstrip("/")
-
-
-async def set_domain_base(session, user: User, slot: int, base: str | None) -> None:
-    key = domain_base_setting_key(slot)
-    v = (base or "").strip().rstrip("/")
-    if v and not v.lower().startswith(("http://", "https://")):
-        v = f"https://{v.lstrip('/')}"
-    await set_user_setting(session, user, key, v or None)
-
-
-async def clear_domain_base(session, user: User, slot: int) -> None:
-    await set_domain_base(session, user, slot, None)
-
-
-async def get_active_domain_slot(session, user: User, *, default: int = 1) -> int:
-    raw = (await get_user_setting(session, user, AQUA_GENERATE_DOMAIN_KEY) or "").strip()
+async def get_user_gag_domain_mode(session, user: User, *, default: str = DOMAIN_MODE_TEAM) -> str:
+    raw = (await get_user_setting(session, user, AQUA_GENERATE_DOMAIN_KEY) or "").strip().lower()
+    if raw in (DOMAIN_MODE_TEAM, "command", "team_domain", "0"):
+        return DOMAIN_MODE_TEAM
+    if raw in DOMAIN_MODES_NUMBERED:
+        return raw
     if raw.isdigit():
         n = int(raw)
-        if 1 <= n <= 8:
-            return n
-    return max(1, min(8, int(default)))
+        if 5 <= n <= 8:
+            return str(n - 4)
+        if 1 <= n <= 4:
+            return str(n)
+    return default
 
 
-async def set_active_domain_slot(session, user: User, slot: int) -> None:
-    n = max(1, min(8, int(slot)))
-    await set_user_setting(session, user, AQUA_GENERATE_DOMAIN_KEY, str(n))
+async def set_user_gag_domain_mode(session, user: User, mode: str) -> None:
+    m = (mode or "").strip().lower()
+    if m == DOMAIN_MODE_TEAM:
+        await set_user_setting(session, user, AQUA_GENERATE_DOMAIN_KEY, DOMAIN_MODE_TEAM)
+        return
+    if m in DOMAIN_MODES_NUMBERED:
+        await set_user_setting(session, user, AQUA_GENERATE_DOMAIN_KEY, m)
+        return
+    raise ValueError(f"Unknown domain mode: {mode!r}")
 
 
-def slot_button_label(slot: int, *, active: int, has_base: bool) -> str:
-    if int(slot) == int(active) and has_base:
-        return f"Сменить #{slot}"
-    if has_base:
-        return f"#{slot} · выбрать"
-    return f"Установить #{slot}"
-
-
-def profile_domain_summary(active: int, base: str) -> str:
-    b = (base or "").strip()
-    if b:
-        host = urlparse(b).hostname or b.replace("https://", "").replace("http://", "")[:40]
-        return f"#{active} · {host}"
-    return f"#{active} · не задан (укажи домен команды)"
-
-
-def normalize_gag_generated_url(url: str, *, domain_slot: int, domain_base: str) -> str:
+def gag_api_domain_for_mode(mode: str) -> int | None:
     """
-    GAG иногда отдаёт https://undefined/get/ID — подставляем базу из профиля (слот 1–8).
+    None — домен команды (поле domain в JSON не отправляем).
+    5–8 — для «Домен 1» … «Домен 4» (слот + 4).
     """
+    m = (mode or "").strip().lower()
+    if m in (DOMAIN_MODE_TEAM, "", "team"):
+        return None
+    if m in DOMAIN_MODES_NUMBERED:
+        return int(m) + 4
+    return None
+
+
+def profile_domain_label(mode: str) -> str:
+    m = (mode or DOMAIN_MODE_TEAM).strip().lower()
+    if m == DOMAIN_MODE_TEAM:
+        return "Домен команды"
+    if m in DOMAIN_MODES_NUMBERED:
+        return f"Домен {m}"
+    return m or "—"
+
+
+def domain_mode_menu_options() -> tuple[tuple[str, str], ...]:
+    return (
+        (DOMAIN_MODE_TEAM, "Домен команды"),
+        ("1", "Домен 1"),
+        ("2", "Домен 2"),
+        ("3", "Домен 3"),
+        ("4", "Домен 4"),
+    )
+
+
+def finalize_gag_generated_url(url: str, *, mode: str) -> str:
     raw = (url or "").strip()
     if not raw:
-        raise ValueError("Пустая ссылка от API")
-
+        raise ValueError("Пустая ссылка от GAG API")
     if not raw.lower().startswith(("http://", "https://")):
         raw = f"https://{raw.lstrip('/')}"
 
-    p = urlparse(raw)
-    host = (p.hostname or "").strip().lower()
-    path = p.path or ""
-    if not path.startswith("/"):
-        path = f"/{path}" if path else ""
-
-    if host not in _BAD_HOSTS and host:
+    host = (urlparse(raw).hostname or "").strip().lower()
+    if host and host not in _BAD_HOSTS:
         return raw
 
-    base = (domain_base or "").strip().rstrip("/")
-    if not base:
+    if (mode or "").strip().lower() == DOMAIN_MODE_TEAM:
         raise ValueError(
-            f"GAG вернул некорректный домен ({raw}). "
-            f"Профиль → Домен GAG → Установить #{domain_slot} — введи URL домена команды."
+            "GAG вернул некорректную ссылку. Выбери «Домен команды» в профиле и проверь apikey в панели GAG."
         )
+    raise ValueError(f"GAG вернул некорректную ссылку ({raw}). Попробуй другой «Домен 1–4» или команду.")
 
-    q = f"?{p.query}" if p.query else ""
-    frag = f"#{p.fragment}" if p.fragment else ""
-    return f"{base}{path or '/'}{q}{frag}"
+
+# Совместимость со старым кодом
+async def get_active_domain_slot(session, user: User, *, default: int = 1) -> int:
+    mode = await get_user_gag_domain_mode(session, user)
+    if mode == DOMAIN_MODE_TEAM:
+        return 0
+    return int(mode)
+
+
+async def get_user_generate_domain(session, user: User) -> int | None:
+    mode = await get_user_gag_domain_mode(session, user)
+    return gag_api_domain_for_mode(mode)

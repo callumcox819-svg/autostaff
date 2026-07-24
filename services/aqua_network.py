@@ -208,9 +208,11 @@ async def generate_aqua_link_no_parse(
         "address": addr,
         "service": service,
         "balanceChecker": _balance_checker_flag(balance_checker),
-        "domain": max(1, min(8, int(domain))) if domain is not None else _generate_domain_num(),
         "version": _link_version(),
     }
+    if domain is not None:
+        body["domain"] = max(5, min(8, int(domain)))
+    # domain is None → домен команды, поле domain не отправляем
     if img.lower().startswith(("http://", "https://")):
         body["image"] = img
 
@@ -218,7 +220,7 @@ async def generate_aqua_link_no_parse(
     logger.info(
         "GAG /generate ok service=%s domain=%s version=%s title=%r",
         body.get("service"),
-        body.get("domain"),
+        body.get("domain", "team"),
         body.get("version"),
         (body.get("title") or "")[:60],
     )

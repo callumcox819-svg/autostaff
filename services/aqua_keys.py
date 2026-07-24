@@ -76,10 +76,11 @@ async def get_user_aqua_service(session, user: User) -> str:
     return normalize_aqua_service(AQUA_DEFAULT_SERVICE) or AQUA_DEFAULT_SERVICE
 
 
-async def get_user_generate_domain(session, user: User) -> int:
-    from services.gag_domains import get_active_domain_slot
+async def get_user_generate_domain(session, user: User) -> int | None:
+    from services.gag_domains import get_user_gag_domain_mode, gag_api_domain_for_mode
 
-    return await get_active_domain_slot(session, user)
+    mode = await get_user_gag_domain_mode(session, user)
+    return gag_api_domain_for_mode(mode)
 
 
 def normalize_aqua_api_key(value: str | None) -> str:

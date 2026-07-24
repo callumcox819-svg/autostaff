@@ -96,6 +96,15 @@ def short_block_reason(err: str | None) -> str:
     return s[:220]
 
 
+def smtp_removed_from_mailing_notice_html(*, lead: str = "\n\n") -> str:
+    """Текст на карточке отбоя / уведомление: с рассылки сняли, IMAP оставили."""
+    return (
+        f"{lead}{html_emoji('yellow')} {html_emoji('stop')} "
+        f"<b>Почта удалена с рассылки</b>, {html_emoji('email')} "
+        f"<b>оставлена для получения писем</b> (IMAP)."
+    )
+
+
 async def block_control_enabled(session: AsyncSession, db_user_id: int) -> bool:
     user = (
         await session.execute(sa_select(User).where(User.id == int(db_user_id)).limit(1))
@@ -160,7 +169,6 @@ async def mark_account_smtp_blocked(
 
     notify = force or await block_control_enabled(session, db_user_id)
     if bot and chat_id and notify:
-        # IMAP Message blocked: карточка письма уже с предупреждением — без дубля текста ошибки.
         if not force:
             await notify_smtp_stream_stopped_for_imap(
                 bot,
@@ -168,10 +176,12 @@ async def mark_account_smtp_blocked(
                 account.email or "",
                 reason=err,
             )
-        em = html.escape((account.email or "").strip())
-        await bot.send_message(
-            int(chat_id),
-            f"<b>{em}</b>: неактивен для отправок {html_emoji('red')} · IMAP остаётся {html_emoji('green')}",
-            parse_mode="HTML",
-        )
+            em = html.escape((account.email or "").strip())
+            await bot.send_message(
+                int(chat_id),
+                smtp_removed_from_mailing_notice_html(lead="")
+                + f"\n<code>{em}</code>",
+                parse_mode="HTML",
+            )
+        # force (IMAP Message blocked): текст на карточке письма — без второго сообщения
     return True

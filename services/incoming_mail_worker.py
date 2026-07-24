@@ -1745,10 +1745,9 @@ async def _process_mails_for_account_impl(
                 offer_price=offer_price,
             )
             if smtp_block_bounce and chunks:
-                chunks[0] += (
-                    f"\n\n{html_emoji('warn')} <b>Почта переведена в неактивные для рассылки.</b> "
-                    "IMAP мониторинг оставлен включённым."
-                )
+                from services.smtp_block_control import smtp_removed_from_mailing_notice_html
+
+                chunks[0] += smtp_removed_from_mailing_notice_html()
 
             if not mail_db_id:
                 try:

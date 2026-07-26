@@ -516,18 +516,24 @@ async def _validate_offers_old(
     if stats is not None:
         stats["validemail_per_key"] = per_key_limit
         stats["validemail_threads"] = n_keys
+        stats["validemail_pool"] = parallel_pool
+
+    logger.info(
+        "validemail: keys=%s × %s req/key pool=%s batch=%s pause=%.2fs sellers=%s tail_all=%s",
+        n_keys,
+        per_key_limit,
+        parallel_pool,
+        seller_batch_size(),
+        seller_batch_pause_sec(),
+        len(prepared),
+        tail_domains_one_batch(),
+    )
 
     if n_keys >= 2:
         logger.info(
-            "validemail: batch=%s pause=%.1fs keys=%s × %s req/key pool=%s parallel/key=%s tail_wave=%s sellers=%s",
-            seller_batch_size(),
-            seller_batch_pause_sec(),
+            "validemail: parallel sellers cap≈%s (×%s keys)",
+            min(seller_batch_size(), sellers_parallel * n_keys),
             n_keys,
-            per_key_limit,
-            parallel_pool,
-            sellers_parallel,
-            tail_wave,
-            len(prepared),
         )
 
     async def _run_batch(
@@ -555,9 +561,10 @@ async def _validate_offers_old(
             except Exception:
                 pass
 
+        use_keys = api_keys if len(batch_emails) > 1 and n_keys > 1 else [api_key]
         return await validate_emails_fast(
             batch_emails,
-            api_keys=[api_key],
+            api_keys=use_keys,
             concurrency=per_key_limit,
             url=url,
             use_ssl_verify=bool(cfg.use_ssl_verify),
@@ -847,7 +854,7 @@ async def _validate_offers_old(
         if stats is not None:
             stats["api_retry_pass"] = len(retry_idxs)
         rt = seller_validation_timeout_sec()
-        r_cap = max(2, min(8, sellers_parallel * n_keys // 2 or 4))
+        r_cap = max(4, min(24, sellers_parallel * max(1, n_keys // 2)))
         r_sem = asyncio.Semaphore(r_cap)
 
         async def _retry_one(i: int) -> None:

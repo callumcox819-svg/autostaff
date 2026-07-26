@@ -33,11 +33,14 @@ def seller_parallel_per_key() -> int:
 
 
 def seller_batch_size() -> int:
-    raw = (os.getenv("VALIDEMAIL_SELLER_BATCH_SIZE") or "25").strip()
+    raw = (os.getenv("VALIDEMAIL_SELLER_BATCH_SIZE") or "").strip()
+    if not raw:
+        n = len(keys_from_config())
+        raw = "40" if n >= 4 else "25"
     try:
-        return max(1, min(50, int(raw)))
+        return max(1, min(60, int(raw)))
     except (TypeError, ValueError):
-        return 20
+        return 25
 
 
 def seller_batch_pause_sec() -> float:
@@ -107,3 +110,16 @@ def validation_concurrency_plan(num_keys: int) -> tuple[int, int]:
         return per, per * n
     per_effective = max(1, pool // n)
     return per_effective, per_effective * n
+
+
+def global_inflight_cap(num_keys: int | None = None) -> int:
+    """Суммарный in-flight HTTP: по умолчанию per_key × число ключей (5 ключей ≈ 120)."""
+    n = max(1, int(num_keys or 0) or len(keys_from_config()) or 1)
+    per = per_key_concurrency_limit()
+    raw = (os.getenv("VALIDEMAIL_GLOBAL_INFLIGHT") or "").strip()
+    if raw:
+        try:
+            return max(12, min(200, int(raw)))
+        except (TypeError, ValueError):
+            pass
+    return max(24, min(200, per * n))

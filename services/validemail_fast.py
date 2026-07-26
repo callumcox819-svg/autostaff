@@ -85,9 +85,14 @@ def _global_inflight_sem() -> asyncio.Semaphore:
     global _GLOBAL_INFLIGHT
     if _GLOBAL_INFLIGHT is None:
         try:
-            cap = max(12, min(80, int(os.getenv("VALIDEMAIL_GLOBAL_INFLIGHT", "48"))))
-        except (TypeError, ValueError):
-            cap = 96
+            from services.validemail_keys import global_inflight_cap
+
+            cap = global_inflight_cap()
+        except Exception:
+            try:
+                cap = max(12, min(200, int(os.getenv("VALIDEMAIL_GLOBAL_INFLIGHT", "48"))))
+            except (TypeError, ValueError):
+                cap = 96
         _GLOBAL_INFLIGHT = asyncio.Semaphore(cap)
     return _GLOBAL_INFLIGHT
 

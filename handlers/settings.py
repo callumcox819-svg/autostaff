@@ -625,12 +625,13 @@ async def themes_menu(callback: CallbackQuery, state: FSMContext):
     preview = render_subject_with_offer(tpl, "Velo Zürich")
     txt = (
         f"{html_emoji('pin')} <b>Тема рассылки (/send)</b>\n\n"
-        "Один шаблон для <b>всех пользователей</b>.\n"
-        "<code>OFFER</code> или <code>{{OFFER}}</code> — название товара из валид. объявления.\n\n"
-        f"Шаблон: <code>{escape(tpl)}</code>\n"
+        "При рассылке — <b>15 вариантов</b> тем (DE, как у покупателя), "
+        "в каждом подставляется название товара (<code>OFFER</code>).\n"
+        "Отключить ротацию: <code>MAILING_ROTATE_SUBJECT=0</code> — тогда только шаблон ниже.\n\n"
+        "<code>OFFER</code> или <code>{{OFFER}}</code> — название из валид. объявления.\n\n"
+        f"Шаблон (если ротация выкл.): <code>{escape(tpl)}</code>\n"
         f"Пример: <code>{escape(preview)}</code>\n\n"
-        "Меняется только на сервере: <code>GLOBAL_SUBJECT_TEMPLATE</code> в Railway / .env\n"
-        "(по умолчанию <code>Re: OFFER</code>)."
+        "<code>GLOBAL_SUBJECT_TEMPLATE</code> в Railway / .env."
     )
     kb = InlineKeyboardMarkup(
         inline_keyboard=[_back_kb("settings_open").inline_keyboard[0]],

@@ -49,6 +49,24 @@ class OfferSubjectMatchTests(unittest.TestCase):
         subj = "Re: Trampoline"
         self.assertEqual(gag_link_title_from_mail(subj, tramp), "Trampoline")
 
+    def test_gag_link_title_rotating_subject_uses_offer_title(self):
+        iphone = SimpleNamespace(
+            title="iPhone 14 Pro, 128 GB, Schwarz",
+            raw_json=None,
+        )
+        subj = "Kurze Frage zu iPhone 14 Pro, 128 GB, Schwarz"
+        self.assertEqual(
+            gag_link_title_from_mail(subj, iphone),
+            "iPhone 14 Pro, 128 GB, Schwarz",
+        )
+
+    def test_pick_mailing_subject_contains_product(self):
+        from services.subject_offer import pick_mailing_subject
+
+        subj = pick_mailing_subject("Velo Zürich")
+        self.assertIn("Velo Zürich", subj)
+        self.assertGreater(len(subj), 8)
+
     def test_pick_trampoline_offer_among_seller_listings(self):
         tramp = SimpleNamespace(
             title="Trampoline van Berg",

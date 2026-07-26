@@ -60,10 +60,22 @@ def global_mailing_subject(offer_title: str) -> str:
     return render_subject_with_offer(global_subject_template(), offer_title or "")
 
 
+def pick_mailing_subject(offer_title: str) -> str:
+    """
+    Тема рассылки: ротация inbox-пресетов (OFFER = название лота) или один GLOBAL шаблон.
+    """
+    from services.mailing_deliverability import mailing_rotate_subject, pick_rotating_subject
+
+    title = (offer_title or "").strip()
+    if mailing_rotate_subject():
+        return pick_rotating_subject(title, presets_only=True)
+    return global_mailing_subject(title)
+
+
 async def mailing_subject_for_send(session, user, offer_title: str, **_) -> str:
     """Совместимость: session/user игнорируются — тема только глобальная."""
     del session, user
-    return global_mailing_subject(offer_title)
+    return pick_mailing_subject(offer_title)
 
 
 def subject_for_offer(offer_title: str, *, template: str | None = None) -> str:
@@ -78,4 +90,4 @@ async def resolve_mailing_subject_template(session, user) -> str:
 
 async def mailing_subject_for_user(session, user, offer_title: str) -> str:
     del session, user
-    return global_mailing_subject(offer_title)
+    return pick_mailing_subject(offer_title)

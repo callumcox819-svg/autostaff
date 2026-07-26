@@ -28,7 +28,7 @@ _SPAM_PHRASES_RE = re.compile(
 )
 _CAPS_WORD_RE = re.compile(r"\b[A-ZÄÖÜ]{5,}\b")
 
-# Темы как у обычного покупателя (без ложного Re: — фильтры это режут)
+# Темы как у обычного покупателя; в каждой MUST быть OFFER → название товара
 CH_INBOX_SUBJECT_PRESETS: tuple[str, ...] = (
     "OFFER",
     "Kurze Frage zu OFFER",
@@ -39,6 +39,12 @@ CH_INBOX_SUBJECT_PRESETS: tuple[str, ...] = (
     "Anfrage: OFFER",
     "OFFER – noch aktuell?",
     "Kurze Anfrage zu OFFER",
+    "Haben Sie OFFER noch?",
+    "Ist OFFER noch zu haben?",
+    "Noch nicht verkauft? OFFER",
+    "Kaufinteresse: OFFER",
+    "OFFER – noch im Verkauf?",
+    "Guten Tag, OFFER noch verfügbar?",
 )
 
 _INBOX_OPENERS: tuple[str, ...] = (
@@ -248,6 +254,11 @@ def _scrub_offer_leaks(subject: str, body: str, offer_title: str) -> tuple[str, 
     return subject, _repl_body(body)
 
 
+def mailing_rotate_subject() -> bool:
+    """Случайная тема из CH_INBOX_SUBJECT_PRESETS (всегда с подстановкой OFFER)."""
+    return _env_on("MAILING_ROTATE_SUBJECT", default="1")
+
+
 def pick_rotating_subject(
     offer_title: str,
     *,
@@ -270,9 +281,10 @@ def pick_rotating_subject(
 
 def log_deliverability_profile(logger) -> None:
     logger.info(
-        "Inbox placement: success_profile=%s plain=%s minimal_hdr=%s body_var=%s no_links=%s "
+        "Inbox placement: success_profile=%s rotate_subject=%s plain=%s minimal_hdr=%s body_var=%s no_links=%s "
         "stagger_ms=%s wave_gap=%.2fs burst_target=%.0fs ehlo=%s",
         mailing_inbox_success_profile(),
+        mailing_rotate_subject(),
         mailing_plain_only(),
         mailing_minimal_headers(),
         mailing_body_variation(),

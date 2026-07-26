@@ -173,10 +173,10 @@ async def _build_message_for_target(
     buyer_name = ((await get_user_setting(session, user, AQUA_PROFILE_NAME_KEY)) or "").strip()
     address = ((await get_user_setting(session, user, AQUA_PROFILE_ADDRESS_KEY)) or "").strip()
 
-    from services.subject_offer import global_mailing_subject
+    from services.subject_offer import pick_mailing_subject
     from services.mailing_deliverability import finalize_inbox_mail
 
-    subject = global_mailing_subject(item_title or "")
+    subject = pick_mailing_subject(item_title or "")
 
     ctx = {
         "ITEM_TITLE": item_title,

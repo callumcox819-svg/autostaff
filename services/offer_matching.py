@@ -51,13 +51,26 @@ def product_title_from_subject(subject: str) -> str:
 
 
 def gag_link_title_from_mail(subject: str, offer: Offer | None = None) -> str:
-    """Имя для GAG API и карточки ссылки — всегда из темы письма, не из title в БД."""
+    """Имя для GAG API — из лота в БД, если тема с префиксом рассылки; иначе из Re: темы."""
+    from services.offer_storage import offer_effective_title
+
     subj_t = product_title_from_subject(subject)
+    if offer:
+        ot = (offer_effective_title(offer) or "").strip()
+        if ot:
+            if subj_t and subject_title_agrees(subject, offer):
+                if len(subj_t) <= len(ot) + 8:
+                    return subj_t
+            if subj_t and (
+                ot.lower() in subj_t.lower()
+                or subj_t.lower() in ot.lower()
+                or subject_match_score(subject, offer) >= 40.0
+            ):
+                return ot
+            return ot
     if subj_t:
         return subj_t
     if offer:
-        from services.offer_storage import offer_effective_title
-
         ot = (offer_effective_title(offer) or "").strip()
         if ot:
             return ot
@@ -157,6 +170,22 @@ _SUBJECT_STOP = frozenset(
         "your",
         "item",
         "artikel",
+        "kurze",
+        "frage",
+        "anfrage",
+        "interesse",
+        "kaufinteresse",
+        "verkauf",
+        "verkauft",
+        "verfügbar",
+        "verfugbar",
+        "aktuell",
+        "haben",
+        "noch",
+        "nicht",
+        "guten",
+        "tag",
+        "kauf",
     }
 )
 

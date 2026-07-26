@@ -267,9 +267,9 @@ def _should_retry_same_domain(ok: bool, raw: object) -> bool:
 
 def _probe_max_attempts() -> int:
     try:
-        return max(1, min(5, int(os.getenv("VALIDEMAIL_PROBE_RETRIES", "3"))))
+        return max(1, min(5, int(os.getenv("VALIDEMAIL_PROBE_RETRIES", "4"))))
     except (TypeError, ValueError):
-        return 3
+        return 4
 
 
 # -------------------------
@@ -479,6 +479,7 @@ async def _validate_offers_old(
     url = str(cfg.validation_url or DEFAULT_VALIDEMAIL_URL).strip()
 
     from services.validemail_keys import (
+        domain_probe_wave_size,
         max_domains_per_seller,
         seller_parallel_per_key,
         validation_concurrency_plan,
@@ -488,6 +489,8 @@ async def _validate_offers_old(
     dom_cap = max_domains_per_seller()
     if dom_cap > 0:
         domains_clean = domains_clean[:dom_cap]
+
+    tail_wave = max(1, domain_probe_wave_size())
 
     n_keys = max(1, len(api_keys))
     per_key_limit, parallel_pool = validation_concurrency_plan(n_keys)
@@ -511,11 +514,12 @@ async def _validate_offers_old(
 
     if n_keys >= 2:
         logger.info(
-            "validemail: %s keys × %s req/key, pool=%s, seller_parallel/key=%s, domains=sequential, sellers=%s",
+            "validemail: %s keys × %s req/key, pool=%s, seller_parallel/key=%s, dom1=seq tail_wave=%s, sellers=%s",
             n_keys,
             per_key_limit,
             parallel_pool,
             sellers_parallel,
+            tail_wave,
             len(prepared),
         )
 
@@ -635,6 +639,109 @@ async def _validate_offers_old(
             delay = _retry_delay_sec(attempt, last_raw if isinstance(last_raw, dict) else {})
             await asyncio.sleep(delay)
 
+    async def _consume_wave_priority(
+        seller_i: int,
+        results: list[tuple[str, bool, dict]],
+        priority_emails: list[str],
+        *,
+        count_api_errors: bool = True,
+    ) -> int:
+        nonlocal overall_done
+        by_lc: dict[str, tuple[str, bool, dict]] = {}
+        for e, ok, raw in results:
+            by_lc[(e or "").strip().lower()] = (e, ok, raw)
+
+        async with state_lock:
+            overall_done += len(results)
+            combos_valid = 0
+            wave_api_fail = False
+            for em_lc in priority_emails:
+                em_lc = (em_lc or "").strip().lower()
+                row = by_lc.get(em_lc)
+                if not row:
+                    continue
+                _e, ok, raw = row
+                if len(found_by_idx[seller_i]) >= per_seller_limit:
+                    break
+                if not ok:
+                    if _is_api_failure(ok, raw):
+                        wave_api_fail = True
+                    continue
+                combos_valid += 1
+                key = (_e or "").strip().lower()
+                lst = found_by_idx[seller_i]
+                if len(lst) >= per_seller_limit or key in lst:
+                    continue
+                if key in seen_valid_emails:
+                    if stats is not None:
+                        stats["duplicates"] = int(stats.get("duplicates") or 0) + 1
+                    continue
+                seen_valid_emails.add(key)
+                lst.append(key)
+                if stats is not None:
+                    stats["last_valid_email"] = key
+                break
+            if count_api_errors and wave_api_fail and stats is not None:
+                stats["api_errors"] = int(stats.get("api_errors") or 0) + 1
+            return combos_valid
+
+    async def _probe_tail_domains(seller_i: int, local: str, api_key: str) -> None:
+        """Домены 2…N волнами (приоритет внутри волны); домен 1 — только через _probe_email."""
+        if found_by_idx[seller_i] or len(domains_clean) < 2:
+            return
+        loc = (local or "").strip().lower()
+        if not loc:
+            return
+        off = 1
+        n = len(domains_clean)
+        while off < n and not found_by_idx[seller_i]:
+            chunk = domains_clean[off : off + tail_wave]
+            off += len(chunk)
+            batch = [f"{loc}@{dom}".lower() for dom in chunk]
+            max_attempts = _probe_max_attempts()
+            for attempt in range(max_attempts):
+                results = await _run_batch(
+                    batch,
+                    seller_i=seller_i,
+                    dom=chunk[0] if chunk else "",
+                    api_key=api_key,
+                )
+                is_last = attempt >= max_attempts - 1
+                cv = await _consume_wave_priority(
+                    seller_i,
+                    results,
+                    batch,
+                    count_api_errors=is_last,
+                )
+                async with state_lock:
+                    if stats is not None:
+                        stats["combinations_valid"] = int(
+                            stats.get("combinations_valid") or 0
+                        ) + cv
+                    _refresh_stats()
+                if found_by_idx[seller_i]:
+                    return
+                if any(r[1] for r in results):
+                    return
+                retry = any(
+                    _should_retry_same_domain(ok, raw) for _e, ok, raw in results
+                )
+                if not retry or is_last:
+                    break
+                raw0 = results[0][2] if results else {}
+                await asyncio.sleep(
+                    _retry_delay_sec(attempt, raw0 if isinstance(raw0, dict) else {})
+                )
+
+    async def _probe_local_priority(seller_i: int, local: str, api_key: str) -> None:
+        if found_by_idx[seller_i] or not domains_clean:
+            return
+        loc = (local or "").strip().lower()
+        if not loc:
+            return
+        await _probe_email(seller_i, f"{loc}@{domains_clean[0]}", domains_clean[0], api_key)
+        await _probe_tail_domains(seller_i, local, api_key)
+
     async def _validate_seller(i: int, api_key: str) -> None:
         row = prepared[i]
         async with state_lock:
@@ -649,10 +756,7 @@ async def _validate_offers_old(
         extra_locals = locals_list[1:]
 
         if not found_by_idx[i]:
-            for dom in domains_clean:
-                if found_by_idx[i]:
-                    break
-                await _probe_email(i, f"{primary}@{dom}", dom, api_key)
+            await _probe_local_priority(i, primary, api_key)
 
         if found_by_idx[i]:
             nk = str(prepared[i].get("name_key") or "").strip()
@@ -665,10 +769,7 @@ async def _validate_offers_old(
         for local in extra_locals:
             if found_by_idx[i]:
                 break
-            for dom in domains_clean:
-                if found_by_idx[i]:
-                    break
-                await _probe_email(i, f"{local}@{dom}", dom, api_key)
+            await _probe_local_priority(i, local, api_key)
 
         if found_by_idx[i]:
             nk = str(prepared[i].get("name_key") or "").strip()

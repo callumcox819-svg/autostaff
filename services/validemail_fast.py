@@ -42,13 +42,50 @@ _SESSION: aiohttp.ClientSession | None = None
 _KEY_SEMAPHORES: dict[str, asyncio.Semaphore] = {}
 _KEY_SEM_LIMITS: dict[str, int] = {}
 _GLOBAL_INFLIGHT: asyncio.Semaphore | None = None
+_RATE_PAUSE_UNTIL: float = 0.0
+_RATE_LOCK: asyncio.Lock | None = None
+
+
+def _rate_lock() -> asyncio.Lock:
+    global _RATE_LOCK
+    if _RATE_LOCK is None:
+        _RATE_LOCK = asyncio.Lock()
+    return _RATE_LOCK
+
+
+async def _await_validemail_rate_limit() -> None:
+    """Общая пауза после 429 — меньше ложных «без email»."""
+    while True:
+        async with _rate_lock():
+            wait = _RATE_PAUSE_UNTIL - time.time()
+        if wait <= 0:
+            return
+        await asyncio.sleep(min(2.0, wait))
+
+
+def _register_validemail_429(raw: dict, *, attempt: int = 0) -> None:
+    global _RATE_PAUSE_UNTIL
+    try:
+        st = int(raw.get("_http_status") or 0)
+    except (TypeError, ValueError):
+        return
+    if st != 429:
+        return
+    ra = raw.get("_retry_after")
+    extra = 0.9 * (2 ** min(4, int(attempt)))
+    if ra is not None:
+        try:
+            extra = max(extra, float(ra))
+        except (TypeError, ValueError):
+            pass
+    _RATE_PAUSE_UNTIL = max(_RATE_PAUSE_UNTIL, time.time() + min(12.0, extra))
 
 
 def _global_inflight_sem() -> asyncio.Semaphore:
     global _GLOBAL_INFLIGHT
     if _GLOBAL_INFLIGHT is None:
         try:
-            cap = max(12, min(80, int(os.getenv("VALIDEMAIL_GLOBAL_INFLIGHT", "42"))))
+            cap = max(12, min(80, int(os.getenv("VALIDEMAIL_GLOBAL_INFLIGHT", "50"))))
         except (TypeError, ValueError):
             cap = 96
         _GLOBAL_INFLIGHT = asyncio.Semaphore(cap)
@@ -381,6 +418,7 @@ async def _fetch_validemail_once(
     url: str,
     use_ssl_verify: bool,
 ) -> tuple[bool, dict]:
+    await _await_validemail_rate_limit()
     s = await _get_session()
     headers, params = _build_request(url, api_key, email_lc)
     ssl = None if use_ssl_verify else False
@@ -396,6 +434,8 @@ async def _fetch_validemail_once(
             ra = r.headers.get("Retry-After")
             if ra:
                 raw["_retry_after"] = ra
+            if status == 429:
+                _register_validemail_429(raw, attempt=0)
             if status in _NO_RETRY_HTTP:
                 raw["_api_key_error"] = True
                 msg = raw.get("message") or raw.get("error") or raw.get("detail")
@@ -469,6 +509,10 @@ async def _check_one(
                         if _should_cache_result(last_raw):
                             _cache_set(url, email_lc, False, last_raw)
                         return email, False, last_raw
+
+                    if isinstance(last_raw, dict):
+                        if int(last_raw.get("_http_status") or 0) == 429:
+                            _register_validemail_429(last_raw, attempt=attempt)
 
                     if isinstance(last_raw, dict) and last_raw.get("_api_key_error"):
                         if _should_cache_result(last_raw):

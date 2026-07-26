@@ -267,7 +267,7 @@ def _should_retry_same_domain(ok: bool, raw: object) -> bool:
 
 def _probe_max_attempts() -> int:
     try:
-        return max(1, min(5, int(os.getenv("VALIDEMAIL_PROBE_RETRIES", "3"))))
+        return max(1, min(5, int(os.getenv("VALIDEMAIL_PROBE_RETRIES", "2"))))
     except (TypeError, ValueError):
         return 3
 
@@ -485,6 +485,7 @@ async def _validate_offers_old(
         seller_batch_size,
         seller_parallel_per_key,
         seller_validation_timeout_sec,
+        tail_domains_one_batch,
         validation_concurrency_plan,
         validation_pool_size,
     )
@@ -510,6 +511,7 @@ async def _validate_offers_old(
     seen_valid_emails: set[str] = set()
     state_lock = asyncio.Lock()
     sellers_completed = 0
+    seller_api_fail: list[int] = [0] * len(prepared)
 
     if stats is not None:
         stats["validemail_per_key"] = per_key_limit
@@ -578,6 +580,7 @@ async def _validate_offers_old(
                 if not ok:
                     if count_api_errors and stats is not None and _is_api_failure(ok, raw):
                         stats["api_errors"] = int(stats.get("api_errors") or 0) + 1
+                        seller_api_fail[seller_i] += 1
                     continue
                 combos_valid += 1
                 key = (_e or "").strip().lower()
@@ -688,10 +691,11 @@ async def _validate_offers_old(
                 break
             if count_api_errors and wave_api_fail and stats is not None:
                 stats["api_errors"] = int(stats.get("api_errors") or 0) + 1
+                seller_api_fail[seller_i] += 1
             return combos_valid
 
     async def _probe_tail_domains(seller_i: int, local: str, api_key: str) -> None:
-        """Домены 2…N волнами (приоритет внутри волны); домен 1 — только через _probe_email."""
+        """Домены 2…N: одним батчем (быстро) или волнами; домен 1 — только _probe_email."""
         if found_by_idx[seller_i] or len(domains_clean) < 2:
             return
         loc = (local or "").strip().lower()
@@ -699,9 +703,16 @@ async def _validate_offers_old(
             return
         off = 1
         n = len(domains_clean)
+        tail_all = tail_domains_one_batch()
         while off < n and not found_by_idx[seller_i]:
-            chunk = domains_clean[off : off + tail_wave]
-            off += len(chunk)
+            if tail_all:
+                chunk = domains_clean[off:]
+                off = n
+            else:
+                chunk = domains_clean[off : off + tail_wave]
+                off += len(chunk)
+            if not chunk:
+                break
             batch = [f"{loc}@{dom}".lower() for dom in chunk]
             max_attempts = _probe_max_attempts()
             for attempt in range(max_attempts):
@@ -825,6 +836,33 @@ async def _validate_offers_old(
                 await asyncio.sleep(pause)
 
     await _run_sellers_batched()
+
+    retry_idxs = [
+        i
+        for i in range(n_sellers)
+        if not found_by_idx[i] and seller_api_fail[i] > 0
+    ]
+    if retry_idxs:
+        logger.info("validemail api-fail retry: %s sellers", len(retry_idxs))
+        if stats is not None:
+            stats["api_retry_pass"] = len(retry_idxs)
+        rt = seller_validation_timeout_sec()
+        r_cap = max(2, min(8, sellers_parallel * n_keys // 2 or 4))
+        r_sem = asyncio.Semaphore(r_cap)
+
+        async def _retry_one(i: int) -> None:
+            my_key = api_keys[i % n_keys]
+            async with r_sem:
+                try:
+                    await asyncio.wait_for(_validate_seller(i, my_key), timeout=rt)
+                except asyncio.TimeoutError:
+                    logger.warning("validemail retry timeout idx=%s", i)
+
+        for r0 in range(0, len(retry_idxs), 10):
+            chunk = retry_idxs[r0 : r0 + 10]
+            await asyncio.gather(*(_retry_one(i) for i in chunk))
+            if r0 + 10 < len(retry_idxs):
+                await asyncio.sleep(max(0.5, seller_batch_pause_sec()))
 
     found_count = sum(1 for f in found_by_idx if f)
     if stats is not None:

@@ -85,7 +85,7 @@ def _global_inflight_sem() -> asyncio.Semaphore:
     global _GLOBAL_INFLIGHT
     if _GLOBAL_INFLIGHT is None:
         try:
-            cap = max(12, min(70, int(os.getenv("VALIDEMAIL_GLOBAL_INFLIGHT", "40"))))
+            cap = max(12, min(80, int(os.getenv("VALIDEMAIL_GLOBAL_INFLIGHT", "48"))))
         except (TypeError, ValueError):
             cap = 96
         _GLOBAL_INFLIGHT = asyncio.Semaphore(cap)

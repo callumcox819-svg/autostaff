@@ -33,7 +33,7 @@ def seller_parallel_per_key() -> int:
 
 
 def seller_batch_size() -> int:
-    raw = (os.getenv("VALIDEMAIL_SELLER_BATCH_SIZE") or "20").strip()
+    raw = (os.getenv("VALIDEMAIL_SELLER_BATCH_SIZE") or "25").strip()
     try:
         return max(1, min(50, int(raw)))
     except (TypeError, ValueError):
@@ -41,7 +41,7 @@ def seller_batch_size() -> int:
 
 
 def seller_batch_pause_sec() -> float:
-    raw = (os.getenv("VALIDEMAIL_SELLER_BATCH_PAUSE_SEC") or "1.0").strip()
+    raw = (os.getenv("VALIDEMAIL_SELLER_BATCH_PAUSE_SEC") or "0.35").strip()
     try:
         return max(0.0, min(15.0, float(raw)))
     except (TypeError, ValueError):
@@ -61,10 +61,16 @@ def domain_probe_wave_size() -> int:
     try:
         return max(
             1,
-            min(8, int(getattr(config, "VALIDEMAIL_DOMAIN_WAVE_SIZE", 4) or 4)),
+            min(16, int(getattr(config, "VALIDEMAIL_DOMAIN_WAVE_SIZE", 4) or 4)),
         )
     except (TypeError, ValueError):
         return 4
+
+
+def tail_domains_one_batch() -> bool:
+    """Домены 2…N одним HTTP-батчем (быстро); 0 = только волнами по DOMAIN_WAVE_SIZE."""
+    raw = (os.getenv("VALIDEMAIL_TAIL_BATCH_ALL") or "1").strip().lower()
+    return raw not in ("0", "false", "no", "off")
 
 
 def max_domains_per_seller() -> int:

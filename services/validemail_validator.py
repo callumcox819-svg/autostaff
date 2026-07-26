@@ -515,14 +515,13 @@ async def _validate_offers_old(
         stats["validemail_pool"] = parallel_pool
 
     logger.info(
-        "validemail: keys=%s × %s req/key pool=%s batch=%s pause=%.2fs sellers=%s tail_all=%s",
+        "validemail: keys=%s × %s req/key pool=%s batch=%s pause=%.2fs sellers=%s",
         n_keys,
         per_key_limit,
         parallel_pool,
         seller_batch_size(),
         seller_batch_pause_sec(),
         len(prepared),
-        tail_domains_one_batch(),
     )
 
     if n_keys >= 2:

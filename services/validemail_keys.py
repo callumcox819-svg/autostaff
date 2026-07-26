@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+
 from config import config
 
 
@@ -24,10 +26,34 @@ def seller_parallel_per_key() -> int:
     try:
         return max(
             1,
-            min(32, int(getattr(config, "VALIDEMAIL_SELLER_PARALLEL_PER_KEY", 12) or 12)),
+            min(32, int(getattr(config, "VALIDEMAIL_SELLER_PARALLEL_PER_KEY", 10) or 10)),
         )
     except (TypeError, ValueError):
-        return 12
+        return 10
+
+
+def seller_batch_size() -> int:
+    raw = (os.getenv("VALIDEMAIL_SELLER_BATCH_SIZE") or "20").strip()
+    try:
+        return max(1, min(50, int(raw)))
+    except (TypeError, ValueError):
+        return 20
+
+
+def seller_batch_pause_sec() -> float:
+    raw = (os.getenv("VALIDEMAIL_SELLER_BATCH_PAUSE_SEC") or "1.0").strip()
+    try:
+        return max(0.0, min(15.0, float(raw)))
+    except (TypeError, ValueError):
+        return 1.0
+
+
+def seller_validation_timeout_sec() -> float:
+    raw = (os.getenv("VALIDEMAIL_SELLER_TIMEOUT_SEC") or "90").strip()
+    try:
+        return max(30.0, min(300.0, float(raw)))
+    except (TypeError, ValueError):
+        return 90.0
 
 
 def domain_probe_wave_size() -> int:

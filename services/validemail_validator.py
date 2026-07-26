@@ -481,7 +481,10 @@ async def _validate_offers_old(
     from services.validemail_keys import (
         domain_probe_wave_size,
         max_domains_per_seller,
+        seller_batch_pause_sec,
+        seller_batch_size,
         seller_parallel_per_key,
+        seller_validation_timeout_sec,
         validation_concurrency_plan,
         validation_pool_size,
     )
@@ -514,7 +517,9 @@ async def _validate_offers_old(
 
     if n_keys >= 2:
         logger.info(
-            "validemail: %s keys × %s req/key, pool=%s, seller_parallel/key=%s, dom1=seq tail_wave=%s, sellers=%s",
+            "validemail: batch=%s pause=%.1fs keys=%s × %s req/key pool=%s parallel/key=%s tail_wave=%s sellers=%s",
+            seller_batch_size(),
+            seller_batch_pause_sec(),
             n_keys,
             per_key_limit,
             parallel_pool,
@@ -778,49 +783,48 @@ async def _validate_offers_old(
                     batch_seen_names.add(nk)
                     pending_seller_names.add(nk)
 
-    async def _worker(key_idx: int) -> None:
-        nonlocal sellers_completed
-        my_key = api_keys[key_idx]
-        indices = list(range(key_idx, len(prepared), n_keys))
-        seller_slot = asyncio.Semaphore(max(1, sellers_parallel))
-
-        async def _run_seller(i: int) -> None:
-            nonlocal sellers_completed
-            async with seller_slot:
-                await _validate_seller(i, my_key)
-                async with state_lock:
-                    sellers_completed += 1
-                    if stats is not None:
-                        stats["seller_index"] = sellers_completed
-                        stats["sellers_total"] = len(prepared)
-                    _refresh_stats()
-
-        await asyncio.gather(*(_run_seller(i) for i in indices))
-
-    # 2) Продавцы: при 2+ ключах — два потока (каждый ключ свой), иначе последовательно
     n_sellers = len(prepared)
     if stats is not None:
         stats["sellers_total"] = n_sellers
 
-    seller_sem = asyncio.Semaphore(max(2, parallel_pool))
-
-    async def _validate_seller_limited(i: int, api_key: str) -> None:
+    async def _run_sellers_batched() -> None:
+        """Пачки продавцов (по умолчанию 20) + пауза — меньше 429 и зависаний на 99%."""
         nonlocal sellers_completed
-        async with seller_sem:
-            await _validate_seller(i, api_key)
+        bs = seller_batch_size()
+        pause = seller_batch_pause_sec()
+        timeout = seller_validation_timeout_sec()
+        cap = min(bs, max(1, sellers_parallel * n_keys))
+        sem = asyncio.Semaphore(cap)
+
+        async def _run_one_seller(i: int) -> None:
+            nonlocal sellers_completed
+            my_key = api_keys[i % n_keys]
+            try:
+                await asyncio.wait_for(_validate_seller(i, my_key), timeout=timeout)
+            except asyncio.TimeoutError:
+                logger.warning("validemail seller timeout idx=%s name=%s", i, prepared[i].get("person_name"))
+                if stats is not None:
+                    stats["seller_timeouts"] = int(stats.get("seller_timeouts") or 0) + 1
             async with state_lock:
                 sellers_completed += 1
                 if stats is not None:
                     stats["seller_index"] = sellers_completed
                     stats["sellers_total"] = len(prepared)
-                _refresh_stats()
+                    _refresh_stats()
 
-    if n_keys >= 2:
-        await asyncio.gather(*(_worker(k) for k in range(n_keys)))
-    else:
-        await asyncio.gather(
-            *(_validate_seller_limited(i, api_keys[0]) for i in range(n_sellers))
-        )
+        async def _limited(i: int) -> None:
+            async with sem:
+                await _run_one_seller(i)
+
+        for b0 in range(0, n_sellers, bs):
+            chunk = list(range(b0, min(b0 + bs, n_sellers)))
+            if stats is not None:
+                stats["current_batch"] = f"{chunk[0] + 1}-{chunk[-1] + 1}/{n_sellers}"
+            await asyncio.gather(*(_limited(i) for i in chunk))
+            if b0 + bs < n_sellers and pause > 0:
+                await asyncio.sleep(pause)
+
+    await _run_sellers_batched()
 
     found_count = sum(1 for f in found_by_idx if f)
     if stats is not None:

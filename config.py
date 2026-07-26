@@ -45,7 +45,7 @@ def _validemail_per_key_concurrency() -> int:
 
 
 def _validemail_seller_parallel_per_key() -> int:
-    raw = (os.getenv("VALIDEMAIL_SELLER_PARALLEL_PER_KEY") or "12").strip()
+    raw = (os.getenv("VALIDEMAIL_SELLER_PARALLEL_PER_KEY") or "14").strip()
     try:
         return max(1, min(32, int(raw)))
     except (TypeError, ValueError):

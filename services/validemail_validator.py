@@ -479,13 +479,11 @@ async def _validate_offers_old(
     url = str(cfg.validation_url or DEFAULT_VALIDEMAIL_URL).strip()
 
     from services.validemail_keys import (
-        domain_probe_wave_size,
         max_domains_per_seller,
         seller_batch_pause_sec,
         seller_batch_size,
         seller_parallel_per_key,
         seller_validation_timeout_sec,
-        tail_domains_one_batch,
         validation_concurrency_plan,
         validation_pool_size,
     )
@@ -493,8 +491,6 @@ async def _validate_offers_old(
     dom_cap = max_domains_per_seller()
     if dom_cap > 0:
         domains_clean = domains_clean[:dom_cap]
-
-    tail_wave = max(1, domain_probe_wave_size())
 
     n_keys = max(1, len(api_keys))
     per_key_limit, parallel_pool = validation_concurrency_plan(n_keys)
@@ -616,44 +612,6 @@ async def _validate_offers_old(
         eligible_o = int(stats.get("offers_eligible") or len(prepared))
         stats["offers_remaining"] = max(0, eligible_o - sellers_found)
 
-    async def _probe_email(seller_i: int, email: str, dom: str, api_key: str) -> None:
-        """Один домен за раз — по приоритету; при 429 повторяем тот же адрес."""
-        if found_by_idx[seller_i]:
-            return
-        em = (email or "").strip().lower()
-        if not em or "@" not in em:
-            return
-        max_attempts = _probe_max_attempts()
-        last_ok = False
-        last_raw: object = {}
-        for attempt in range(max_attempts):
-            results = await _run_batch(
-                [em],
-                seller_i=seller_i,
-                dom=(dom or "").strip().lower(),
-                api_key=api_key,
-            )
-            is_last = attempt >= max_attempts - 1
-            if results:
-                last_ok, last_raw = results[0][1], results[0][2]
-            cv = await _consume_results(
-                seller_i,
-                results,
-                count_api_errors=is_last,
-            )
-            async with state_lock:
-                if stats is not None:
-                    stats["combinations_valid"] = int(stats.get("combinations_valid") or 0) + cv
-                _refresh_stats()
-            if found_by_idx[seller_i]:
-                return
-            if results and results[0][1]:
-                return
-            if not _should_retry_same_domain(last_ok, last_raw) or is_last:
-                break
-            delay = _retry_delay_sec(attempt, last_raw if isinstance(last_raw, dict) else {})
-            await asyncio.sleep(delay)
-
     async def _consume_wave_priority(
         seller_i: int,
         results: list[tuple[str, bool, dict]],
@@ -701,69 +659,48 @@ async def _validate_offers_old(
                 seller_api_fail[seller_i] += 1
             return combos_valid
 
-    async def _probe_tail_domains(seller_i: int, local: str, api_key: str) -> None:
-        """Домены 2…N: одним батчем (быстро) или волнами; домен 1 — только _probe_email."""
-        if found_by_idx[seller_i] or len(domains_clean) < 2:
-            return
-        loc = (local or "").strip().lower()
-        if not loc:
-            return
-        off = 1
-        n = len(domains_clean)
-        tail_all = tail_domains_one_batch()
-        while off < n and not found_by_idx[seller_i]:
-            if tail_all:
-                chunk = domains_clean[off:]
-                off = n
-            else:
-                chunk = domains_clean[off : off + tail_wave]
-                off += len(chunk)
-            if not chunk:
-                break
-            batch = [f"{loc}@{dom}".lower() for dom in chunk]
-            max_attempts = _probe_max_attempts()
-            for attempt in range(max_attempts):
-                results = await _run_batch(
-                    batch,
-                    seller_i=seller_i,
-                    dom=chunk[0] if chunk else "",
-                    api_key=api_key,
-                )
-                is_last = attempt >= max_attempts - 1
-                cv = await _consume_wave_priority(
-                    seller_i,
-                    results,
-                    batch,
-                    count_api_errors=is_last,
-                )
-                async with state_lock:
-                    if stats is not None:
-                        stats["combinations_valid"] = int(
-                            stats.get("combinations_valid") or 0
-                        ) + cv
-                    _refresh_stats()
-                if found_by_idx[seller_i]:
-                    return
-                if any(r[1] for r in results):
-                    return
-                retry = any(
-                    _should_retry_same_domain(ok, raw) for _e, ok, raw in results
-                )
-                if not retry or is_last:
-                    break
-                raw0 = results[0][2] if results else {}
-                await asyncio.sleep(
-                    _retry_delay_sec(attempt, raw0 if isinstance(raw0, dict) else {})
-                )
-
     async def _probe_local_priority(seller_i: int, local: str, api_key: str) -> None:
+        """Все домены одним параллельным батчем; победитель — первый валидный по приоритету списка."""
         if found_by_idx[seller_i] or not domains_clean:
             return
         loc = (local or "").strip().lower()
         if not loc:
             return
-        await _probe_email(seller_i, f"{loc}@{domains_clean[0]}", domains_clean[0], api_key)
-        await _probe_tail_domains(seller_i, local, api_key)
+        batch = [f"{loc}@{dom}".lower() for dom in domains_clean]
+        max_attempts = _probe_max_attempts()
+        for attempt in range(max_attempts):
+            results = await _run_batch(
+                batch,
+                seller_i=seller_i,
+                dom=domains_clean[0],
+                api_key=api_key,
+            )
+            is_last = attempt >= max_attempts - 1
+            cv = await _consume_wave_priority(
+                seller_i,
+                results,
+                batch,
+                count_api_errors=is_last,
+            )
+            async with state_lock:
+                if stats is not None:
+                    stats["combinations_valid"] = int(
+                        stats.get("combinations_valid") or 0
+                    ) + cv
+                _refresh_stats()
+            if found_by_idx[seller_i]:
+                return
+            if any(r[1] for r in results):
+                return
+            retry = any(
+                _should_retry_same_domain(ok, raw) for _e, ok, raw in results
+            )
+            if not retry or is_last:
+                break
+            raw0 = results[0][2] if results else {}
+            await asyncio.sleep(
+                _retry_delay_sec(attempt, raw0 if isinstance(raw0, dict) else {})
+            )
 
     async def _validate_seller(i: int, api_key: str) -> None:
         row = prepared[i]

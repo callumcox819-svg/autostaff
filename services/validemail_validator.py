@@ -267,9 +267,9 @@ def _should_retry_same_domain(ok: bool, raw: object) -> bool:
 
 def _probe_max_attempts() -> int:
     try:
-        return max(1, min(5, int(os.getenv("VALIDEMAIL_PROBE_RETRIES", "4"))))
+        return max(1, min(5, int(os.getenv("VALIDEMAIL_PROBE_RETRIES", "3"))))
     except (TypeError, ValueError):
-        return 4
+        return 3
 
 
 # -------------------------

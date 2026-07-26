@@ -256,6 +256,7 @@ async def save_all_offers_from_import(
     offers_with_email = 0
     email_rows_saved = 0
     output_rows: list[dict[str, Any]] = []
+    offer_batch: list[tuple[Offer, list[str]]] = []
 
     for it in items:
         if not isinstance(it, dict):
@@ -266,7 +267,6 @@ async def save_all_offers_from_import(
             vrow, norm_email, max_emails=max_emails_per_offer
         )
 
-        # 100% полей VOID — для генерации ссылок; ключ лота = item_link.
         payload = json.loads(json.dumps(it, ensure_ascii=False, default=str))
         if isinstance(payload, dict):
             payload.setdefault(
@@ -299,7 +299,6 @@ async def save_all_offers_from_import(
             raw_json=json.dumps(payload, ensure_ascii=False),
         )
         session.add(offer)
-        await session.flush()
         if fields["link"]:
             ensure_offer_link_column(offer, fields["link"])
         offers_saved += 1
@@ -307,11 +306,15 @@ async def save_all_offers_from_import(
         queued = [em for em in picked[:max_emails_per_offer] if em.lower() not in skip_q]
         if queued:
             offers_with_email += 1
-            for em in queued:
-                session.add(OfferEmail(offer_id=offer.id, email=em))
-                email_rows_saved += 1
-
-        payload["offer_id"] = int(offer.id)
+        offer_batch.append((offer, queued))
         output_rows.append(payload)
+
+    await session.flush()
+
+    for (offer, queued), payload in zip(offer_batch, output_rows):
+        for em in queued:
+            session.add(OfferEmail(offer_id=int(offer.id), email=em))
+            email_rows_saved += 1
+        payload["offer_id"] = int(offer.id)
 
     return offers_saved, offers_with_email, email_rows_saved, output_rows

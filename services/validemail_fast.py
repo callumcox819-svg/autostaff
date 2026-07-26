@@ -78,14 +78,14 @@ def _register_validemail_429(raw: dict, *, attempt: int = 0) -> None:
             extra = max(extra, float(ra))
         except (TypeError, ValueError):
             pass
-    _RATE_PAUSE_UNTIL = max(_RATE_PAUSE_UNTIL, time.time() + min(12.0, extra))
+    _RATE_PAUSE_UNTIL = max(_RATE_PAUSE_UNTIL, time.time() + min(8.0, extra))
 
 
 def _global_inflight_sem() -> asyncio.Semaphore:
     global _GLOBAL_INFLIGHT
     if _GLOBAL_INFLIGHT is None:
         try:
-            cap = max(12, min(80, int(os.getenv("VALIDEMAIL_GLOBAL_INFLIGHT", "50"))))
+            cap = max(16, min(90, int(os.getenv("VALIDEMAIL_GLOBAL_INFLIGHT", "60"))))
         except (TypeError, ValueError):
             cap = 96
         _GLOBAL_INFLIGHT = asyncio.Semaphore(cap)

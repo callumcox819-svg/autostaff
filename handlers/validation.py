@@ -687,17 +687,10 @@ async def _run_validation_pipeline_inner(
     )
 
     with open(out_path, "w", encoding="utf-8") as f:
-        json.dump(output, f, ensure_ascii=False, indent=2)
+        json.dump(output, f, ensure_ascii=False, separators=(",", ":"))
 
     live_stats["sellers_with_email"] = offers_with_email
     live_stats["offers_eligible"] = eligible
-
-    try:
-        await status_msg.edit_text(
-            _ui_from_stats(live_stats, finished=True), parse_mode="HTML"
-        )
-    except Exception:
-        pass
 
     append_note = (
         f" · {html_emoji('add')} добавлено к активной рассылке"
@@ -709,11 +702,23 @@ async def _run_validation_pipeline_inner(
         skip_note = (
             f" · {html_emoji('key')} не в очередь (после /reset): {len(skip_queue_emails)}"
         )
-    await message.answer_document(
-        FSInputFile(out_path),
-        caption=(
-            f"{html_emoji('presets')} Результат · в БД {offers_saved}/{total_offers} · "
-            f"email {saved_email_count}{append_note}{skip_note}"
-        ),
-        parse_mode="HTML",
+
+    doc_task = asyncio.create_task(
+        message.answer_document(
+            FSInputFile(out_path),
+            caption=(
+                f"{html_emoji('presets')} Результат · в БД {offers_saved}/{total_offers} · "
+                f"email {saved_email_count}{append_note}{skip_note}"
+            ),
+            parse_mode="HTML",
+        )
     )
+
+    try:
+        await status_msg.edit_text(
+            _ui_from_stats(live_stats, finished=True), parse_mode="HTML"
+        )
+    except Exception:
+        pass
+
+    await doc_task

@@ -178,13 +178,13 @@ def _format_validation_status(
         lines.append(
             f"{html_emoji('presets')} Доменов в приоритете: <b>{dc}</b>{loc_note}"
         )
-    if not finished and int(validemail_api_timeout or 0) in range(1, 7):
+    if not finished and int(validemail_api_timeout or 0) in range(1, 9):
         lines.append(
             f"{html_emoji('warn')} API timeout <b>{int(validemail_api_timeout)}s</b> — "
-            f"на Railway поставь <code>VALIDEMAIL_API_TIMEOUT=8</code> (gmx часто &gt;5s)"
+            f"на Railway: <code>VALIDEMAIL_API_TIMEOUT=10</code>"
         )
     if traffic_mode and not finished:
-        lines.append(f"{html_emoji('rocket')} Режим: <b>balanced</b> · домены по приоритету · ~4–6 мин / 600")
+        lines.append(f"{html_emoji('rocket')} Режим: <b>balanced</b> · один залп local×domain · ~5–8 мин / 600")
         lines.append(
             f"<i>Проверка — GET validemail.co (ящик на их сервере). "
             f"Отправка с ваших SMTP — только после подбора.</i>"

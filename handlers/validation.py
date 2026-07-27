@@ -178,7 +178,7 @@ def _format_validation_status(
             f"{html_emoji('presets')} Доменов в приоритете: <b>{dc}</b>{loc_note}"
         )
     if traffic_mode and not finished:
-        lines.append(f"{html_emoji('rocket')} Режим: <b>stable</b> (мягко к API, как void-parser)")
+        lines.append(f"{html_emoji('rocket')} Режим: <b>balanced</b> · цель ~4–6 мин на ~600")
     if not finished and ph == "api_retry" and int(api_retry_queued or 0) > 0:
         lines.append(
             f"{html_emoji('refresh')} Дожима API: <b>{int(api_retry_done or 0)}"

@@ -51,8 +51,10 @@ def _env_int(name: str, *, default: int, traffic: int | None = None) -> int:
 
 
 def validemail_rps_per_key() -> float:
-    """validemail.co: 10 req/s на ключ. 0 = без клиентского лимитера (не рекомендуется)."""
-    raw = (os.getenv("VALIDEMAIL_RPS_PER_KEY") or "9").strip()
+    """0 = без клиентского лимитера (sem × ключи держат 10/s). Иначе 1–10."""
+    raw = (os.getenv("VALIDEMAIL_RPS_PER_KEY") or "").strip()
+    if not raw:
+        return 0.0 if validation_traffic_mode() else 9.0
     if raw in ("0", "off", "false", "no"):
         return 0.0
     try:
@@ -67,7 +69,7 @@ def per_key_concurrency_limit() -> int:
     except (TypeError, ValueError):
         base = 40
     if not (os.getenv("VALIDEMAIL_CONCURRENCY_PER_KEY") or "").strip():
-        base = _env_int("VALIDEMAIL_CONCURRENCY_PER_KEY", default=base, traffic=20)
+        base = _env_int("VALIDEMAIL_CONCURRENCY_PER_KEY", default=base, traffic=12)
     return max(1, min(64, base))
 
 
@@ -78,7 +80,7 @@ def seller_parallel_per_key() -> int:
             return max(1, min(32, int(raw)))
         except (TypeError, ValueError):
             pass
-    n = _env_int("VALIDEMAIL_SELLER_PARALLEL_PER_KEY", default=14, traffic=6)
+    n = _env_int("VALIDEMAIL_SELLER_PARALLEL_PER_KEY", default=14, traffic=10)
     return max(1, min(32, n))
 
 
@@ -171,7 +173,7 @@ def global_inflight_cap(num_keys: int | None = None) -> int:
             return max(12, min(280, int(raw)))
         except (TypeError, ValueError):
             pass
-    return max(32, min(160, per * n))
+    return max(per * n, min(260, per * n + per * 2))
 
 
 def max_locals_per_seller() -> int:
@@ -213,7 +215,7 @@ def probe_by_domain_waves() -> bool:
 def probe_retry_count() -> int:
     raw = (os.getenv("VALIDEMAIL_PROBE_RETRIES") or "").strip()
     if not raw:
-        return 2
+        return 1
     try:
         return max(1, min(5, int(raw)))
     except (TypeError, ValueError):

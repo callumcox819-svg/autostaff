@@ -118,6 +118,7 @@ def _format_validation_status(
     traffic_mode: bool = False,
     priority_domains: list[str] | None = None,
     current_domain: str = "",
+    validation_t0: float = 0,
     api_retry_queued: int = 0,
     api_retry_done: int = 0,
 ) -> str:
@@ -198,6 +199,14 @@ def _format_validation_status(
         cur = (current_domain or "").strip().lower()
         if cur:
             lines.append(f"{html_emoji('search')} Сейчас домен: <b>{cur}</b>")
+        if sellers_total > 0 and seller_index > 3 and validation_t0 > 0:
+            elapsed = max(1.0, time.time() - float(validation_t0))
+            spm = seller_index / elapsed * 60.0
+            left = max(0, sellers_total - seller_index)
+            eta_min = (left / max(0.05, seller_index / elapsed)) / 60.0
+            lines.append(
+                f"{html_emoji('wait')} ~<b>{spm:.0f}</b> прод/мин · до конца ~<b>{eta_min:.0f}</b> мин"
+            )
     if not finished and ph == "api_retry" and int(api_retry_queued or 0) > 0:
         lines.append(
             f"{html_emoji('refresh')} Дожима API: <b>{int(api_retry_done or 0)}"
@@ -652,6 +661,7 @@ async def _run_validation_pipeline_inner(
         "validemail_per_key": per_key_lim,
         "validemail_threads": n_keys,
         "traffic_mode": validation_traffic_mode(),
+        "validation_t0": time.time(),
     }
     ui_state = {"last_text": ""}
     stop_evt = asyncio.Event()
@@ -709,6 +719,8 @@ async def _run_validation_pipeline_inner(
             validemail_max_locals=int(vstats.get("max_locals") or 0),
             validemail_api_timeout=int(vstats.get("validemail_api_timeout") or 0),
             traffic_mode=bool(vstats.get("traffic_mode")),
+            priority_domains=vstats.get("priority_domains") if isinstance(vstats.get("priority_domains"), list) else None,
+            current_domain=str(vstats.get("current_domain") or ""),
             api_retry_queued=int(vstats.get("api_retry_queued") or 0),
             api_retry_done=int(vstats.get("api_retry_done") or 0),
         )

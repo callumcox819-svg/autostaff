@@ -22,8 +22,10 @@ def validation_traffic_mode() -> bool:
 
 
 def api_retry_max_sellers() -> int:
-    """0 = без второго прогона (не висим на 100%)."""
-    raw = (os.getenv("VALIDEMAIL_API_RETRY_MAX") or "0").strip()
+    """Повтор продавцов после transient API (0 = выкл)."""
+    raw = (os.getenv("VALIDEMAIL_API_RETRY_MAX") or "").strip()
+    if not raw:
+        return 80 if validation_traffic_mode() else 0
     try:
         return max(0, min(120, int(raw)))
     except (TypeError, ValueError):

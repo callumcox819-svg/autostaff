@@ -222,7 +222,7 @@ def _format_validation_status(
         f"{html_emoji('fail')} Повтор продавца (пропуск): <b>{added_blacklist}</b>",
         f"{html_emoji('edit')} Коротких ников: <b>{short_nicks}</b>",
         f"{html_emoji('wait')} Не найден ящик (ValidEmail): <b>{no_email_smtp if finished else no_email}</b>",
-        f"{html_emoji('yellow')} Сбои API / сеть (продавцов): <b>{errors}</b>",
+        f"{html_emoji('yellow')} Продавцов с сбоем API: <b>{errors}</b>",
     ])
     if sellers_api_unresolved > 0:
         lines.append(
@@ -803,7 +803,6 @@ async def _run_validation_pipeline_inner(
 
     live_stats["sellers_with_email"] = offers_with_email
     live_stats["offers_eligible"] = eligible
-    live_stats["phase"] = ""
 
     append_note = (
         f" · {html_emoji('add')} добавлено к активной рассылке"
@@ -816,9 +815,10 @@ async def _run_validation_pipeline_inner(
             f" · {html_emoji('key')} не в очередь (после /reset): {len(skip_queue_emails)}"
         )
 
+    live_stats["phase"] = "export"
     try:
         await status_msg.edit_text(
-            _ui_from_stats(live_stats, finished=True), parse_mode="HTML"
+            _ui_from_stats(live_stats, finished=False), parse_mode="HTML"
         )
     except Exception:
         pass
@@ -834,13 +834,13 @@ async def _run_validation_pipeline_inner(
                     ),
                     parse_mode="HTML",
                 ),
-                timeout=120.0,
+                timeout=180.0,
             )
         except asyncio.TimeoutError:
             logger.warning("validation: document upload timeout tg=%s", tg_id)
             try:
                 await message.answer(
-                    f"{html_emoji('warn')} JSON не успел уйти за 2 мин — данные уже в БД. "
+                    f"{html_emoji('warn')} JSON не успел уйти за 3 мин — данные уже в БД. "
                     f"Повтори /export или пришли файл ещё раз.",
                     parse_mode="HTML",
                 )
@@ -854,4 +854,14 @@ async def _run_validation_pipeline_inner(
             except OSError:
                 pass
 
-    asyncio.create_task(_deliver_validated_json())
+    try:
+        await _deliver_validated_json()
+    finally:
+        live_stats["phase"] = ""
+
+    try:
+        await status_msg.edit_text(
+            _ui_from_stats(live_stats, finished=True), parse_mode="HTML"
+        )
+    except Exception:
+        pass

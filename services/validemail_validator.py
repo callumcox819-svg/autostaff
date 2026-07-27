@@ -685,8 +685,9 @@ async def _validate_offers_old(
                     break
                 if not ok:
                     if count_api_errors and stats is not None and _is_api_failure(ok, raw):
-                        stats["api_errors"] = int(stats.get("api_errors") or 0) + 1
-                        seller_api_fail[seller_i] += 1
+                        if seller_api_fail[seller_i] == 0:
+                            stats["api_errors"] = int(stats.get("api_errors") or 0) + 1
+                        seller_api_fail[seller_i] = 1
                     continue
                 combos_valid += 1
                 key = (_e or "").strip().lower()
@@ -743,7 +744,9 @@ async def _validate_offers_old(
                 if len(found_by_idx[seller_i]) >= per_seller_limit:
                     break
                 if not ok:
-                    if _is_api_failure(ok, raw):
+                    if count_api_errors and _is_api_failure(ok, raw):
+                        wave_api_fail = True
+                    elif _should_retry_same_domain(ok, raw):
                         wave_api_fail = True
                     continue
                 combos_valid += 1
@@ -763,7 +766,7 @@ async def _validate_offers_old(
             if wave_api_fail:
                 if seller_api_fail[seller_i] == 0 and stats is not None:
                     stats["api_errors"] = int(stats.get("api_errors") or 0) + 1
-                seller_api_fail[seller_i] += 1
+                seller_api_fail[seller_i] = 1
             return combos_valid
 
     async def _probe_one_list(
@@ -1002,7 +1005,8 @@ async def _validate_offers_old(
         async def _retry_seller(ri: int) -> None:
             nonlocal retry_done
             async with retry_sem:
-                await asyncio.sleep(0.15 * (ri % 6))
+                await asyncio.sleep(0.12 * (ri % 8))
+                seller_api_fail[ri] = 0
                 await _validate_seller(
                     ri,
                     api_keys[ri % n_keys],
@@ -1022,6 +1026,7 @@ async def _validate_offers_old(
             for i in range(n_sellers)
             if not found_by_idx[i] and seller_api_fail[i] > 0
         )
+        stats["api_error_sellers"] = int(stats.get("api_errors") or 0)
         stats["phase"] = ""
 
     found_count = sum(1 for f in found_by_idx if f)

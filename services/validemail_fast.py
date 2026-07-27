@@ -78,7 +78,7 @@ def _register_validemail_429(raw: dict, *, attempt: int = 0) -> None:
             extra = max(extra, float(ra))
         except (TypeError, ValueError):
             pass
-    _RATE_PAUSE_UNTIL = max(_RATE_PAUSE_UNTIL, time.time() + min(8.0, extra))
+    _RATE_PAUSE_UNTIL = max(_RATE_PAUSE_UNTIL, time.time() + min(12.0, extra))
 
 
 def _global_inflight_sem() -> asyncio.Semaphore:

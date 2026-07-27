@@ -16,9 +16,17 @@ def resolve_validemail_api_keys() -> list[str]:
 
 
 def validation_traffic_mode() -> bool:
-    """2–3 мин на ~600 лотов: больше параллелизма, один батч local×domain на продавца."""
+    """Быстрый подбор без перегруза API (как десктопный void-parser)."""
     raw = (os.getenv("VALIDEMAIL_TRAFFIC_MODE") or "1").strip().lower()
     return raw not in ("0", "false", "no", "off")
+
+
+def api_retry_max_sellers() -> int:
+    raw = (os.getenv("VALIDEMAIL_API_RETRY_MAX") or "40").strip()
+    try:
+        return max(0, min(120, int(raw)))
+    except (TypeError, ValueError):
+        return 40
 
 
 def combined_local_probe() -> bool:
@@ -47,7 +55,7 @@ def per_key_concurrency_limit() -> int:
     except (TypeError, ValueError):
         base = 40
     if not (os.getenv("VALIDEMAIL_CONCURRENCY_PER_KEY") or "").strip():
-        base = _env_int("VALIDEMAIL_CONCURRENCY_PER_KEY", default=base, traffic=22)
+        base = _env_int("VALIDEMAIL_CONCURRENCY_PER_KEY", default=base, traffic=8)
     return max(1, min(64, base))
 
 
@@ -58,7 +66,7 @@ def seller_parallel_per_key() -> int:
             return max(1, min(32, int(raw)))
         except (TypeError, ValueError):
             pass
-    n = _env_int("VALIDEMAIL_SELLER_PARALLEL_PER_KEY", default=14, traffic=12)
+    n = _env_int("VALIDEMAIL_SELLER_PARALLEL_PER_KEY", default=14, traffic=5)
     return max(1, min(32, n))
 
 
@@ -161,7 +169,7 @@ def global_inflight_cap(num_keys: int | None = None) -> int:
             pass
     cap = per * n
     if validation_traffic_mode():
-        return max(40, min(140, cap))
+        return max(24, min(60, cap))
     return max(24, min(180, cap))
 
 
@@ -170,7 +178,7 @@ def max_locals_per_seller() -> int:
     if (os.getenv("VALIDEMAIL_MAX_LOCALS") or "").strip():
         raw = os.getenv("VALIDEMAIL_MAX_LOCALS") or "4"
     elif validation_traffic_mode():
-        raw = "5"
+        raw = "4"
     else:
         raw = "4"
     try:

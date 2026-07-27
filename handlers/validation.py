@@ -115,6 +115,8 @@ def _format_validation_status(
     validemail_domains: int = 0,
     validemail_max_locals: int = 0,
     traffic_mode: bool = False,
+    api_retry_queued: int = 0,
+    api_retry_done: int = 0,
 ) -> str:
     title = (
         f"{html_emoji('ok')} Подбор завершён"
@@ -131,13 +133,29 @@ def _format_validation_status(
 
     bar_total = total
     bar_done = processed
-    if not finished and sellers_total > 0 and ph not in ("saving", "export", "api_retry"):
+    if not finished and ph == "api_retry":
+        rq = int(api_retry_queued or 0)
+        rd = int(api_retry_done or 0)
+        if rq > 0:
+            bar_total = rq
+            bar_done = min(rd, rq)
+        else:
+            bar_done = min(seller_index, max(0, sellers_total - 1))
+            bar_total = max(sellers_total, 1)
+    elif not finished and sellers_total > 0 and ph not in ("saving", "export"):
         bar_total = sellers_total
         bar_done = min(seller_index, max(0, sellers_total - 1))
 
     bar, pct = _progress_bar(bar_done, bar_total)
-    if not finished and sellers_total > 0 and seller_index >= sellers_total and ph not in ("saving", "export", "api_retry"):
-        pct = min(pct, 99)
+    if not finished and ph == "api_retry" and rq > 0 and rd < rq:
+        pct = min(pct, 98)
+    elif (
+        not finished
+        and sellers_total > 0
+        and seller_index >= sellers_total
+        and ph not in ("saving", "export", "api_retry")
+    ):
+        pct = min(pct, 97)
 
     lines = [
         f"<b>{title}</b>",
@@ -160,7 +178,12 @@ def _format_validation_status(
             f"{html_emoji('presets')} Доменов в приоритете: <b>{dc}</b>{loc_note}"
         )
     if traffic_mode and not finished:
-        lines.append(f"{html_emoji('rocket')} Режим: <b>traffic</b> (цель ~2–3 мин)")
+        lines.append(f"{html_emoji('rocket')} Режим: <b>stable</b> (мягко к API, как void-parser)")
+    if not finished and ph == "api_retry" and int(api_retry_queued or 0) > 0:
+        lines.append(
+            f"{html_emoji('refresh')} Дожима API: <b>{int(api_retry_done or 0)}"
+            f"/{int(api_retry_queued)}</b> продавцов"
+        )
     if (
         not finished
         and vk > 0
@@ -664,6 +687,8 @@ async def _run_validation_pipeline_inner(
             validemail_domains=int(vstats.get("domains_count") or 0),
             validemail_max_locals=int(vstats.get("max_locals") or 0),
             traffic_mode=bool(vstats.get("traffic_mode")),
+            api_retry_queued=int(vstats.get("api_retry_queued") or 0),
+            api_retry_done=int(vstats.get("api_retry_done") or 0),
         )
 
     try:

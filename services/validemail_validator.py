@@ -511,6 +511,7 @@ async def _validate_offers_old(
     url = str(cfg.validation_url or DEFAULT_VALIDEMAIL_URL).strip()
 
     from services.validemail_keys import (
+        api_retry_max_sellers,
         combined_local_probe,
         domain_tiers_for_probe,
         max_domains_per_seller,
@@ -683,7 +684,6 @@ async def _validate_offers_old(
                 em_lc = (em_lc or "").strip().lower()
                 row = by_lc.get(em_lc)
                 if not row:
-                    wave_api_fail = True
                     continue
                 _e, ok, raw = row
                 if len(found_by_idx[seller_i]) >= per_seller_limit:
@@ -892,21 +892,32 @@ async def _validate_offers_old(
     retry_idx = [
         i for i in range(n_sellers) if not found_by_idx[i] and seller_api_fail[i] > 0
     ]
+    cap_retry = api_retry_max_sellers()
+    if cap_retry >= 0 and len(retry_idx) > cap_retry:
+        retry_idx = retry_idx[:cap_retry]
     if retry_idx:
         if stats is not None:
             stats["phase"] = "api_retry"
             stats["api_retry_queued"] = len(retry_idx)
-        retry_sem = asyncio.Semaphore(max(12, seller_sem_cap // 4))
+            stats["api_retry_done"] = 0
+        retry_sem = asyncio.Semaphore(max(6, min(12, seller_sem_cap // 3)))
+        retry_done = 0
+        retry_lock = asyncio.Lock()
 
         async def _retry_seller(ri: int) -> None:
+            nonlocal retry_done
             async with retry_sem:
-                await asyncio.sleep(0.06 * (ri % 8))
+                await asyncio.sleep(0.15 * (ri % 6))
                 await _validate_seller(
                     ri,
                     api_keys[ri % n_keys],
                     tier_probe=False,
                     count_api_errors=False,
                 )
+            async with retry_lock:
+                retry_done += 1
+                if stats is not None:
+                    stats["api_retry_done"] = retry_done
 
         await asyncio.gather(*(_retry_seller(i) for i in retry_idx))
 

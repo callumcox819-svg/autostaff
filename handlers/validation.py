@@ -545,7 +545,12 @@ async def _run_validation_pipeline_inner(
         user_bl = await get_or_create_user(session, tg_id)
         from services.seller_blacklist import load_seller_name_keys
 
-        name_keys = await load_seller_name_keys(session, int(user_bl.id))
+        append_active = await is_user_mailing_active(tg_id)
+        name_keys = await load_seller_name_keys(
+            session,
+            int(user_bl.id),
+            include_offer_names=bool(append_active),
+        )
 
     n_keys = len(api_keys)
     pool = validation_pool_size(n_keys)
@@ -669,10 +674,6 @@ async def _run_validation_pipeline_inner(
         append_to_active_mailing = await is_user_mailing_active(tg_id)
         if REPLACE_OLD_FOR_USER and not append_to_active_mailing:
             uid = int(user.id)
-            offer_ids_subq = select(Offer.id).where(Offer.user_id == uid)
-            await session.execute(
-                delete(OfferEmail).where(OfferEmail.offer_id.in_(offer_ids_subq))
-            )
             await session.execute(delete(Offer).where(Offer.user_id == uid))
             await session.commit()
 
@@ -717,7 +718,7 @@ async def _run_validation_pipeline_inner(
 
     live_stats["sellers_with_email"] = offers_with_email
     live_stats["offers_eligible"] = eligible
-    live_stats["phase"] = "export"
+    live_stats["phase"] = ""
 
     append_note = (
         f" · {html_emoji('add')} добавлено к активной рассылке"
@@ -730,34 +731,42 @@ async def _run_validation_pipeline_inner(
             f" · {html_emoji('key')} не в очередь (после /reset): {len(skip_queue_emails)}"
         )
 
-    live_stats["phase"] = "export"
     try:
-        await status_msg.edit_text(
-            _ui_from_stats(live_stats, finished=False), parse_mode="HTML"
-        )
-    except Exception:
-        pass
-
-    doc_task = asyncio.create_task(
-        message.answer_document(
-            FSInputFile(out_path),
-            caption=(
-                f"{html_emoji('presets')} Результат · в БД {offers_saved}/{total_offers} · "
-                f"email {saved_email_count}{append_note}{skip_note}"
-            ),
-            parse_mode="HTML",
-        )
-    )
-
-    try:
-        live_stats["phase"] = ""
         await status_msg.edit_text(
             _ui_from_stats(live_stats, finished=True), parse_mode="HTML"
         )
     except Exception:
         pass
 
-    try:
-        await asyncio.wait_for(doc_task, timeout=180.0)
-    except asyncio.TimeoutError:
-        logger.warning("validation: telegram document upload timeout tg=%s", tg_id)
+    async def _deliver_validated_json() -> None:
+        try:
+            await asyncio.wait_for(
+                message.answer_document(
+                    FSInputFile(out_path),
+                    caption=(
+                        f"{html_emoji('presets')} Результат · в БД {offers_saved}/{total_offers} · "
+                        f"email {saved_email_count}{append_note}{skip_note}"
+                    ),
+                    parse_mode="HTML",
+                ),
+                timeout=120.0,
+            )
+        except asyncio.TimeoutError:
+            logger.warning("validation: document upload timeout tg=%s", tg_id)
+            try:
+                await message.answer(
+                    f"{html_emoji('warn')} JSON не успел уйти за 2 мин — данные уже в БД. "
+                    f"Повтори /export или пришли файл ещё раз.",
+                    parse_mode="HTML",
+                )
+            except Exception:
+                pass
+        except Exception:
+            logger.exception("validation: document upload failed tg=%s", tg_id)
+        finally:
+            try:
+                os.remove(out_path)
+            except OSError:
+                pass
+
+    asyncio.create_task(_deliver_validated_json())

@@ -17,8 +17,13 @@ def seller_name_key_from_item(item: dict) -> str:
     return seller_name_key(seller_name_from_item(item))
 
 
-async def load_seller_name_keys(session, user_id: int) -> set[str]:
-    """Имена продавцов, которых уже не валидируем: ЧС в БД + person_name из офферов."""
+async def load_seller_name_keys(
+    session,
+    user_id: int,
+    *,
+    include_offer_names: bool = True,
+) -> set[str]:
+    """Имена продавцов, которых уже не валидируем: ЧС в БД + опционально person_name из офферов."""
     keys: set[str] = set()
     rows = (
         await session.execute(
@@ -29,9 +34,15 @@ async def load_seller_name_keys(session, user_id: int) -> set[str]:
         if k:
             keys.add(str(k).strip().lower())
 
+    if not include_offer_names:
+        return keys
+
     off_names = (
         await session.execute(
-            sa_select(Offer.person_name).where(Offer.user_id == int(user_id)).where(Offer.person_name.is_not(None))
+            sa_select(Offer.person_name)
+            .where(Offer.user_id == int(user_id))
+            .where(Offer.person_name.is_not(None))
+            .distinct()
         )
     ).all()
     for (nm,) in off_names:

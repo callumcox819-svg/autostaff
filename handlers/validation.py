@@ -145,7 +145,7 @@ def _format_validation_status(
         th = validemail_threads or vk
         pk = validemail_per_key or max(1, validemail_pool // max(1, vk))
         lines.append(
-            f"{html_emoji('key')} Ключей API: <b>{vk}</b> · потоков: <b>{th}</b> · "
+            f"{html_emoji('key')} Ключей API: <b>{vk}</b> · HTTP-пул: <b>{validemail_pool}</b> · "
             f"до <b>{pk}</b> запросов/ключ"
         )
     dc = int(validemail_domains or 0)
@@ -157,6 +157,16 @@ def _format_validation_status(
         )
     if traffic_mode and not finished:
         lines.append(f"{html_emoji('rocket')} Режим: <b>traffic</b> (цель ~2–3 мин)")
+    if (
+        not finished
+        and vk > 0
+        and validemail_pool > 0
+        and validemail_pool < vk * 28
+    ):
+        lines.append(
+            f"{html_emoji('warn')} HTTP-пул <b>{validemail_pool}</b> мал для <b>{vk}</b> ключей — "
+            f"удали <code>VALIDEMAIL_CONCURRENCY</code> из Railway или поставь ≥ <b>{vk * 32}</b>"
+        )
     lines.extend([
         "",
         f"{html_emoji('presets')} Объявлений в файле: <b>{total}</b>"

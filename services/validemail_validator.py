@@ -492,6 +492,7 @@ async def _validate_offers_old(
 
     from services.validemail_keys import (
         combined_local_probe,
+        domain_tiers_for_probe,
         max_domains_per_seller,
         max_locals_per_seller,
         seller_batch_pause_sec,
@@ -531,6 +532,15 @@ async def _validate_offers_old(
         stats["domains_count"] = len(domains_clean)
         stats["max_locals"] = max_locals_per_seller()
         stats["traffic_mode"] = validation_traffic_mode()
+
+    logger.info(
+        "validemail start: keys=%s pool=%s per_key=%s sellers=%s domains=%s",
+        n_keys,
+        parallel_pool,
+        per_key_limit,
+        len(prepared),
+        len(domains_clean),
+    )
 
     logger.info(
         "validemail: keys=%s × %s req/key pool=%s batch=%s pause=%.2fs sellers=%s domains=%s traffic=%s combined_locals=%s",
@@ -742,18 +752,23 @@ async def _validate_offers_old(
 
         priority_emails: list[str] = []
         seen_probe: set[str] = set()
-        for loc in locals_list:
-            loc = (loc or "").strip().lower()
-            if not loc:
-                continue
-            for dom in domains_clean:
-                em = f"{loc}@{dom}".lower()
-                if em in seen_probe:
+        for tier in domain_tiers_for_probe(domains_clean):
+            if found_by_idx[i]:
+                break
+            priority_emails = []
+            seen_probe = set()
+            for loc in locals_list:
+                loc = (loc or "").strip().lower()
+                if not loc:
                     continue
-                seen_probe.add(em)
-                priority_emails.append(em)
-        if priority_emails:
-            await _probe_batch(i, api_key, priority_emails)
+                for dom in tier:
+                    em = f"{loc}@{dom}".lower()
+                    if em in seen_probe:
+                        continue
+                    seen_probe.add(em)
+                    priority_emails.append(em)
+            if priority_emails:
+                await _probe_batch(i, api_key, priority_emails)
 
         nk = str(prepared[i].get("name_key") or "").strip()
         if found_by_idx[i] and nk:
@@ -766,14 +781,11 @@ async def _validate_offers_old(
         stats["sellers_total"] = n_sellers
 
     async def _run_sellers_batched() -> None:
-        """Пачки продавцов (по умолчанию 20) + пауза — меньше 429 и зависаний на 99%."""
+        """Все продавцы в одной очереди (sem), без синхронных «волн» по 120 шт."""
         nonlocal sellers_completed
-        bs = seller_batch_size()
         pause = seller_batch_pause_sec()
         timeout = seller_validation_timeout_sec()
         cap = max(1, sellers_parallel * n_keys)
-        if bs > 0:
-            cap = max(cap, min(bs, cap * 2))
         sem = asyncio.Semaphore(cap)
 
         async def _run_one_seller(i: int) -> None:
@@ -796,13 +808,9 @@ async def _validate_offers_old(
             async with sem:
                 await _run_one_seller(i)
 
-        for b0 in range(0, n_sellers, bs):
-            chunk = list(range(b0, min(b0 + bs, n_sellers)))
-            if stats is not None:
-                stats["current_batch"] = f"{chunk[0] + 1}-{chunk[-1] + 1}/{n_sellers}"
-            await asyncio.gather(*(_limited(i) for i in chunk))
-            if b0 + bs < n_sellers and pause > 0:
-                await asyncio.sleep(pause)
+        await asyncio.gather(*(_limited(i) for i in range(n_sellers)))
+        if pause > 0:
+            await asyncio.sleep(0)
 
     await _run_sellers_batched()
 

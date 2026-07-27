@@ -121,18 +121,21 @@ def max_domains_per_seller() -> int:
 
 def validation_pool_size(num_keys: int | None = None) -> int:
     """
-    Суммарный параллелизм: до N ключей × VALIDEMAIL_CONCURRENCY_PER_KEY (по умолчанию 6).
-    VALIDEMAIL_CONCURRENCY в .env — явный потолок/override.
+    Суммарный параллелизм HTTP ≈ ключи × per_key.
+    VALIDEMAIL_CONCURRENCY — только потолок; низкое значение (24 при 5 ключах) игнорируется.
     """
     n = max(1, int(num_keys or 0) or len(keys_from_config()) or 1)
     per = per_key_concurrency_limit()
+    planned = max(2, per * n)
     try:
-        total = int(getattr(config, "VALIDEMAIL_CONCURRENCY", 0) or 0)
+        cap = int(getattr(config, "VALIDEMAIL_CONCURRENCY", 0) or 0)
     except (TypeError, ValueError):
-        total = 0
-    if total >= 2:
-        return total
-    return max(2, per * n)
+        cap = 0
+    if cap >= 2:
+        if cap < planned // 2:
+            return planned
+        return max(cap, planned) if cap < planned else planned
+    return planned
 
 
 def validation_concurrency_plan(num_keys: int) -> tuple[int, int]:
@@ -174,6 +177,14 @@ def max_locals_per_seller() -> int:
         return max(1, min(6, int(raw)))
     except (TypeError, ValueError):
         return 3 if validation_traffic_mode() else 4
+
+
+def domain_tiers_for_probe(domains: list[str]) -> list[list[str]]:
+    """Traffic: сначала top-3 домена (быстрый miss), потом остальные."""
+    clean = [str(d or "").strip().lower() for d in domains if str(d or "").strip()]
+    if not validation_traffic_mode() or len(clean) <= 3:
+        return [clean] if clean else []
+    return [clean[:3], clean[3:]]
 
 
 def probe_retry_count() -> int:

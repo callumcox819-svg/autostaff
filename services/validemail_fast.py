@@ -44,7 +44,7 @@ _KEY_SEMAPHORES: dict[str, asyncio.Semaphore] = {}
 _KEY_SEM_LIMITS: dict[str, int] = {}
 _KEY_RATE_LIMITERS: dict[str, "_KeyRateLimiter"] = {}
 _GLOBAL_INFLIGHT: asyncio.Semaphore | None = None
-_RATE_PAUSE_UNTIL: float = 0.0
+_KEY_RATE_PAUSE_UNTIL: dict[str, float] = {}
 _RATE_LOCK: asyncio.Lock | None = None
 
 
@@ -89,18 +89,21 @@ def _rate_limiter_for_key(api_key: str) -> _KeyRateLimiter:
     return _KEY_RATE_LIMITERS[k]
 
 
-async def _await_validemail_rate_limit() -> None:
-    """Общая пауза после 429 — меньше ложных «без email»."""
+async def _await_validemail_rate_limit(api_key: str) -> None:
+    """Пауза после 429 только на проблемном ключе (не душим все 5)."""
+    k = (api_key or "").strip()
     while True:
         async with _rate_lock():
-            wait = _RATE_PAUSE_UNTIL - time.time()
+            wait = float(_KEY_RATE_PAUSE_UNTIL.get(k) or 0) - time.time()
         if wait <= 0:
             return
         await asyncio.sleep(min(2.0, wait))
 
 
-def _register_validemail_429(raw: dict, *, attempt: int = 0) -> None:
-    global _RATE_PAUSE_UNTIL
+def _register_validemail_429(raw: dict, *, api_key: str, attempt: int = 0) -> None:
+    k = (api_key or "").strip()
+    if not k:
+        return
     try:
         st = int(raw.get("_http_status") or 0)
     except (TypeError, ValueError):
@@ -114,7 +117,8 @@ def _register_validemail_429(raw: dict, *, attempt: int = 0) -> None:
             extra = max(extra, float(ra))
         except (TypeError, ValueError):
             pass
-    _RATE_PAUSE_UNTIL = max(_RATE_PAUSE_UNTIL, time.time() + min(12.0, extra))
+    until = time.time() + min(12.0, extra)
+    _KEY_RATE_PAUSE_UNTIL[k] = max(float(_KEY_RATE_PAUSE_UNTIL.get(k) or 0), until)
 
 
 def _global_inflight_sem() -> asyncio.Semaphore:
@@ -497,7 +501,7 @@ async def _fetch_validemail_once(
     url: str,
     use_ssl_verify: bool,
 ) -> tuple[bool, dict]:
-    await _await_validemail_rate_limit()
+    await _await_validemail_rate_limit(api_key)
     try:
         from services.validemail_keys import validemail_rps_per_key
 
@@ -522,7 +526,7 @@ async def _fetch_validemail_once(
             if ra:
                 raw["_retry_after"] = ra
             if status == 429:
-                _register_validemail_429(raw, attempt=0)
+                _register_validemail_429(raw, api_key=api_key, attempt=0)
             if status in _NO_RETRY_HTTP:
                 raw["_api_key_error"] = True
                 msg = raw.get("message") or raw.get("error") or raw.get("detail")
@@ -610,7 +614,7 @@ async def _check_one(
 
                     if isinstance(last_raw, dict):
                         if int(last_raw.get("_http_status") or 0) == 429:
-                            _register_validemail_429(last_raw, attempt=attempt)
+                            _register_validemail_429(last_raw, api_key=api_key, attempt=attempt)
 
                     if isinstance(last_raw, dict) and last_raw.get("_api_key_error"):
                         if _should_cache_result(last_raw):

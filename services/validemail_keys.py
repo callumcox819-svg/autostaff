@@ -52,7 +52,7 @@ def _env_int(name: str, *, default: int, traffic: int | None = None) -> int:
 
 def validemail_rps_per_key() -> float:
     """validemail.co: 10 req/s на ключ. 0 = без клиентского лимитера (не рекомендуется)."""
-    raw = (os.getenv("VALIDEMAIL_RPS_PER_KEY") or "10").strip()
+    raw = (os.getenv("VALIDEMAIL_RPS_PER_KEY") or "9").strip()
     if raw in ("0", "off", "false", "no"):
         return 0.0
     try:
@@ -78,7 +78,7 @@ def seller_parallel_per_key() -> int:
             return max(1, min(32, int(raw)))
         except (TypeError, ValueError):
             pass
-    n = _env_int("VALIDEMAIL_SELLER_PARALLEL_PER_KEY", default=14, traffic=5)
+    n = _env_int("VALIDEMAIL_SELLER_PARALLEL_PER_KEY", default=14, traffic=8)
     return max(1, min(32, n))
 
 
@@ -190,13 +190,9 @@ def domain_tiers_for_probe(domains: list[str]) -> list[list[str]]:
 
 
 def domain_first_probe() -> bool:
-    """По одному домену приоритета за раз — меньше запросов, ~4–6 мин на 600."""
-    raw = (os.getenv("VALIDEMAIL_DOMAIN_FIRST") or "").strip().lower()
-    if raw in ("0", "false", "no", "off"):
-        return False
-    if raw in ("1", "true", "yes", "on"):
-        return True
-    return validation_traffic_mode()
+    """Вкл. только VALIDEMAIL_DOMAIN_FIRST=1 (иначе один залп — стабильный yield)."""
+    raw = (os.getenv("VALIDEMAIL_DOMAIN_FIRST") or "0").strip().lower()
+    return raw in ("1", "true", "yes", "on")
 
 
 def probe_by_domain_waves() -> bool:

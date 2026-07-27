@@ -275,6 +275,15 @@ def _is_api_failure(_ok: bool, raw: object) -> bool:
     return False
 
 
+def _probe_inconclusive(ok: bool, raw: object) -> bool:
+    """Таймаут/429/сеть — не «ящик не существует»."""
+    if ok or _is_cancelled_raw(raw):
+        return False
+    if _is_api_failure(ok, raw):
+        return True
+    return _is_transient_failure(raw)
+
+
 def _should_retry_same_domain(ok: bool, raw: object) -> bool:
     """429/сеть — повторяем тот же домен, не переходим к следующему."""
     if ok:
@@ -637,9 +646,6 @@ async def _validate_offers_old(
     ) -> list[tuple[str, bool, dict]]:
         if not batch_emails:
             return []
-        use_stop = stop_on_first_ok
-        if not use_stop and len(batch_emails) <= max(8, max_locals_per_seller() + 1):
-            use_stop = domain_first_probe()
         async with state_lock:
             if stats is not None:
                 stats["current_domain"] = dom
@@ -664,7 +670,7 @@ async def _validate_offers_old(
             url=url,
             use_ssl_verify=bool(cfg.use_ssl_verify),
             progress_cb=lambda d, t, l, u, _bd=base_done: _wrap_progress(d, t, l, u, _bd),
-            stop_on_first_ok=use_stop,
+            stop_on_first_ok=False,
         )
 
     async def _consume_results(
@@ -744,9 +750,7 @@ async def _validate_offers_old(
                 if len(found_by_idx[seller_i]) >= per_seller_limit:
                     break
                 if not ok:
-                    if count_api_errors and _is_api_failure(ok, raw):
-                        wave_api_fail = True
-                    elif _should_retry_same_domain(ok, raw):
+                    if count_api_errors and _probe_inconclusive(ok, raw):
                         wave_api_fail = True
                     continue
                 combos_valid += 1

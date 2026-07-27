@@ -780,33 +780,6 @@ async def _validate_offers_old(
 
     await _run_sellers_batched()
 
-    retry_idxs = [
-        i
-        for i in range(n_sellers)
-        if not found_by_idx[i] and seller_api_fail[i] > 0
-    ]
-    if retry_idxs:
-        logger.info("validemail api-fail retry: %s sellers", len(retry_idxs))
-        if stats is not None:
-            stats["api_retry_pass"] = len(retry_idxs)
-        rt = seller_validation_timeout_sec()
-        r_cap = max(4, min(24, sellers_parallel * max(1, n_keys // 2)))
-        r_sem = asyncio.Semaphore(r_cap)
-
-        async def _retry_one(i: int) -> None:
-            my_key = api_keys[i % n_keys]
-            async with r_sem:
-                try:
-                    await asyncio.wait_for(_validate_seller(i, my_key), timeout=rt)
-                except asyncio.TimeoutError:
-                    logger.warning("validemail retry timeout idx=%s", i)
-
-        for r0 in range(0, len(retry_idxs), 10):
-            chunk = retry_idxs[r0 : r0 + 10]
-            await asyncio.gather(*(_retry_one(i) for i in chunk))
-            if r0 + 10 < len(retry_idxs):
-                await asyncio.sleep(max(0.5, seller_batch_pause_sec()))
-
     found_count = sum(1 for f in found_by_idx if f)
     if stats is not None:
         logger.info(

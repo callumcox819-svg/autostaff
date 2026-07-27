@@ -76,3 +76,37 @@ async def add_seller_name_blacklist(
     )
     await session.flush()
     return True
+
+
+async def add_seller_name_blacklist_bulk(
+    session,
+    user_id: int,
+    name_keys: set[str] | list[str],
+) -> int:
+    """Один SELECT + bulk insert имён (без N запросов на каждое имя)."""
+    keys = {str(k or "").strip().lower() for k in (name_keys or []) if str(k or "").strip()}
+    if not keys:
+        return 0
+    rows = (
+        await session.execute(
+            sa_select(SellerBlacklist.seller_name_key).where(
+                SellerBlacklist.user_id == int(user_id)
+            )
+        )
+    ).all()
+    existing = {str(r[0]).strip().lower() for r in rows if r[0]}
+    added = 0
+    for key in sorted(keys):
+        if key in existing:
+            continue
+        session.add(
+            SellerBlacklist(
+                user_id=int(user_id),
+                seller_name_key=key,
+                seller_name_display=key,
+            )
+        )
+        added += 1
+    if added:
+        await session.flush()
+    return added

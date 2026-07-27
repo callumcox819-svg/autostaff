@@ -107,13 +107,31 @@ def _format_validation_status(
     validemail_pool: int = 0,
     validemail_per_key: int = 0,
     validemail_threads: int = 0,
+    phase: str = "",
+    sellers_total: int = 0,
+    seller_index: int = 0,
 ) -> str:
     title = (
         f"{html_emoji('ok')} Подбор завершён"
         if finished
         else f"{html_emoji('search')} Подбор email…"
     )
-    bar, pct = _progress_bar(processed, total)
+    ph = (phase or "").strip().lower()
+    if not finished and ph == "saving":
+        title = f"{html_emoji('wait')} Сохраняю в БД…"
+    elif not finished and ph == "export":
+        title = f"{html_emoji('wait')} Отправляю файл…"
+
+    bar_total = total
+    bar_done = processed
+    if not finished and sellers_total > 0 and ph not in ("saving", "export"):
+        bar_total = sellers_total
+        bar_done = min(seller_index, max(0, sellers_total - 1))
+
+    bar, pct = _progress_bar(bar_done, bar_total)
+    if not finished and sellers_total > 0 and seller_index >= sellers_total and ph not in ("saving", "export"):
+        pct = min(pct, 99)
+
     lines = [
         f"<b>{title}</b>",
         user_line,
@@ -129,7 +147,12 @@ def _format_validation_status(
         )
     lines.extend([
         "",
-        f"{html_emoji('presets')} Объявлений обработано: <b>{processed}/{total}</b>",
+        f"{html_emoji('presets')} Объявлений в файле: <b>{total}</b>"
+        + (
+            f" · продавцов: <b>{seller_index}/{sellers_total}</b>"
+            if sellers_total > 0 and not finished
+            else ""
+        ),
         f"{html_emoji('email')} Добавлено: <b>{added}</b>",
         f"{html_emoji('refresh')} Дубликатов: <b>{duplicates}</b>",
         f"{html_emoji('fail')} Повтор продавца (пропуск): <b>{added_blacklist}</b>",
@@ -586,6 +609,9 @@ async def _run_validation_pipeline_inner(
             validemail_pool=int(vstats.get("validemail_pool") or 0),
             validemail_per_key=int(vstats.get("validemail_per_key") or 0),
             validemail_threads=int(vstats.get("validemail_threads") or 0),
+            phase=str(vstats.get("phase") or ""),
+            sellers_total=int(vstats.get("sellers_total") or 0),
+            seller_index=seller_i,
         )
 
     try:
@@ -617,6 +643,14 @@ async def _run_validation_pipeline_inner(
         stop_evt.set()
         await updater
 
+    live_stats["phase"] = "saving"
+    try:
+        await status_msg.edit_text(
+            _ui_from_stats(live_stats, finished=False), parse_mode="HTML"
+        )
+    except Exception:
+        pass
+
     validated_count = len(validated or [])
     eligible = int(live_stats.get("offers_eligible") or 0)
 
@@ -627,27 +661,19 @@ async def _run_validation_pipeline_inner(
         user = await get_or_create_user(session, tg_id)
 
         if pending_names:
-            from services.seller_blacklist import add_seller_name_blacklist
+            from services.seller_blacklist import add_seller_name_blacklist_bulk
 
-            for _key in sorted(pending_names):
-                await add_seller_name_blacklist(session, int(user.id), _key)
+            await add_seller_name_blacklist_bulk(session, int(user.id), pending_names)
             await session.commit()
 
         append_to_active_mailing = await is_user_mailing_active(tg_id)
         if REPLACE_OLD_FOR_USER and not append_to_active_mailing:
-            offer_ids = [
-                o.id
-                for o in (
-                    await session.execute(
-                        select(Offer).where(Offer.user_id == user.id)
-                    )
-                ).scalars().all()
-            ]
-            if offer_ids:
-                await session.execute(
-                    delete(OfferEmail).where(OfferEmail.offer_id.in_(offer_ids))
-                )
-            await session.execute(delete(Offer).where(Offer.user_id == user.id))
+            uid = int(user.id)
+            offer_ids_subq = select(Offer.id).where(Offer.user_id == uid)
+            await session.execute(
+                delete(OfferEmail).where(OfferEmail.offer_id.in_(offer_ids_subq))
+            )
+            await session.execute(delete(Offer).where(Offer.user_id == uid))
             await session.commit()
 
         from services.mailing_reset import get_mailing_reset_skip_emails
@@ -691,6 +717,7 @@ async def _run_validation_pipeline_inner(
 
     live_stats["sellers_with_email"] = offers_with_email
     live_stats["offers_eligible"] = eligible
+    live_stats["phase"] = "export"
 
     append_note = (
         f" · {html_emoji('add')} добавлено к активной рассылке"
@@ -702,6 +729,14 @@ async def _run_validation_pipeline_inner(
         skip_note = (
             f" · {html_emoji('key')} не в очередь (после /reset): {len(skip_queue_emails)}"
         )
+
+    live_stats["phase"] = "export"
+    try:
+        await status_msg.edit_text(
+            _ui_from_stats(live_stats, finished=False), parse_mode="HTML"
+        )
+    except Exception:
+        pass
 
     doc_task = asyncio.create_task(
         message.answer_document(
@@ -715,10 +750,14 @@ async def _run_validation_pipeline_inner(
     )
 
     try:
+        live_stats["phase"] = ""
         await status_msg.edit_text(
             _ui_from_stats(live_stats, finished=True), parse_mode="HTML"
         )
     except Exception:
         pass
 
-    await doc_task
+    try:
+        await asyncio.wait_for(doc_task, timeout=180.0)
+    except asyncio.TimeoutError:
+        logger.warning("validation: telegram document upload timeout tg=%s", tg_id)

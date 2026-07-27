@@ -267,25 +267,22 @@ async def save_all_offers_from_import(
             vrow, norm_email, max_emails=max_emails_per_offer
         )
 
-        payload = json.loads(json.dumps(it, ensure_ascii=False, default=str))
-        if isinstance(payload, dict):
-            payload.setdefault(
-                "item_person_name",
-                str(
-                    it.get("item_person_name")
-                    or it.get("person_name")
-                    or it.get("name")
-                    or ""
-                ).strip(),
-            )
-            void_link = str(it.get("item_link") or it.get("link") or "").strip()
-            if void_link:
-                payload["item_link"] = void_link
-            void_title = _title_from_item_dict(it)
-            if void_title:
-                payload["item_title"] = void_title
-        else:
-            payload = dict(it)
+        payload = dict(it)
+        payload.setdefault(
+            "item_person_name",
+            str(
+                it.get("item_person_name")
+                or it.get("person_name")
+                or it.get("name")
+                or ""
+            ).strip(),
+        )
+        void_link = str(it.get("item_link") or it.get("link") or "").strip()
+        if void_link:
+            payload["item_link"] = void_link
+        void_title = _title_from_item_dict(it)
+        if void_title:
+            payload["item_title"] = void_title
         if picked:
             payload["validated_emails"] = list(picked)
 

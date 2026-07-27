@@ -36,7 +36,7 @@ def seller_batch_size() -> int:
     raw = (os.getenv("VALIDEMAIL_SELLER_BATCH_SIZE") or "").strip()
     if not raw:
         n = len(keys_from_config())
-        raw = "50" if n >= 4 else "25"
+        raw = "55" if n >= 4 else "30"
     try:
         return max(1, min(60, int(raw)))
     except (TypeError, ValueError):
@@ -44,7 +44,7 @@ def seller_batch_size() -> int:
 
 
 def seller_batch_pause_sec() -> float:
-    raw = (os.getenv("VALIDEMAIL_SELLER_BATCH_PAUSE_SEC") or "0.2").strip()
+    raw = (os.getenv("VALIDEMAIL_SELLER_BATCH_PAUSE_SEC") or "0.1").strip()
     try:
         return max(0.0, min(15.0, float(raw)))
     except (TypeError, ValueError):

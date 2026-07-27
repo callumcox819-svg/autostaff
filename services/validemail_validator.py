@@ -658,15 +658,19 @@ async def _validate_offers_old(
                 seller_api_fail[seller_i] += 1
             return combos_valid
 
-    async def _probe_local_priority(seller_i: int, local: str, api_key: str) -> None:
-        """Все домены одним параллельным батчем; победитель — первый валидный по приоритету списка."""
+    async def _probe_local_priority(seller_i: int, local: str, api_key: str) -> str:
+        """
+        Все домены одним батчем. Возвращает:
+        found | clean_miss (все домены точно нет — не гонять запасные local) | uncertain
+        """
         if found_by_idx[seller_i] or not domains_clean:
-            return
+            return "found" if found_by_idx[seller_i] else "clean_miss"
         loc = (local or "").strip().lower()
         if not loc:
-            return
+            return "clean_miss"
         batch = [f"{loc}@{dom}".lower() for dom in domains_clean]
         max_attempts = _probe_max_attempts()
+        last_results: list[tuple[str, bool, dict]] = []
         for attempt in range(max_attempts):
             results = await _run_batch(
                 batch,
@@ -674,6 +678,7 @@ async def _validate_offers_old(
                 dom=domains_clean[0],
                 api_key=api_key,
             )
+            last_results = results
             is_last = attempt >= max_attempts - 1
             cv = await _consume_wave_priority(
                 seller_i,
@@ -688,9 +693,9 @@ async def _validate_offers_old(
                     ) + cv
                 _refresh_stats()
             if found_by_idx[seller_i]:
-                return
+                return "found"
             if any(r[1] for r in results):
-                return
+                return "found"
             retry = any(
                 _should_retry_same_domain(ok, raw) for _e, ok, raw in results
             )
@@ -700,6 +705,11 @@ async def _validate_offers_old(
             await asyncio.sleep(
                 _retry_delay_sec(attempt, raw0 if isinstance(raw0, dict) else {})
             )
+
+        for _e, ok, raw in last_results:
+            if _should_retry_same_domain(ok, raw) or _is_api_failure(ok, raw):
+                return "uncertain"
+        return "clean_miss"
 
     async def _validate_seller(i: int, api_key: str) -> None:
         row = prepared[i]
@@ -715,7 +725,9 @@ async def _validate_offers_old(
         extra_locals = locals_list[1:]
 
         if not found_by_idx[i]:
-            await _probe_local_priority(i, primary, api_key)
+            primary_out = await _probe_local_priority(i, primary, api_key)
+        else:
+            primary_out = "found"
 
         if found_by_idx[i]:
             nk = str(prepared[i].get("name_key") or "").strip()
@@ -723,6 +735,9 @@ async def _validate_offers_old(
                 async with state_lock:
                     batch_seen_names.add(nk)
                     pending_seller_names.add(nk)
+            return
+
+        if primary_out == "clean_miss":
             return
 
         for local in extra_locals:
@@ -746,7 +761,7 @@ async def _validate_offers_old(
         nonlocal sellers_completed
         bs = seller_batch_size()
         pause = seller_batch_pause_sec()
-        timeout = seller_validation_timeout_sec()
+        timeout = min(75.0, seller_validation_timeout_sec())
         cap = min(bs, max(1, sellers_parallel * n_keys))
         sem = asyncio.Semaphore(cap)
 

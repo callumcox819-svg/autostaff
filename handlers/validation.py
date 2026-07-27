@@ -179,7 +179,12 @@ def _format_validation_status(
             if sellers_total > 0 and not finished
             else ""
         ),
-        f"{html_emoji('email')} Добавлено: <b>{added}</b>",
+        f"{html_emoji('email')} Добавлено: <b>{added}</b>"
+        + (
+            f" · <b>{int(round(100 * added / max(1, total - short_nicks)))}%</b> от имён"
+            if finished and total > short_nicks
+            else ""
+        ),
         f"{html_emoji('refresh')} Дубликатов: <b>{duplicates}</b>",
         f"{html_emoji('fail')} Повтор продавца (пропуск): <b>{added_blacklist}</b>",
         f"{html_emoji('edit')} Коротких ников: <b>{short_nicks}</b>",

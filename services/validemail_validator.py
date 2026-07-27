@@ -145,12 +145,19 @@ def _make_local_part_variants(name: str, *, require_first_and_last: bool) -> lis
 
     for h in handles:
         _add(h)
+    # Частые CH-паттерны: nachname@gmx, vorname@gmail, dann first.last
     _add(f"{first}.{last}")
     _add(f"{first}{last}")
+    if len(last) >= MIN_SELLER_LETTERS:
+        _add(last)
+    if len(first) >= MIN_SELLER_LETTERS and first != last:
+        _add(first)
     if len(first) >= 2 and len(last) >= 2:
         _add(f"{first[0]}{last}")
         _add(f"{first[0]}.{last}")
     _add(f"{first}_{last}")
+    if len(last) >= 3 and len(first) >= 1:
+        _add(f"{last}{first[0]}")
     if len(last) >= 3:
         _add(f"{last}.{first}")
     return out

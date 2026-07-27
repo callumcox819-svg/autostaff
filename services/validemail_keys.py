@@ -170,7 +170,7 @@ def max_locals_per_seller() -> int:
     if (os.getenv("VALIDEMAIL_MAX_LOCALS") or "").strip():
         raw = os.getenv("VALIDEMAIL_MAX_LOCALS") or "4"
     elif validation_traffic_mode():
-        raw = "3"
+        raw = "5"
     else:
         raw = "4"
     try:

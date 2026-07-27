@@ -126,18 +126,18 @@ def global_inflight_cap(num_keys: int | None = None) -> int:
 
 
 def optional_tail_domain_count() -> int:
-    """Последние N доменов приоритета — не проверять, если на основных «точно нет»."""
-    raw = (os.getenv("VALIDEMAIL_OPTIONAL_TAIL_DOMAINS") or "3").strip()
+    """0 = все домены пользователя одним батчем. >0 только для длинных списков (env)."""
+    raw = (os.getenv("VALIDEMAIL_OPTIONAL_TAIL_DOMAINS") or "0").strip()
     try:
         return max(0, min(8, int(raw)))
     except (TypeError, ValueError):
-        return 3
+        return 0
 
 
 def extra_local_max_domains() -> int:
-    """Запасной local-part — только топ-N доменов (быстрее). 0 = все."""
-    raw = (os.getenv("VALIDEMAIL_EXTRA_LOCAL_MAX_DOMAINS") or "10").strip()
+    """0 = запасной local-part на всех доменах из приоритета пользователя."""
+    raw = (os.getenv("VALIDEMAIL_EXTRA_LOCAL_MAX_DOMAINS") or "0").strip()
     try:
         return max(0, min(32, int(raw)))
     except (TypeError, ValueError):
-        return 10
+        return 0

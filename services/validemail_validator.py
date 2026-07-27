@@ -497,7 +497,8 @@ async def _validate_offers_old(
     opt_tail_n = optional_tail_domain_count()
     domains_core = list(domains_clean)
     domains_optional: list[str] = []
-    if opt_tail_n > 0 and len(domains_clean) > opt_tail_n:
+    # Не резать короткий список (6 доменов в настройках и т.д.) — только длинный приоритет
+    if opt_tail_n > 0 and len(domains_clean) > opt_tail_n + 5:
         domains_core = domains_clean[:-opt_tail_n]
         domains_optional = domains_clean[-opt_tail_n:]
 

@@ -48,14 +48,27 @@ def _env_int(name: str, *, default: int, traffic: int | None = None) -> int:
     return default
 
 
+def validemail_rps_per_key() -> float:
+    """validemail.co: 10 req/s на ключ (api-doc). Чуть ниже — меньше 429."""
+    raw = (os.getenv("VALIDEMAIL_RPS_PER_KEY") or "").strip()
+    if raw:
+        try:
+            return max(1.0, min(10.0, float(raw)))
+        except (TypeError, ValueError):
+            pass
+    return 9.0
+
+
 def per_key_concurrency_limit() -> int:
     try:
         base = int(getattr(config, "VALIDEMAIL_CONCURRENCY_PER_KEY", 40) or 40)
     except (TypeError, ValueError):
         base = 40
     if not (os.getenv("VALIDEMAIL_CONCURRENCY_PER_KEY") or "").strip():
-        base = _env_int("VALIDEMAIL_CONCURRENCY_PER_KEY", default=base, traffic=20)
-    return max(1, min(64, base))
+        # In-flight ≈ RPS×timeout; cap by documented rate limit (10/s).
+        base = _env_int("VALIDEMAIL_CONCURRENCY_PER_KEY", default=base, traffic=10)
+    rps_cap = max(1, int(validemail_rps_per_key()) + 1)
+    return max(1, min(rps_cap, min(64, base)))
 
 
 def seller_parallel_per_key() -> int:
@@ -65,7 +78,7 @@ def seller_parallel_per_key() -> int:
             return max(1, min(32, int(raw)))
         except (TypeError, ValueError):
             pass
-    n = _env_int("VALIDEMAIL_SELLER_PARALLEL_PER_KEY", default=14, traffic=12)
+    n = _env_int("VALIDEMAIL_SELLER_PARALLEL_PER_KEY", default=14, traffic=6)
     return max(1, min(32, n))
 
 
@@ -185,7 +198,7 @@ def probe_by_domain_waves() -> bool:
 def probe_retry_count() -> int:
     raw = (os.getenv("VALIDEMAIL_PROBE_RETRIES") or "").strip()
     if not raw:
-        return 2
+        return 1
     try:
         return max(1, min(5, int(raw)))
     except (TypeError, ValueError):

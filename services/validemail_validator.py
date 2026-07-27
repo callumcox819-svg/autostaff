@@ -179,9 +179,17 @@ def _len_for_limits(local_part: str) -> int:
     return len((local_part or "").replace(".", ""))
 
 
+def _is_cancelled_raw(raw: object) -> bool:
+    return isinstance(raw, dict) and (
+        raw.get("_cancelled") is True or str(raw.get("error") or "").lower() == "cancelled"
+    )
+
+
 def _is_api_failure(_ok: bool, raw: object) -> bool:
     """Сбой API/сети. Ответ «ящик не существует» (HTTP 200 / undeliverable) — не ошибка."""
     if _ok:
+        return False
+    if _is_cancelled_raw(raw):
         return False
     if not isinstance(raw, dict):
         return True
@@ -590,6 +598,7 @@ async def _validate_offers_old(
         seller_i: int,
         dom: str,
         api_key: str,
+        stop_on_first_ok: bool = True,
     ) -> list[tuple[str, bool, dict]]:
         if not batch_emails:
             return []
@@ -617,6 +626,7 @@ async def _validate_offers_old(
             url=url,
             use_ssl_verify=bool(cfg.use_ssl_verify),
             progress_cb=lambda d, t, l, u, _bd=base_done: _wrap_progress(d, t, l, u, _bd),
+            stop_on_first_ok=stop_on_first_ok,
         )
 
     async def _consume_results(
@@ -627,7 +637,10 @@ async def _validate_offers_old(
     ) -> int:
         nonlocal overall_done
         async with state_lock:
-            overall_done += len(results)
+            checked = sum(
+                1 for _e, _ok, raw in results if not _is_cancelled_raw(raw)
+            )
+            overall_done += checked
             combos_valid = 0
             for _e, ok, raw in results:
                 if len(found_by_idx[seller_i]) >= per_seller_limit:
@@ -677,7 +690,10 @@ async def _validate_offers_old(
             by_lc[(e or "").strip().lower()] = (e, ok, raw)
 
         async with state_lock:
-            overall_done += len(results)
+            checked = sum(
+                1 for _e, _ok, raw in results if not _is_cancelled_raw(raw)
+            )
+            overall_done += checked
             combos_valid = 0
             wave_api_fail = False
             for em_lc in priority_emails:
@@ -816,6 +832,24 @@ async def _validate_offers_old(
         async with state_lock:
             if stats is not None:
                 stats["current_seller_name"] = str(row.get("person_name") or "")[:60]
+
+        raw_item = row.get("raw")
+        if isinstance(raw_item, dict):
+            embedded = _extract_emails_from_offer(raw_item)
+            if embedded:
+                await _probe_batch(
+                    i,
+                    api_key,
+                    [e.lower() for e in embedded],
+                    count_api_errors=count_api_errors,
+                )
+                if found_by_idx[i]:
+                    nk = str(prepared[i].get("name_key") or "").strip()
+                    if nk:
+                        async with state_lock:
+                            pending_seller_names.add(nk)
+                            batch_seen_names.add(nk)
+                    return
 
         locals_list = list(row.get("locals") or [])[: max_locals_per_seller()]
         if not tier_probe:

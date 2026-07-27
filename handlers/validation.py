@@ -188,11 +188,11 @@ def _format_validation_status(
         not finished
         and vk > 0
         and validemail_pool > 0
-        and validemail_pool < vk * 28
+        and validemail_pool < vk * 8
     ):
         lines.append(
             f"{html_emoji('warn')} HTTP-пул <b>{validemail_pool}</b> мал для <b>{vk}</b> ключей — "
-            f"удали <code>VALIDEMAIL_CONCURRENCY</code> из Railway или поставь ≥ <b>{vk * 32}</b>"
+            f"проверь <code>VALIDEMAIL_API_KEYS</code> и <code>VALIDEMAIL_CONCURRENCY_PER_KEY</code> (≈10/ключ)"
         )
     lines.extend([
         "",

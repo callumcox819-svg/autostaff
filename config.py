@@ -37,7 +37,7 @@ def _parse_validemail_api_keys() -> list[str]:
 
 
 def _validemail_per_key_concurrency() -> int:
-    raw = (os.getenv("VALIDEMAIL_CONCURRENCY_PER_KEY") or "24").strip()
+    raw = (os.getenv("VALIDEMAIL_CONCURRENCY_PER_KEY") or "10").strip()
     try:
         return max(1, min(64, int(raw)))
     except (TypeError, ValueError):

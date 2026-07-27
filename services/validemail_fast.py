@@ -6,6 +6,7 @@ import asyncio
 import logging
 import os
 import time
+from collections import deque
 from dataclasses import dataclass
 from typing import Callable, Iterable
 
@@ -41,6 +42,7 @@ _DEFINITIVE_BAD_REASONS = frozenset(
 _SESSION: aiohttp.ClientSession | None = None
 _KEY_SEMAPHORES: dict[str, asyncio.Semaphore] = {}
 _KEY_SEM_LIMITS: dict[str, int] = {}
+_KEY_RATE_LIMITERS: dict[str, "_KeyRateLimiter"] = {}
 _GLOBAL_INFLIGHT: asyncio.Semaphore | None = None
 _RATE_PAUSE_UNTIL: float = 0.0
 _RATE_LOCK: asyncio.Lock | None = None
@@ -51,6 +53,40 @@ def _rate_lock() -> asyncio.Lock:
     if _RATE_LOCK is None:
         _RATE_LOCK = asyncio.Lock()
     return _RATE_LOCK
+
+
+class _KeyRateLimiter:
+    """Скользящее окно 1 с — validemail.co: 10 req/s на ключ."""
+
+    def __init__(self, rps: float) -> None:
+        self._rps = max(1.0, float(rps))
+        self._times: deque[float] = deque()
+        self._lock = asyncio.Lock()
+
+    async def acquire(self) -> None:
+        while True:
+            async with self._lock:
+                now = time.monotonic()
+                while self._times and now - self._times[0] >= 1.0:
+                    self._times.popleft()
+                if len(self._times) < int(self._rps):
+                    self._times.append(now)
+                    return
+                wait = 1.0 - (now - self._times[0])
+            await asyncio.sleep(min(0.25, max(0.01, wait)))
+
+
+def _rate_limiter_for_key(api_key: str) -> _KeyRateLimiter:
+    k = (api_key or "").strip()
+    if k not in _KEY_RATE_LIMITERS:
+        try:
+            from services.validemail_keys import validemail_rps_per_key
+
+            rps = validemail_rps_per_key()
+        except Exception:
+            rps = 9.0
+        _KEY_RATE_LIMITERS[k] = _KeyRateLimiter(rps)
+    return _KEY_RATE_LIMITERS[k]
 
 
 async def _await_validemail_rate_limit() -> None:
@@ -444,6 +480,7 @@ async def _fetch_validemail_once(
     use_ssl_verify: bool,
 ) -> tuple[bool, dict]:
     await _await_validemail_rate_limit()
+    await _rate_limiter_for_key(api_key).acquire()
     s = await _get_session()
     headers, params = _build_request(url, api_key, email_lc)
     ssl = None if use_ssl_verify else False
@@ -483,10 +520,13 @@ async def _check_one(
     progress_cb: ProgressCb | None,
     counters: dict,
     limit: int,
+    cancel_event: asyncio.Event | None = None,
 ) -> tuple[str, bool, dict]:
     email_lc = (email or "").strip().lower()
     if not email_lc:
         return email, False, {"error": "empty"}
+    if cancel_event and cancel_event.is_set():
+        return email, False, {"error": "cancelled", "_cancelled": True}
 
     cached = _cache_get(url, email_lc)
     if cached:
@@ -506,6 +546,8 @@ async def _check_one(
 
     async with _global_inflight_sem():
         async with semaphore:
+            if cancel_event and cancel_event.is_set():
+                return email, False, {"error": "cancelled", "_cancelled": True}
             async with lock:
                 counters["in_use"] += 1
                 if progress_cb:
@@ -517,6 +559,8 @@ async def _check_one(
             try:
                 ok = False
                 for attempt in range(max_attempts):
+                    if cancel_event and cancel_event.is_set():
+                        return email, False, {"error": "cancelled", "_cancelled": True}
                     try:
                         ok, last_raw = await _fetch_validemail_once(
                             email_lc,
@@ -530,6 +574,8 @@ async def _check_one(
 
                     if ok:
                         _cache_set(url, email_lc, True, last_raw)
+                        if cancel_event:
+                            cancel_event.set()
                         return email, True, last_raw
 
                     if not _is_transient_failure(last_raw) or attempt >= max_attempts - 1:
@@ -579,6 +625,8 @@ async def _validate_emails_single_key(
     progress_cb: ProgressCb | None,
     counters: dict | None = None,
     shared_limit: int | None = None,
+    stop_on_first_ok: bool = False,
+    cancel_event: asyncio.Event | None = None,
 ) -> list[tuple[str, bool, dict]]:
     api_key = (api_key or "").strip()
     if not api_key:
@@ -612,11 +660,41 @@ async def _validate_emails_single_key(
                 progress_cb=progress_cb,
                 counters=local_counters,
                 limit=display_limit,
+                cancel_event=cancel_event,
             )
         )
         for e in emails_list
     ]
-    return await asyncio.gather(*tasks)
+    if not stop_on_first_ok or not cancel_event:
+        return await asyncio.gather(*tasks)
+
+    by_email: dict[str, tuple[str, bool, dict]] = {}
+    pending = set(tasks)
+    while pending:
+        done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
+        for t in done:
+            if t.cancelled():
+                continue
+            try:
+                email, ok, raw = t.result()
+            except Exception as e:
+                email, ok, raw = "", False, {"error": str(e)}
+            by_email[(email or "").strip().lower()] = (email, ok, raw)
+            if ok:
+                cancel_event.set()
+                for p in pending:
+                    p.cancel()
+                pending.clear()
+                break
+    await asyncio.gather(*tasks, return_exceptions=True)
+    out: list[tuple[str, bool, dict]] = []
+    for e in emails_list:
+        row = by_email.get((e or "").strip().lower())
+        if row:
+            out.append(row)
+        else:
+            out.append((e, False, {"error": "cancelled", "_cancelled": True}))
+    return out
 
 
 async def validate_emails_fast(
@@ -628,6 +706,7 @@ async def validate_emails_fast(
     url: str = "https://validemail.co/api/v1/validate",
     use_ssl_verify: bool = True,
     progress_cb: ProgressCb | None = None,
+    stop_on_first_ok: bool = False,
 ) -> list[tuple[str, bool, dict]]:
     """
     Быстрая параллельная проверка email.
@@ -645,6 +724,8 @@ async def validate_emails_fast(
     if not keys:
         return [(e, False, {"error": "no api key"}) for e in emails_list]
 
+    cancel_event = asyncio.Event() if stop_on_first_ok else None
+
     from services.validemail_keys import per_key_concurrency_limit, validation_concurrency_plan
 
     per_key_cap = per_key_concurrency_limit()
@@ -658,6 +739,8 @@ async def validate_emails_fast(
             url=url,
             use_ssl_verify=use_ssl_verify,
             progress_cb=progress_cb,
+            stop_on_first_ok=stop_on_first_ok,
+            cancel_event=cancel_event,
         )
 
     n_keys = len(keys)
@@ -695,6 +778,11 @@ async def validate_emails_fast(
     async def _run_bucket(key_idx: int, bucket: list[tuple[int, str]]) -> list[tuple[int, str, bool, dict]]:
         if not bucket:
             return []
+        if cancel_event and cancel_event.is_set():
+            return [
+                (i, e, False, {"error": "cancelled", "_cancelled": True})
+                for i, e in bucket
+            ]
         emails_only = [e for _, e in bucket]
         rows = await _validate_emails_single_key(
             emails_only,
@@ -705,14 +793,35 @@ async def validate_emails_fast(
             progress_cb=progress_cb,
             counters=shared_counters,
             shared_limit=total_limit,
+            stop_on_first_ok=stop_on_first_ok,
+            cancel_event=cancel_event,
         )
         return [(bucket[i][0], rows[i][0], rows[i][1], rows[i][2]) for i in range(len(rows))]
 
     merged: list[tuple[str, bool, dict] | None] = [None] * len(emails_list)
-    bucket_results = await asyncio.gather(*(_run_bucket(i, b) for i, b in enumerate(buckets)))
-    for chunk in bucket_results:
-        for orig_i, email, ok, raw in chunk:
-            merged[orig_i] = (email, ok, raw)
+    if stop_on_first_ok and cancel_event:
+        bucket_tasks = [
+            asyncio.create_task(_run_bucket(i, b)) for i, b in enumerate(buckets) if b
+        ]
+        pending = set(bucket_tasks)
+        while pending:
+            done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
+            for t in done:
+                chunk = t.result()
+                for orig_i, email, ok, raw in chunk:
+                    merged[orig_i] = (email, ok, raw)
+                if any(ok for _oi, _em, ok, _raw in chunk):
+                    cancel_event.set()
+                    for p in pending:
+                        p.cancel()
+                    pending.clear()
+                    break
+        await asyncio.gather(*bucket_tasks, return_exceptions=True)
+    else:
+        bucket_results = await asyncio.gather(*(_run_bucket(i, b) for i, b in enumerate(buckets)))
+        for chunk in bucket_results:
+            for orig_i, email, ok, raw in chunk:
+                merged[orig_i] = (email, ok, raw)
 
     out: list[tuple[str, bool, dict]] = []
     for i, e in enumerate(emails_list):

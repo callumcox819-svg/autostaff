@@ -126,8 +126,28 @@ def _cache_get(url: str, email: str) -> CacheItem | None:
     return item
 
 
+def _cache_negative_enabled() -> bool:
+    """Кэш «нет ящика» — при повторном VOID все выглядят как 585 без email. По умолчанию выкл."""
+    return (os.getenv("VALIDEMAIL_CACHE_NEGATIVE") or "0").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    )
+
+
+def clear_validation_email_cache() -> int:
+    """Сброс in-memory кэша ValidEmail (VALIDEMAIL_CLEAR_CACHE=1 в начале подбора)."""
+    global _CACHE
+    n = len(_CACHE)
+    _CACHE = {}
+    return n
+
+
 def _cache_set(url: str, email: str, ok: bool, raw: dict) -> None:
     if not _should_cache_result(raw):
+        return
+    if not ok and not _cache_negative_enabled():
         return
     k = _cache_key(url, email)
     if not k.strip(":"):
@@ -472,6 +492,8 @@ async def _check_one(
     if cached:
         async with lock:
             counters["done"] += 1
+            if not cached.ok:
+                counters["cache_neg"] = int(counters.get("cache_neg") or 0) + 1
             if progress_cb:
                 try:
                     progress_cb(counters["done"], counters["total"], limit, counters["in_use"])

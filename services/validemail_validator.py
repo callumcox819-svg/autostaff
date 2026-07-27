@@ -394,8 +394,21 @@ async def _validate_offers_old(
                 "duplicates": 0,
                 "api_errors": 0,
                 "no_name": 0,
+                "cache_negative_hits": 0,
             }
         )
+
+    if (os.getenv("VALIDEMAIL_CLEAR_CACHE") or "1").strip().lower() not in (
+        "0",
+        "false",
+        "no",
+        "off",
+    ):
+        from services.validemail_fast import clear_validation_email_cache
+
+        cleared = clear_validation_email_cache()
+        if stats is not None and cleared:
+            stats["cache_cleared"] = cleared
 
     from services.seller_blacklist import seller_name_key
 
@@ -670,6 +683,7 @@ async def _validate_offers_old(
                 em_lc = (em_lc or "").strip().lower()
                 row = by_lc.get(em_lc)
                 if not row:
+                    wave_api_fail = True
                     continue
                 _e, ok, raw = row
                 if len(found_by_idx[seller_i]) >= per_seller_limit:
@@ -692,7 +706,7 @@ async def _validate_offers_old(
                 if stats is not None:
                     stats["last_valid_email"] = key
                 break
-            if count_api_errors and wave_api_fail:
+            if wave_api_fail:
                 if seller_api_fail[seller_i] == 0 and stats is not None:
                     stats["api_errors"] = int(stats.get("api_errors") or 0) + 1
                 seller_api_fail[seller_i] += 1
@@ -777,12 +791,11 @@ async def _validate_offers_old(
             for gi, grp in enumerate(groups):
                 if found_by_idx[seller_i]:
                     return
-                last_grp = gi >= len(groups) - 1
                 await _probe_one_list(
                     seller_i,
                     api_key,
                     grp,
-                    count_api_errors=count_api_errors and last_grp,
+                    count_api_errors=True,
                 )
             return
         await _probe_one_list(

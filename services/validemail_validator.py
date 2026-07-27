@@ -577,7 +577,7 @@ async def _validate_offers_old(
         return await validate_emails_fast(
             batch_emails,
             api_keys=use_keys,
-            concurrency=per_key_limit,
+            concurrency=parallel_pool,
             url=url,
             use_ssl_verify=bool(cfg.use_ssl_verify),
             progress_cb=lambda d, t, l, u, _bd=base_done: _wrap_progress(d, t, l, u, _bd),
@@ -736,14 +736,20 @@ async def _validate_offers_old(
         if not locals_list:
             return
 
+        priority_emails: list[str] = []
+        seen_probe: set[str] = set()
         for loc in locals_list:
-            if found_by_idx[i]:
-                break
             loc = (loc or "").strip().lower()
             if not loc:
                 continue
-            batch = [f"{loc}@{dom}".lower() for dom in domains_clean]
-            await _probe_batch(i, api_key, batch)
+            for dom in domains_clean:
+                em = f"{loc}@{dom}".lower()
+                if em in seen_probe:
+                    continue
+                seen_probe.add(em)
+                priority_emails.append(em)
+        if priority_emails:
+            await _probe_batch(i, api_key, priority_emails)
 
         nk = str(prepared[i].get("name_key") or "").strip()
         if found_by_idx[i] and nk:
@@ -761,7 +767,9 @@ async def _validate_offers_old(
         bs = seller_batch_size()
         pause = seller_batch_pause_sec()
         timeout = seller_validation_timeout_sec()
-        cap = min(bs, max(1, sellers_parallel * n_keys))
+        cap = max(1, sellers_parallel * n_keys)
+        if bs > 0:
+            cap = max(cap, min(bs, cap * 2))
         sem = asyncio.Semaphore(cap)
 
         async def _run_one_seller(i: int) -> None:

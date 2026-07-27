@@ -639,10 +639,25 @@ async def validate_emails_fast(
         )
 
     n_keys = len(keys)
-    per_key_limit, total_limit = validation_concurrency_plan(n_keys)
+    planned_per, planned_total = validation_concurrency_plan(n_keys)
+    per_key_limit, total_limit = planned_per, planned_total
     if int(concurrency) > 0:
-        per_key_limit = min(per_key_cap, max(2, int(concurrency) // n_keys))
-        total_limit = per_key_limit * n_keys
+        c = int(concurrency)
+        # Caller should pass total pool (keys × per-key). Small values were a common bug (24 → 4/key).
+        if c >= per_key_cap * n_keys // 2:
+            per_key_limit = min(per_key_cap, max(2, c // n_keys))
+            total_limit = per_key_limit * n_keys
+        elif c >= per_key_cap:
+            per_key_limit = min(per_key_cap, c)
+            total_limit = per_key_limit * n_keys
+        else:
+            logger.debug(
+                "validemail: concurrency=%s too low for %s keys — using plan %s/%s",
+                c,
+                n_keys,
+                planned_per,
+                planned_total,
+            )
 
     buckets: list[list[tuple[int, str]]] = [[] for _ in range(n_keys)]
     for i, e in enumerate(emails_list):

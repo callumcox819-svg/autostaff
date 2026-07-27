@@ -36,7 +36,7 @@ def seller_batch_size() -> int:
     raw = (os.getenv("VALIDEMAIL_SELLER_BATCH_SIZE") or "").strip()
     if not raw:
         n = len(keys_from_config())
-        raw = "50" if n >= 4 else "30"
+        raw = "120" if n >= 5 else ("80" if n >= 3 else "40")
     try:
         return max(1, min(70, int(raw)))
     except (TypeError, ValueError):

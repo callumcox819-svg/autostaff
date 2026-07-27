@@ -479,7 +479,9 @@ async def _validate_offers_old(
     url = str(cfg.validation_url or DEFAULT_VALIDEMAIL_URL).strip()
 
     from services.validemail_keys import (
+        extra_local_max_domains,
         max_domains_per_seller,
+        optional_tail_domain_count,
         seller_batch_pause_sec,
         seller_batch_size,
         seller_parallel_per_key,
@@ -491,6 +493,18 @@ async def _validate_offers_old(
     dom_cap = max_domains_per_seller()
     if dom_cap > 0:
         domains_clean = domains_clean[:dom_cap]
+
+    opt_tail_n = optional_tail_domain_count()
+    domains_core = list(domains_clean)
+    domains_optional: list[str] = []
+    if opt_tail_n > 0 and len(domains_clean) > opt_tail_n:
+        domains_core = domains_clean[:-opt_tail_n]
+        domains_optional = domains_clean[-opt_tail_n:]
+
+    extra_dom_n = extra_local_max_domains()
+    domains_extra_local = domains_clean
+    if extra_dom_n > 0 and len(domains_clean) > extra_dom_n:
+        domains_extra_local = domains_clean[:extra_dom_n]
 
     n_keys = max(1, len(api_keys))
     per_key_limit, parallel_pool = validation_concurrency_plan(n_keys)
@@ -658,22 +672,38 @@ async def _validate_offers_old(
                 seller_api_fail[seller_i] += 1
             return combos_valid
 
-    async def _probe_local_priority(seller_i: int, local: str, api_key: str) -> None:
-        """Все домены одним батчем; победитель — первый валидный по приоритету списка."""
-        if found_by_idx[seller_i] or not domains_clean:
-            return
+    def _wave_all_definitive_miss(results: list[tuple[str, bool, dict]]) -> bool:
+        if not results:
+            return True
+        for _e, ok, raw in results:
+            if ok:
+                return False
+            if _is_api_failure(ok, raw) or _should_retry_same_domain(ok, raw):
+                return False
+        return True
+
+    async def _probe_domains_batch(
+        seller_i: int,
+        local: str,
+        api_key: str,
+        doms: list[str],
+    ) -> list[tuple[str, bool, dict]]:
+        if found_by_idx[seller_i] or not doms:
+            return []
         loc = (local or "").strip().lower()
         if not loc:
-            return
-        batch = [f"{loc}@{dom}".lower() for dom in domains_clean]
+            return []
+        batch = [f"{loc}@{dom}".lower() for dom in doms]
         max_attempts = _probe_max_attempts()
+        last: list[tuple[str, bool, dict]] = []
         for attempt in range(max_attempts):
             results = await _run_batch(
                 batch,
                 seller_i=seller_i,
-                dom=domains_clean[0],
+                dom=doms[0],
                 api_key=api_key,
             )
+            last = results
             is_last = attempt >= max_attempts - 1
             cv = await _consume_wave_priority(
                 seller_i,
@@ -688,9 +718,9 @@ async def _validate_offers_old(
                     ) + cv
                 _refresh_stats()
             if found_by_idx[seller_i]:
-                return
+                return last
             if any(r[1] for r in results):
-                return
+                return last
             retry = any(
                 _should_retry_same_domain(ok, raw) for _e, ok, raw in results
             )
@@ -700,6 +730,36 @@ async def _validate_offers_old(
             await asyncio.sleep(
                 _retry_delay_sec(attempt, raw0 if isinstance(raw0, dict) else {})
             )
+        return last
+
+    async def _probe_local_for_seller(
+        seller_i: int,
+        local: str,
+        api_key: str,
+        doms_primary: list[str],
+        doms_optional: list[str] | None = None,
+    ) -> None:
+        """Основные домены + опциональный хвост (hispeed/me.com…) только если не «точно нет»."""
+        if found_by_idx[seller_i]:
+            return
+        last = await _probe_domains_batch(seller_i, local, api_key, doms_primary)
+        if found_by_idx[seller_i]:
+            return
+        opt = list(doms_optional or [])
+        if not opt:
+            return
+        if _wave_all_definitive_miss(last):
+            return
+        await _probe_domains_batch(seller_i, local, api_key, opt)
+
+    async def _probe_local_priority(seller_i: int, local: str, api_key: str) -> None:
+        await _probe_local_for_seller(
+            seller_i,
+            local,
+            api_key,
+            domains_core,
+            domains_optional,
+        )
 
     async def _validate_seller(i: int, api_key: str) -> None:
         row = prepared[i]
@@ -728,7 +788,9 @@ async def _validate_offers_old(
         for local in extra_locals:
             if found_by_idx[i]:
                 break
-            await _probe_local_priority(i, local, api_key)
+            await _probe_local_for_seller(
+                i, local, api_key, domains_extra_local, None
+            )
 
         if found_by_idx[i]:
             nk = str(prepared[i].get("name_key") or "").strip()

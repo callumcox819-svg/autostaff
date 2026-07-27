@@ -36,7 +36,7 @@ def seller_batch_size() -> int:
     raw = (os.getenv("VALIDEMAIL_SELLER_BATCH_SIZE") or "").strip()
     if not raw:
         n = len(keys_from_config())
-        raw = "60" if n >= 4 else "30"
+        raw = "45" if n >= 4 else "28"
     try:
         return max(1, min(60, int(raw)))
     except (TypeError, ValueError):
@@ -44,7 +44,7 @@ def seller_batch_size() -> int:
 
 
 def seller_batch_pause_sec() -> float:
-    raw = (os.getenv("VALIDEMAIL_SELLER_BATCH_PAUSE_SEC") or "0").strip()
+    raw = (os.getenv("VALIDEMAIL_SELLER_BATCH_PAUSE_SEC") or "0.2").strip()
     try:
         return max(0.0, min(15.0, float(raw)))
     except (TypeError, ValueError):
@@ -122,4 +122,22 @@ def global_inflight_cap(num_keys: int | None = None) -> int:
             return max(12, min(200, int(raw)))
         except (TypeError, ValueError):
             pass
-    return max(24, min(250, per * n))
+    return max(24, min(160, per * n))
+
+
+def optional_tail_domain_count() -> int:
+    """Последние N доменов приоритета — не проверять, если на основных «точно нет»."""
+    raw = (os.getenv("VALIDEMAIL_OPTIONAL_TAIL_DOMAINS") or "3").strip()
+    try:
+        return max(0, min(8, int(raw)))
+    except (TypeError, ValueError):
+        return 3
+
+
+def extra_local_max_domains() -> int:
+    """Запасной local-part — только топ-N доменов (быстрее). 0 = все."""
+    raw = (os.getenv("VALIDEMAIL_EXTRA_LOCAL_MAX_DOMAINS") or "10").strip()
+    try:
+        return max(0, min(32, int(raw)))
+    except (TypeError, ValueError):
+        return 10

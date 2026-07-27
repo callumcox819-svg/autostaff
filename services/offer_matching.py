@@ -104,16 +104,26 @@ def subject_title_agrees(subject: str, offer: Offer) -> bool:
     return False
 
 
-def offer_display_title(subject: str, offer: Offer | None) -> str:
-    """Товар в карточке = тема письма (Re: …), не полное название лота из БД."""
+def offer_display_title(
+    subject: str,
+    offer: Offer | None,
+    *,
+    mailing_bound: bool = False,
+) -> str:
+    """Товар в карточке: лот из рассылки/БД; тема Re: — только если совпадает с лотом."""
     from services.offer_storage import offer_effective_title
 
+    ot = (offer_effective_title(offer) or "").strip() if offer else ""
+    if offer and mailing_bound and ot:
+        return ot
     subj_t = product_title_from_subject(subject)
     if subject_is_informative(subject) and subj_t:
-        return subj_t
+        if not offer or subject_title_agrees(subject, offer):
+            return subj_t
+        if not mailing_bound:
+            return subj_t
     if not offer:
         return subj_t or (subject or "").strip()
-    ot = (offer_effective_title(offer) or "").strip()
     return ot or subj_t or (subject or "").strip()
 
 
@@ -647,6 +657,63 @@ def _pick_offer_by_subject_in_list(offers: list[Offer], subject: str) -> Offer |
                 best = off
                 best_len = len(title)
     return best
+
+
+async def find_offer_from_incoming_dialog(
+    session,
+    user_id: int,
+    contact_email: str,
+    *,
+    inbox_email: str = "",
+    subject: str = "",
+    exclude_mail_id: int | None = None,
+) -> tuple[Offer | None, str]:
+    """
+    Продолжение переписки: не прыгать на «последнюю рассылку» (Huawei),
+    если уже был входящий от этого продавца с привязанным лотом (шорты).
+    """
+    from models import IncomingMail
+    from services.offer_storage import offer_effective_link
+
+    contact = canon_seller_email(contact_email)
+    if not contact:
+        return None, ""
+
+    inbox = _canon_email(inbox_email) if inbox_email else ""
+    norm_subj = _norm_subject(subject).lower()
+
+    rows = (
+        await session.execute(
+            sa_select(IncomingMail)
+            .where(IncomingMail.user_id == int(user_id))
+            .where(func.lower(IncomingMail.from_email).in_([contact, (contact_email or "").strip().lower()]))
+            .order_by(IncomingMail.id.desc())
+            .limit(25)
+        )
+    ).scalars().all()
+
+    for mail in rows:
+        if exclude_mail_id and int(mail.id) == int(exclude_mail_id):
+            continue
+        if inbox:
+            acc = _canon_email(getattr(mail, "account_email", "") or "")
+            if acc and acc != inbox:
+                continue
+        oid = getattr(mail, "resolved_offer_id", None)
+        if not oid:
+            continue
+        if not bool(getattr(mail, "mailing_bound", False)):
+            continue
+        prev_subj = _norm_subject(getattr(mail, "subject", "") or "").lower()
+        if norm_subj and prev_subj and norm_subj != prev_subj:
+            # другая тема — только если совпадает база (Re: …) или та же нить
+            if not (norm_subj in prev_subj or prev_subj in norm_subj):
+                continue
+        off = await _load_offer(session, user_id=int(user_id), offer_id=int(oid))
+        if off and offer_effective_link(off):
+            return off, "incoming_dialog"
+
+    return None, ""
 
 
 async def find_offer_by_incoming_subject(

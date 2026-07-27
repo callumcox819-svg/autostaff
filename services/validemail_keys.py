@@ -44,7 +44,7 @@ def seller_batch_size() -> int:
 
 
 def seller_batch_pause_sec() -> float:
-    raw = (os.getenv("VALIDEMAIL_SELLER_BATCH_PAUSE_SEC") or "0.15").strip()
+    raw = (os.getenv("VALIDEMAIL_SELLER_BATCH_PAUSE_SEC") or "0.05").strip()
     try:
         return max(0.0, min(15.0, float(raw)))
     except (TypeError, ValueError):
@@ -126,12 +126,12 @@ def global_inflight_cap(num_keys: int | None = None) -> int:
 
 
 def max_locals_per_seller() -> int:
-    """1 = только primary local (быстрее, меньше yield). 2 = primary + запасной."""
-    raw = (os.getenv("VALIDEMAIL_MAX_LOCALS") or "2").strip()
+    """Сколько local-part пробовать на продавца (first.last, firstlast, f.last, …)."""
+    raw = (os.getenv("VALIDEMAIL_MAX_LOCALS") or "4").strip()
     try:
-        return max(1, min(3, int(raw)))
+        return max(1, min(6, int(raw)))
     except (TypeError, ValueError):
-        return 2
+        return 4
 
 
 def optional_tail_domain_count() -> int:

@@ -7,6 +7,7 @@ from services.mailing_send_log import find_offer_from_mailing_log, offer_was_mai
 from services.offer_matching import (
     _load_conversation_link,
     find_offer_by_incoming_subject,
+    find_offer_from_incoming_dialog,
     is_seller_reply_subject,
     gag_link_title_from_mail,
     resolve_listing_for_incoming_mail,
@@ -83,6 +84,19 @@ async def resolve_offer_for_incoming_lead(
         if link:
             snap = _snapshot_from_offer(subject, off, mailing_bound=True)
             return off, link, how, snap
+
+    off_d, how_d = await find_offer_from_incoming_dialog(
+        session,
+        int(user_id),
+        contact_email,
+        inbox_email=inbox_email or "",
+        subject=subject,
+    )
+    if off_d:
+        link = (offer_effective_link(off_d) or "").strip()
+        if link:
+            snap = _snapshot_from_offer(subject, off_d, mailing_bound=True)
+            return off_d, link, how_d, snap
 
     off, link = await resolve_listing_for_incoming_mail(
         session,

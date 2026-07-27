@@ -247,9 +247,11 @@ async def save_all_offers_from_import(
     skip_queue_emails: set[str] | None = None,
 ) -> tuple[int, int, int, list[dict[str, Any]]]:
     """
-    Сохранить ВСЕ объявления из файла (по одной валидной почте на лот).
+    Сохранить объявления из файла: один лот на продавца (первый в VOID), одна почта на лот.
     Returns: (offers_saved, offers_with_email, email_rows_saved, output_json_rows)
     """
+    from services.seller_blacklist import seller_name_key_from_item
+
     vindex = index_validated_rows(validated_rows)
     skip_q = {e.strip().lower() for e in (skip_queue_emails or set()) if e and str(e).strip()}
     offers_saved = 0
@@ -257,10 +259,16 @@ async def save_all_offers_from_import(
     email_rows_saved = 0
     output_rows: list[dict[str, Any]] = []
     offer_batch: list[tuple[Offer, list[str]]] = []
+    seen_seller_keys: set[str] = set()
 
     for it in items:
         if not isinstance(it, dict):
             continue
+        seller_key = seller_name_key_from_item(it)
+        if seller_key:
+            if seller_key in seen_seller_keys:
+                continue
+            seen_seller_keys.add(seller_key)
         vrow = match_validated_row_for_item(it, vindex)
         fields = fields_from_item(it)
         picked = emails_from_validated_row(

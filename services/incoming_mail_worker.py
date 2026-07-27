@@ -1139,7 +1139,9 @@ async def mail_card_offer_meta(
         if off:
             offer_id = int(off.id)
             if not snap:
-                product_title = offer_display_title(subject, off) or None
+                product_title = (
+                    offer_display_title(subject, off, mailing_bound=mailing_bound) or None
+                )
             if not service_label:
                 service_label = _service_label_from_link(offer_effective_link(off))
             if not photo_url:

@@ -5,7 +5,12 @@ from __future__ import annotations
 from sqlalchemy import func, or_, select
 
 from models import MailingSendLog, Offer
-from services.offer_matching import canon_seller_email, product_title_from_subject, subject_title_agrees
+from services.offer_matching import (
+    canon_seller_email,
+    product_title_from_subject,
+    subject_title_agrees,
+    _norm_subject,
+)
 from services.offer_storage import offer_effective_link, offer_effective_title
 
 
@@ -145,6 +150,15 @@ async def find_offer_from_mailing_log(
         return None, ""
 
     subj_needle = product_title_from_subject(subject)
+    in_norm = _norm_subject(subject).lower()
+
+    for log, off in rows:
+        sent_norm = _norm_subject(log.mail_subject or "").lower()
+        if sent_norm and in_norm and sent_norm == in_norm:
+            link = (offer_effective_link(off) or "").strip()
+            if link:
+                return off, "mailing_same_subject"
+
     if subj_needle:
         for _log, off in rows:
             if subject_title_agrees(subject, off):
@@ -161,6 +175,16 @@ async def find_offer_from_mailing_log(
                 link = (offer_effective_link(off) or "").strip()
                 if link:
                     return off, "mailing_title"
+
+    unique_ids = {int(off.id) for _log, off in rows}
+    if len(unique_ids) == 1:
+        _log, off = rows[0]
+        link = (offer_effective_link(off) or "").strip()
+        if link:
+            return off, "mailing_only_offer"
+
+    if subj_needle and not any(subject_title_agrees(subject, off) for _log, off in rows[:12]):
+        return None, ""
 
     _log, off = rows[0]
     link = (offer_effective_link(off) or "").strip()

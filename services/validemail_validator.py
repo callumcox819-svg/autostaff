@@ -147,6 +147,12 @@ def _make_local_part_variants(name: str, *, require_first_and_last: bool) -> lis
         _add(h)
     _add(f"{first}.{last}")
     _add(f"{first}{last}")
+    if len(first) >= 2 and len(last) >= 2:
+        _add(f"{first[0]}{last}")
+        _add(f"{first[0]}.{last}")
+    _add(f"{first}_{last}")
+    if len(last) >= 3:
+        _add(f"{last}.{first}")
     return out
 
 
@@ -406,7 +412,12 @@ async def _validate_offers_old(
             continue
 
         name_key = seller_name_key(raw_name)
-        if name_key and (name_key in seller_bl or name_key in batch_seen_names):
+        if name_key and name_key in seller_bl:
+            if stats is not None:
+                stats["blacklisted"] = int(stats.get("blacklisted") or 0) + 1
+            continue
+
+        if name_key and name_key in batch_seen_names:
             if stats is not None:
                 stats["blacklisted"] = int(stats.get("blacklisted") or 0) + 1
             continue
@@ -443,6 +454,8 @@ async def _validate_offers_old(
             "link": str(it.get("item_link") or it.get("link") or it.get("url") or "").strip(),
             "photo": str(it.get("item_photo") or it.get("photo") or it.get("image") or "").strip(),
         })
+        if name_key:
+            batch_seen_names.add(name_key)
 
     if stats is not None:
         stats["offers_eligible"] = len(prepared)
@@ -695,8 +708,6 @@ async def _validate_offers_old(
                 _refresh_stats()
             if found_by_idx[seller_i]:
                 return
-            if any(r[1] for r in results):
-                return
             by_lc = {(e or "").strip().lower(): (e, ok, raw) for e, ok, raw in results}
             retry_list: list[str] = []
             for em in pending:
@@ -734,12 +745,11 @@ async def _validate_offers_old(
             batch = [f"{loc}@{dom}".lower() for dom in domains_clean]
             await _probe_batch(i, api_key, batch)
 
-        if found_by_idx[i]:
-            nk = str(prepared[i].get("name_key") or "").strip()
-            if nk:
-                async with state_lock:
-                    batch_seen_names.add(nk)
-                    pending_seller_names.add(nk)
+        nk = str(prepared[i].get("name_key") or "").strip()
+        if found_by_idx[i] and nk:
+            async with state_lock:
+                pending_seller_names.add(nk)
+                batch_seen_names.add(nk)
 
     n_sellers = len(prepared)
     if stats is not None:
@@ -750,7 +760,7 @@ async def _validate_offers_old(
         nonlocal sellers_completed
         bs = seller_batch_size()
         pause = seller_batch_pause_sec()
-        timeout = min(50.0, seller_validation_timeout_sec())
+        timeout = seller_validation_timeout_sec()
         cap = min(bs, max(1, sellers_parallel * n_keys))
         sem = asyncio.Semaphore(cap)
 

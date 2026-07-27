@@ -78,7 +78,7 @@ def seller_parallel_per_key() -> int:
             return max(1, min(32, int(raw)))
         except (TypeError, ValueError):
             pass
-    n = _env_int("VALIDEMAIL_SELLER_PARALLEL_PER_KEY", default=14, traffic=8)
+    n = _env_int("VALIDEMAIL_SELLER_PARALLEL_PER_KEY", default=14, traffic=6)
     return max(1, min(32, n))
 
 
@@ -190,9 +190,16 @@ def domain_tiers_for_probe(domains: list[str]) -> list[list[str]]:
 
 
 def domain_first_probe() -> bool:
-    """Вкл. только VALIDEMAIL_DOMAIN_FIRST=1 (иначе один залп — стабильный yield)."""
-    raw = (os.getenv("VALIDEMAIL_DOMAIN_FIRST") or "0").strip().lower()
-    return raw in ("1", "true", "yes", "on")
+    """
+    Домены строго по «Приоритет отправки»: 1-й домен × все local-part,
+    нашли — следующий продавец; нет — 2-й домен и т.д.
+    """
+    raw = (os.getenv("VALIDEMAIL_DOMAIN_FIRST") or "").strip().lower()
+    if raw in ("0", "false", "no", "off"):
+        return False
+    if raw in ("1", "true", "yes", "on"):
+        return True
+    return validation_traffic_mode()
 
 
 def probe_by_domain_waves() -> bool:

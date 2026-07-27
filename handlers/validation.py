@@ -116,6 +116,8 @@ def _format_validation_status(
     validemail_max_locals: int = 0,
     validemail_api_timeout: int = 0,
     traffic_mode: bool = False,
+    priority_domains: list[str] | None = None,
+    current_domain: str = "",
     api_retry_queued: int = 0,
     api_retry_done: int = 0,
 ) -> str:
@@ -184,11 +186,18 @@ def _format_validation_status(
             f"на Railway: <code>VALIDEMAIL_API_TIMEOUT=10</code>"
         )
     if traffic_mode and not finished:
-        lines.append(f"{html_emoji('rocket')} Режим: <b>balanced</b> · один залп local×domain · ~5–8 мин / 600")
         lines.append(
-            f"<i>Проверка — GET validemail.co (ящик на их сервере). "
-            f"Отправка с ваших SMTP — только после подбора.</i>"
+            f"{html_emoji('rocket')} Домены по приоритету (1 продавец → 1-й домен → 2-й…)"
         )
+        pd = [str(d or "").strip().lower() for d in (priority_domains or []) if str(d or "").strip()]
+        if pd:
+            shown = " → ".join(pd[:6])
+            if len(pd) > 6:
+                shown += "…"
+            lines.append(f"{html_emoji('presets')} Порядок: <code>{shown}</code>")
+        cur = (current_domain or "").strip().lower()
+        if cur:
+            lines.append(f"{html_emoji('search')} Сейчас домен: <b>{cur}</b>")
     if not finished and ph == "api_retry" and int(api_retry_queued or 0) > 0:
         lines.append(
             f"{html_emoji('refresh')} Дожима API: <b>{int(api_retry_done or 0)}"

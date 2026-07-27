@@ -495,6 +495,7 @@ async def _validate_offers_old(
         domain_tiers_for_probe,
         max_domains_per_seller,
         max_locals_per_seller,
+        probe_by_domain_waves,
         seller_batch_pause_sec,
         seller_batch_size,
         seller_parallel_per_key,
@@ -690,15 +691,13 @@ async def _validate_offers_old(
                 seller_api_fail[seller_i] += 1
             return combos_valid
 
-    async def _probe_batch(
+    async def _probe_one_list(
         seller_i: int,
         api_key: str,
-        priority_emails: list[str],
+        pending: list[str],
         *,
         count_api_errors: bool = True,
     ) -> None:
-        """Параллельный запрос; при 429 повторяем только упавшие адреса."""
-        pending = [e for e in priority_emails if (e or "").strip()]
         if found_by_idx[seller_i] or not pending:
             return
         max_attempts = _probe_max_attempts()
@@ -743,6 +742,49 @@ async def _validate_offers_old(
                 _retry_delay_sec(attempt, raw0 if isinstance(raw0, dict) else {})
             )
 
+    def _groups_by_domain(pending: list[str]) -> list[list[str]]:
+        by_dom: dict[str, list[str]] = {}
+        for em in pending:
+            dom = (em or "").split("@")[-1].lower()
+            by_dom.setdefault(dom, []).append(em)
+        out: list[list[str]] = []
+        for dom in domains_clean:
+            grp = by_dom.get(dom.lower())
+            if grp:
+                out.append(grp)
+        return out or [pending]
+
+    async def _probe_batch(
+        seller_i: int,
+        api_key: str,
+        priority_emails: list[str],
+        *,
+        count_api_errors: bool = True,
+    ) -> None:
+        """Параллельный запрос; при 429 повторяем только упавшие адреса."""
+        pending = [e for e in priority_emails if (e or "").strip()]
+        if found_by_idx[seller_i] or not pending:
+            return
+        if probe_by_domain_waves() and len(domains_clean) > 1:
+            groups = _groups_by_domain(pending)
+            for gi, grp in enumerate(groups):
+                if found_by_idx[seller_i]:
+                    return
+                last_grp = gi >= len(groups) - 1
+                await _probe_one_list(
+                    seller_i,
+                    api_key,
+                    grp,
+                    count_api_errors=count_api_errors and last_grp,
+                )
+            return
+        await _probe_one_list(
+            seller_i,
+            api_key,
+            pending,
+            count_api_errors=count_api_errors,
+        )
+
     async def _validate_seller(
         i: int,
         api_key: str,
@@ -761,7 +803,7 @@ async def _validate_offers_old(
         if not locals_list:
             return
 
-        tiers = domain_tiers_for_probe(domains_clean) if tier_probe else [domains_clean]
+        tiers = [domains_clean]
         for tier in tiers:
             if found_by_idx[i]:
                 break

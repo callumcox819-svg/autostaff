@@ -104,6 +104,7 @@ def _format_validation_status(
     no_email: int,
     errors: int,
     sellers_api_unresolved: int = 0,
+    no_email_smtp: int = 0,
     validemail_keys: int = 0,
     validemail_pool: int = 0,
     validemail_per_key: int = 0,
@@ -182,7 +183,7 @@ def _format_validation_status(
         f"{html_emoji('refresh')} Дубликатов: <b>{duplicates}</b>",
         f"{html_emoji('fail')} Повтор продавца (пропуск): <b>{added_blacklist}</b>",
         f"{html_emoji('edit')} Коротких ников: <b>{short_nicks}</b>",
-        f"{html_emoji('wait')} Без email: <b>{no_email}</b>",
+        f"{html_emoji('wait')} Без email (SMTP): <b>{no_email_smtp if finished else no_email}</b>",
         f"{html_emoji('yellow')} Сбоев API (продавцов): <b>{errors}</b>",
     ])
     if sellers_api_unresolved > 0:
@@ -627,8 +628,12 @@ async def _run_validation_pipeline_inner(
             processed = min(total, skip_fixed + seller_i)
         eligible = int(vstats.get("offers_eligible") or 0)
         if finished:
+            api_u = int(vstats.get("sellers_api_unresolved") or 0)
             no_email = max(0, eligible - added)
+            no_email_smtp = max(0, no_email - api_u)
         else:
+            api_u = 0
+            no_email_smtp = 0
             no_email = max(0, seller_i - added)
         return _format_validation_status(
             finished=finished,
@@ -643,6 +648,7 @@ async def _run_validation_pipeline_inner(
             no_email=no_email,
             errors=err,
             sellers_api_unresolved=int(vstats.get("sellers_api_unresolved") or 0),
+            no_email_smtp=no_email_smtp if finished else 0,
             validemail_keys=int(vstats.get("validemail_keys") or 0),
             validemail_pool=int(vstats.get("validemail_pool") or 0),
             validemail_per_key=int(vstats.get("validemail_per_key") or 0),

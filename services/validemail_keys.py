@@ -47,7 +47,7 @@ def per_key_concurrency_limit() -> int:
     except (TypeError, ValueError):
         base = 40
     if not (os.getenv("VALIDEMAIL_CONCURRENCY_PER_KEY") or "").strip():
-        base = _env_int("VALIDEMAIL_CONCURRENCY_PER_KEY", default=base, traffic=18)
+        base = _env_int("VALIDEMAIL_CONCURRENCY_PER_KEY", default=base, traffic=22)
     return max(1, min(64, base))
 
 
@@ -58,7 +58,7 @@ def seller_parallel_per_key() -> int:
             return max(1, min(32, int(raw)))
         except (TypeError, ValueError):
             pass
-    n = _env_int("VALIDEMAIL_SELLER_PARALLEL_PER_KEY", default=14, traffic=10)
+    n = _env_int("VALIDEMAIL_SELLER_PARALLEL_PER_KEY", default=14, traffic=12)
     return max(1, min(32, n))
 
 
@@ -86,7 +86,7 @@ def seller_batch_pause_sec() -> float:
 def seller_validation_timeout_sec() -> float:
     raw = (os.getenv("VALIDEMAIL_SELLER_TIMEOUT_SEC") or "").strip()
     if not raw:
-        return 55.0 if validation_traffic_mode() else 90.0
+        return 38.0 if validation_traffic_mode() else 90.0
     try:
         return max(30.0, min(300.0, float(raw)))
     except (TypeError, ValueError):
@@ -180,11 +180,20 @@ def max_locals_per_seller() -> int:
 
 
 def domain_tiers_for_probe(domains: list[str]) -> list[list[str]]:
-    """Traffic: сначала top-3 домена (быстрый miss), потом остальные."""
+    """Traffic: все домены одним залпом (2 волны × 18 HTTP ≈ 2× время на miss)."""
     clean = [str(d or "").strip().lower() for d in domains if str(d or "").strip()]
-    if not validation_traffic_mode() or len(clean) <= 3:
-        return [clean] if clean else []
-    return [clean[:3], clean[3:]]
+    if not clean:
+        return []
+    return [clean]
+
+
+def probe_by_domain_waves() -> bool:
+    """По доменам по приоритету; нашли valid — не крутим остальные домены."""
+    if not validation_traffic_mode():
+        raw = (os.getenv("VALIDEMAIL_PROBE_BY_DOMAIN") or "0").strip().lower()
+        return raw in ("1", "true", "yes", "on")
+    raw = (os.getenv("VALIDEMAIL_PROBE_BY_DOMAIN") or "1").strip().lower()
+    return raw not in ("0", "false", "no", "off")
 
 
 def probe_retry_count() -> int:

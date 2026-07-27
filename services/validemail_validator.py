@@ -684,8 +684,9 @@ async def _validate_offers_old(
                 if stats is not None:
                     stats["last_valid_email"] = key
                 break
-            if count_api_errors and wave_api_fail and stats is not None:
-                stats["api_errors"] = int(stats.get("api_errors") or 0) + 1
+            if count_api_errors and wave_api_fail:
+                if seller_api_fail[seller_i] == 0 and stats is not None:
+                    stats["api_errors"] = int(stats.get("api_errors") or 0) + 1
                 seller_api_fail[seller_i] += 1
             return combos_valid
 
@@ -693,6 +694,8 @@ async def _validate_offers_old(
         seller_i: int,
         api_key: str,
         priority_emails: list[str],
+        *,
+        count_api_errors: bool = True,
     ) -> None:
         """Параллельный запрос; при 429 повторяем только упавшие адреса."""
         pending = [e for e in priority_emails if (e or "").strip()]
@@ -740,23 +743,30 @@ async def _validate_offers_old(
                 _retry_delay_sec(attempt, raw0 if isinstance(raw0, dict) else {})
             )
 
-    async def _validate_seller(i: int, api_key: str) -> None:
+    async def _validate_seller(
+        i: int,
+        api_key: str,
+        *,
+        tier_probe: bool = True,
+        count_api_errors: bool = True,
+    ) -> None:
         row = prepared[i]
         async with state_lock:
             if stats is not None:
                 stats["current_seller_name"] = str(row.get("person_name") or "")[:60]
 
         locals_list = list(row.get("locals") or [])[: max_locals_per_seller()]
+        if not tier_probe:
+            locals_list = list(row.get("locals") or [])[: max(2, max_locals_per_seller())]
         if not locals_list:
             return
 
-        priority_emails: list[str] = []
-        seen_probe: set[str] = set()
-        for tier in domain_tiers_for_probe(domains_clean):
+        tiers = domain_tiers_for_probe(domains_clean) if tier_probe else [domains_clean]
+        for tier in tiers:
             if found_by_idx[i]:
                 break
-            priority_emails = []
-            seen_probe = set()
+            priority_emails: list[str] = []
+            seen_probe: set[str] = set()
             for loc in locals_list:
                 loc = (loc or "").strip().lower()
                 if not loc:
@@ -768,7 +778,12 @@ async def _validate_offers_old(
                     seen_probe.add(em)
                     priority_emails.append(em)
             if priority_emails:
-                await _probe_batch(i, api_key, priority_emails)
+                await _probe_batch(
+                    i,
+                    api_key,
+                    priority_emails,
+                    count_api_errors=count_api_errors,
+                )
 
         nk = str(prepared[i].get("name_key") or "").strip()
         if found_by_idx[i] and nk:
@@ -780,13 +795,13 @@ async def _validate_offers_old(
     if stats is not None:
         stats["sellers_total"] = n_sellers
 
+    seller_sem_cap = max(1, sellers_parallel * n_keys)
+
     async def _run_sellers_batched() -> None:
         """Все продавцы в одной очереди (sem), без синхронных «волн» по 120 шт."""
         nonlocal sellers_completed
-        pause = seller_batch_pause_sec()
         timeout = seller_validation_timeout_sec()
-        cap = max(1, sellers_parallel * n_keys)
-        sem = asyncio.Semaphore(cap)
+        sem = asyncio.Semaphore(seller_sem_cap)
 
         async def _run_one_seller(i: int) -> None:
             nonlocal sellers_completed
@@ -809,10 +824,37 @@ async def _validate_offers_old(
                 await _run_one_seller(i)
 
         await asyncio.gather(*(_limited(i) for i in range(n_sellers)))
-        if pause > 0:
-            await asyncio.sleep(0)
 
     await _run_sellers_batched()
+
+    retry_idx = [
+        i for i in range(n_sellers) if not found_by_idx[i] and seller_api_fail[i] > 0
+    ]
+    if retry_idx:
+        if stats is not None:
+            stats["phase"] = "api_retry"
+            stats["api_retry_queued"] = len(retry_idx)
+        retry_sem = asyncio.Semaphore(max(12, seller_sem_cap // 4))
+
+        async def _retry_seller(ri: int) -> None:
+            async with retry_sem:
+                await asyncio.sleep(0.06 * (ri % 8))
+                await _validate_seller(
+                    ri,
+                    api_keys[ri % n_keys],
+                    tier_probe=False,
+                    count_api_errors=False,
+                )
+
+        await asyncio.gather(*(_retry_seller(i) for i in retry_idx))
+
+    if stats is not None:
+        stats["sellers_api_unresolved"] = sum(
+            1
+            for i in range(n_sellers)
+            if not found_by_idx[i] and seller_api_fail[i] > 0
+        )
+        stats["phase"] = ""
 
     found_count = sum(1 for f in found_by_idx if f)
     if stats is not None:

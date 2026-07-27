@@ -104,7 +104,7 @@ class Config:
             int(
                 os.getenv(
                     "VALIDEMAIL_API_TIMEOUT",
-                    "3" if (os.getenv("VALIDEMAIL_TRAFFIC_MODE") or "1").strip().lower()
+                    "5" if (os.getenv("VALIDEMAIL_TRAFFIC_MODE") or "1").strip().lower()
                     not in ("0", "false", "no", "off")
                     else "4",
                 )

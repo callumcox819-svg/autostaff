@@ -47,7 +47,7 @@ def per_key_concurrency_limit() -> int:
     except (TypeError, ValueError):
         base = 40
     if not (os.getenv("VALIDEMAIL_CONCURRENCY_PER_KEY") or "").strip():
-        base = _env_int("VALIDEMAIL_CONCURRENCY_PER_KEY", default=base, traffic=32)
+        base = _env_int("VALIDEMAIL_CONCURRENCY_PER_KEY", default=base, traffic=18)
     return max(1, min(64, base))
 
 
@@ -58,7 +58,7 @@ def seller_parallel_per_key() -> int:
             return max(1, min(32, int(raw)))
         except (TypeError, ValueError):
             pass
-    n = _env_int("VALIDEMAIL_SELLER_PARALLEL_PER_KEY", default=14, traffic=18)
+    n = _env_int("VALIDEMAIL_SELLER_PARALLEL_PER_KEY", default=14, traffic=10)
     return max(1, min(32, n))
 
 
@@ -161,7 +161,7 @@ def global_inflight_cap(num_keys: int | None = None) -> int:
             pass
     cap = per * n
     if validation_traffic_mode():
-        return max(48, min(280, max(cap, 200)))
+        return max(40, min(140, cap))
     return max(24, min(180, cap))
 
 
@@ -191,7 +191,7 @@ def probe_retry_count() -> int:
     """Повторы батча при 429/сети (traffic = 1)."""
     raw = (os.getenv("VALIDEMAIL_PROBE_RETRIES") or "").strip()
     if not raw:
-        return 1 if validation_traffic_mode() else 2
+        return 2 if validation_traffic_mode() else 2
     try:
         return max(1, min(5, int(raw)))
     except (TypeError, ValueError):

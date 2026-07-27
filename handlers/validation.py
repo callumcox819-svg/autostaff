@@ -103,6 +103,7 @@ def _format_validation_status(
     short_nicks: int,
     no_email: int,
     errors: int,
+    sellers_api_unresolved: int = 0,
     validemail_keys: int = 0,
     validemail_pool: int = 0,
     validemail_per_key: int = 0,
@@ -122,17 +123,19 @@ def _format_validation_status(
     ph = (phase or "").strip().lower()
     if not finished and ph == "saving":
         title = f"{html_emoji('wait')} Сохраняю в БД…"
+    elif not finished and ph == "api_retry":
+        title = f"{html_emoji('wait')} Повтор после сбоев API…"
     elif not finished and ph == "export":
         title = f"{html_emoji('wait')} Отправляю файл…"
 
     bar_total = total
     bar_done = processed
-    if not finished and sellers_total > 0 and ph not in ("saving", "export"):
+    if not finished and sellers_total > 0 and ph not in ("saving", "export", "api_retry"):
         bar_total = sellers_total
         bar_done = min(seller_index, max(0, sellers_total - 1))
 
     bar, pct = _progress_bar(bar_done, bar_total)
-    if not finished and sellers_total > 0 and seller_index >= sellers_total and ph not in ("saving", "export"):
+    if not finished and sellers_total > 0 and seller_index >= sellers_total and ph not in ("saving", "export", "api_retry"):
         pct = min(pct, 99)
 
     lines = [
@@ -180,8 +183,12 @@ def _format_validation_status(
         f"{html_emoji('fail')} Повтор продавца (пропуск): <b>{added_blacklist}</b>",
         f"{html_emoji('edit')} Коротких ников: <b>{short_nicks}</b>",
         f"{html_emoji('wait')} Без email: <b>{no_email}</b>",
-        f"{html_emoji('yellow')} Сбоев API/сети: <b>{errors}</b>",
+        f"{html_emoji('yellow')} Сбоев API (продавцов): <b>{errors}</b>",
     ])
+    if sellers_api_unresolved > 0:
+        lines.append(
+            f"{html_emoji('warn')} Не дожали проверку (API): <b>{sellers_api_unresolved}</b>"
+        )
     return "\n".join(l for l in lines if l is not None)
 
 
@@ -635,6 +642,7 @@ async def _run_validation_pipeline_inner(
             short_nicks=short_n,
             no_email=no_email,
             errors=err,
+            sellers_api_unresolved=int(vstats.get("sellers_api_unresolved") or 0),
             validemail_keys=int(vstats.get("validemail_keys") or 0),
             validemail_pool=int(vstats.get("validemail_pool") or 0),
             validemail_per_key=int(vstats.get("validemail_per_key") or 0),

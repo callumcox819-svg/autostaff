@@ -272,10 +272,9 @@ def _should_retry_same_domain(ok: bool, raw: object) -> bool:
 
 
 def _probe_max_attempts() -> int:
-    try:
-        return max(1, min(5, int(os.getenv("VALIDEMAIL_PROBE_RETRIES", "2"))))
-    except (TypeError, ValueError):
-        return 3
+    from services.validemail_keys import probe_retry_count
+
+    return probe_retry_count()
 
 
 # -------------------------
@@ -492,6 +491,7 @@ async def _validate_offers_old(
     url = str(cfg.validation_url or DEFAULT_VALIDEMAIL_URL).strip()
 
     from services.validemail_keys import (
+        combined_local_probe,
         max_domains_per_seller,
         max_locals_per_seller,
         seller_batch_pause_sec,
@@ -500,6 +500,7 @@ async def _validate_offers_old(
         seller_validation_timeout_sec,
         validation_concurrency_plan,
         validation_pool_size,
+        validation_traffic_mode,
     )
 
     dom_cap = max_domains_per_seller()
@@ -529,9 +530,10 @@ async def _validate_offers_old(
         stats["validemail_pool"] = parallel_pool
         stats["domains_count"] = len(domains_clean)
         stats["max_locals"] = max_locals_per_seller()
+        stats["traffic_mode"] = validation_traffic_mode()
 
     logger.info(
-        "validemail: keys=%s × %s req/key pool=%s batch=%s pause=%.2fs sellers=%s domains=%s",
+        "validemail: keys=%s × %s req/key pool=%s batch=%s pause=%.2fs sellers=%s domains=%s traffic=%s combined_locals=%s",
         n_keys,
         per_key_limit,
         parallel_pool,
@@ -539,6 +541,8 @@ async def _validate_offers_old(
         seller_batch_pause_sec(),
         len(prepared),
         len(domains_clean),
+        validation_traffic_mode(),
+        combined_local_probe(),
     )
 
     if n_keys >= 2:

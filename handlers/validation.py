@@ -112,6 +112,7 @@ def _format_validation_status(
     seller_index: int = 0,
     validemail_domains: int = 0,
     validemail_max_locals: int = 0,
+    traffic_mode: bool = False,
 ) -> str:
     title = (
         f"{html_emoji('ok')} Подбор завершён"
@@ -154,6 +155,8 @@ def _format_validation_status(
         lines.append(
             f"{html_emoji('presets')} Доменов в приоритете: <b>{dc}</b>{loc_note}"
         )
+    if traffic_mode and not finished:
+        lines.append(f"{html_emoji('rocket')} Режим: <b>traffic</b> (цель ~2–3 мин)")
     lines.extend([
         "",
         f"{html_emoji('presets')} Объявлений в файле: <b>{total}</b>"
@@ -561,6 +564,8 @@ async def _run_validation_pipeline_inner(
             include_offer_names=bool(append_active),
         )
 
+    from services.validemail_keys import validation_traffic_mode
+
     n_keys = len(api_keys)
     pool = validation_pool_size(n_keys)
     per_key_lim = per_key_concurrency_limit()
@@ -581,6 +586,7 @@ async def _run_validation_pipeline_inner(
         "validemail_pool": pool,
         "validemail_per_key": per_key_lim,
         "validemail_threads": n_keys,
+        "traffic_mode": validation_traffic_mode(),
     }
     ui_state = {"last_text": ""}
     stop_evt = asyncio.Event()
@@ -628,6 +634,7 @@ async def _run_validation_pipeline_inner(
             seller_index=seller_i,
             validemail_domains=int(vstats.get("domains_count") or 0),
             validemail_max_locals=int(vstats.get("max_locals") or 0),
+            traffic_mode=bool(vstats.get("traffic_mode")),
         )
 
     try:

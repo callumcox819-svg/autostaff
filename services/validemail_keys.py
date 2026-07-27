@@ -15,21 +15,51 @@ def resolve_validemail_api_keys() -> list[str]:
     return keys_from_config()
 
 
+def validation_traffic_mode() -> bool:
+    """2–3 мин на ~600 лотов: больше параллелизма, один батч local×domain на продавца."""
+    raw = (os.getenv("VALIDEMAIL_TRAFFIC_MODE") or "1").strip().lower()
+    return raw not in ("0", "false", "no", "off")
+
+
+def combined_local_probe() -> bool:
+    """Все local-part × домены одним параллельным залпом (не 4× подряд)."""
+    if validation_traffic_mode():
+        return True
+    raw = (os.getenv("VALIDEMAIL_COMBINED_LOCALS") or "1").strip().lower()
+    return raw not in ("0", "false", "no", "off")
+
+
+def _env_int(name: str, *, default: int, traffic: int | None = None) -> int:
+    raw = (os.getenv(name) or "").strip()
+    if raw:
+        try:
+            return int(raw)
+        except (TypeError, ValueError):
+            pass
+    if validation_traffic_mode() and traffic is not None:
+        return traffic
+    return default
+
+
 def per_key_concurrency_limit() -> int:
     try:
-        return max(1, min(64, int(getattr(config, "VALIDEMAIL_CONCURRENCY_PER_KEY", 40) or 40)))
+        base = int(getattr(config, "VALIDEMAIL_CONCURRENCY_PER_KEY", 40) or 40)
     except (TypeError, ValueError):
-        return 40
+        base = 40
+    if not (os.getenv("VALIDEMAIL_CONCURRENCY_PER_KEY") or "").strip():
+        base = _env_int("VALIDEMAIL_CONCURRENCY_PER_KEY", default=base, traffic=32)
+    return max(1, min(64, base))
 
 
 def seller_parallel_per_key() -> int:
-    try:
-        return max(
-            1,
-            min(32, int(getattr(config, "VALIDEMAIL_SELLER_PARALLEL_PER_KEY", 10) or 10)),
-        )
-    except (TypeError, ValueError):
-        return 10
+    raw = (os.getenv("VALIDEMAIL_SELLER_PARALLEL_PER_KEY") or "").strip()
+    if raw:
+        try:
+            return max(1, min(32, int(raw)))
+        except (TypeError, ValueError):
+            pass
+    n = _env_int("VALIDEMAIL_SELLER_PARALLEL_PER_KEY", default=14, traffic=18)
+    return max(1, min(32, n))
 
 
 def seller_batch_size() -> int:
@@ -38,12 +68,14 @@ def seller_batch_size() -> int:
         n = len(keys_from_config())
         raw = "120" if n >= 5 else ("80" if n >= 3 else "40")
     try:
-        return max(1, min(70, int(raw)))
+        return max(1, min(150, int(raw)))
     except (TypeError, ValueError):
         return 25
 
 
 def seller_batch_pause_sec() -> float:
+    if validation_traffic_mode() and not (os.getenv("VALIDEMAIL_SELLER_BATCH_PAUSE_SEC") or "").strip():
+        return 0.0
     raw = (os.getenv("VALIDEMAIL_SELLER_BATCH_PAUSE_SEC") or "0.05").strip()
     try:
         return max(0.0, min(15.0, float(raw)))
@@ -52,7 +84,9 @@ def seller_batch_pause_sec() -> float:
 
 
 def seller_validation_timeout_sec() -> float:
-    raw = (os.getenv("VALIDEMAIL_SELLER_TIMEOUT_SEC") or "90").strip()
+    raw = (os.getenv("VALIDEMAIL_SELLER_TIMEOUT_SEC") or "").strip()
+    if not raw:
+        return 55.0 if validation_traffic_mode() else 90.0
     try:
         return max(30.0, min(300.0, float(raw)))
     except (TypeError, ValueError):
@@ -119,19 +153,38 @@ def global_inflight_cap(num_keys: int | None = None) -> int:
     raw = (os.getenv("VALIDEMAIL_GLOBAL_INFLIGHT") or "").strip()
     if raw:
         try:
-            return max(12, min(200, int(raw)))
+            return max(12, min(280, int(raw)))
         except (TypeError, ValueError):
             pass
-    return max(24, min(180, per * n))
+    cap = per * n
+    if validation_traffic_mode():
+        return max(48, min(280, max(cap, 200)))
+    return max(24, min(180, cap))
 
 
 def max_locals_per_seller() -> int:
     """Сколько local-part пробовать на продавца (first.last, firstlast, f.last, …)."""
-    raw = (os.getenv("VALIDEMAIL_MAX_LOCALS") or "4").strip()
+    if (os.getenv("VALIDEMAIL_MAX_LOCALS") or "").strip():
+        raw = os.getenv("VALIDEMAIL_MAX_LOCALS") or "4"
+    elif validation_traffic_mode():
+        raw = "3"
+    else:
+        raw = "4"
     try:
         return max(1, min(6, int(raw)))
     except (TypeError, ValueError):
-        return 4
+        return 3 if validation_traffic_mode() else 4
+
+
+def probe_retry_count() -> int:
+    """Повторы батча при 429/сети (traffic = 1)."""
+    raw = (os.getenv("VALIDEMAIL_PROBE_RETRIES") or "").strip()
+    if not raw:
+        return 1 if validation_traffic_mode() else 2
+    try:
+        return max(1, min(5, int(raw)))
+    except (TypeError, ValueError):
+        return 2
 
 
 def optional_tail_domain_count() -> int:

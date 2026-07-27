@@ -97,7 +97,20 @@ class Config:
     else:
         n_k = max(1, len(VALIDEMAIL_API_KEYS))
         VALIDEMAIL_CONCURRENCY = max(2, VALIDEMAIL_CONCURRENCY_PER_KEY * n_k)
-    VALIDEMAIL_API_TIMEOUT = max(2, min(30, int(os.getenv("VALIDEMAIL_API_TIMEOUT", "4"))))
+    VALIDEMAIL_API_TIMEOUT = max(
+        2,
+        min(
+            30,
+            int(
+                os.getenv(
+                    "VALIDEMAIL_API_TIMEOUT",
+                    "3" if (os.getenv("VALIDEMAIL_TRAFFIC_MODE") or "1").strip().lower()
+                    not in ("0", "false", "no", "off")
+                    else "4",
+                )
+            ),
+        ),
+    )
     VALIDEMAIL_MAX_RETRIES = max(1, min(5, int(os.getenv("VALIDEMAIL_MAX_RETRIES", "2"))))
 
     GLOBAL_SUBJECT_TEMPLATE = os.getenv("GLOBAL_SUBJECT_TEMPLATE", "Re: OFFER").strip() or "Re: OFFER"

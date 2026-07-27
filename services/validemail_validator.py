@@ -559,6 +559,7 @@ async def _validate_offers_old(
         validation_concurrency_plan,
         validation_pool_size,
         validation_traffic_mode,
+        domain_first_probe,
     )
 
     dom_cap = max_domains_per_seller()
@@ -589,6 +590,7 @@ async def _validate_offers_old(
         stats["domains_count"] = len(domains_clean)
         stats["max_locals"] = max_locals_per_seller()
         stats["traffic_mode"] = validation_traffic_mode()
+        stats["domain_first"] = domain_first_probe()
         try:
             from config import config as _cfg
 
@@ -635,6 +637,9 @@ async def _validate_offers_old(
     ) -> list[tuple[str, bool, dict]]:
         if not batch_emails:
             return []
+        use_stop = stop_on_first_ok
+        if not use_stop and len(batch_emails) <= max(8, max_locals_per_seller() + 1):
+            use_stop = domain_first_probe()
         async with state_lock:
             if stats is not None:
                 stats["current_domain"] = dom
@@ -659,7 +664,7 @@ async def _validate_offers_old(
             url=url,
             use_ssl_verify=bool(cfg.use_ssl_verify),
             progress_cb=lambda d, t, l, u, _bd=base_done: _wrap_progress(d, t, l, u, _bd),
-            stop_on_first_ok=stop_on_first_ok,
+            stop_on_first_ok=use_stop,
         )
 
     async def _consume_results(
@@ -891,28 +896,51 @@ async def _validate_offers_old(
             return
 
         tiers = [domains_clean]
-        for tier in tiers:
-            if found_by_idx[i]:
-                break
-            priority_emails: list[str] = []
-            seen_probe: set[str] = set()
-            for loc in locals_list:
-                loc = (loc or "").strip().lower()
-                if not loc:
-                    continue
-                for dom in tier:
+        if domain_first_probe():
+            for dom in domains_clean:
+                if found_by_idx[i]:
+                    break
+                wave: list[str] = []
+                seen_probe: set[str] = set()
+                for loc in locals_list:
+                    loc = (loc or "").strip().lower()
+                    if not loc:
+                        continue
                     em = f"{loc}@{dom}".lower()
                     if em in seen_probe:
                         continue
                     seen_probe.add(em)
-                    priority_emails.append(em)
-            if priority_emails:
-                await _probe_batch(
-                    i,
-                    api_key,
-                    priority_emails,
-                    count_api_errors=count_api_errors,
-                )
+                    wave.append(em)
+                if wave:
+                    await _probe_one_list(
+                        i,
+                        api_key,
+                        wave,
+                        count_api_errors=count_api_errors,
+                    )
+        else:
+            for tier in tiers:
+                if found_by_idx[i]:
+                    break
+                priority_emails: list[str] = []
+                seen_probe: set[str] = set()
+                for loc in locals_list:
+                    loc = (loc or "").strip().lower()
+                    if not loc:
+                        continue
+                    for dom in tier:
+                        em = f"{loc}@{dom}".lower()
+                        if em in seen_probe:
+                            continue
+                        seen_probe.add(em)
+                        priority_emails.append(em)
+                if priority_emails:
+                    await _probe_batch(
+                        i,
+                        api_key,
+                        priority_emails,
+                        count_api_errors=count_api_errors,
+                    )
 
         nk = str(prepared[i].get("name_key") or "").strip()
         if found_by_idx[i] and nk:

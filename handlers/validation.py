@@ -184,7 +184,7 @@ def _format_validation_status(
             f"на Railway поставь <code>VALIDEMAIL_API_TIMEOUT=8</code> (gmx часто &gt;5s)"
         )
     if traffic_mode and not finished:
-        lines.append(f"{html_emoji('rocket')} Режим: <b>balanced</b> · цель ~4–6 мин на ~600")
+        lines.append(f"{html_emoji('rocket')} Режим: <b>balanced</b> · домены по приоритету · ~4–6 мин / 600")
         lines.append(
             f"<i>Проверка — GET validemail.co (ящик на их сервере). "
             f"Отправка с ваших SMTP — только после подбора.</i>"

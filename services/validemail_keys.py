@@ -76,7 +76,7 @@ def seller_parallel_per_key() -> int:
             return max(1, min(32, int(raw)))
         except (TypeError, ValueError):
             pass
-    n = _env_int("VALIDEMAIL_SELLER_PARALLEL_PER_KEY", default=14, traffic=12)
+    n = _env_int("VALIDEMAIL_SELLER_PARALLEL_PER_KEY", default=14, traffic=5)
     return max(1, min(32, n))
 
 
@@ -175,7 +175,7 @@ def global_inflight_cap(num_keys: int | None = None) -> int:
 def max_locals_per_seller() -> int:
     raw = (os.getenv("VALIDEMAIL_MAX_LOCALS") or "").strip()
     if not raw:
-        raw = "6"
+        raw = "4"
     try:
         return max(1, min(6, int(raw)))
     except (TypeError, ValueError):
@@ -187,10 +187,22 @@ def domain_tiers_for_probe(domains: list[str]) -> list[list[str]]:
     return [clean] if clean else []
 
 
+def domain_first_probe() -> bool:
+    """По одному домену приоритета за раз — меньше запросов, ~4–6 мин на 600."""
+    raw = (os.getenv("VALIDEMAIL_DOMAIN_FIRST") or "").strip().lower()
+    if raw in ("0", "false", "no", "off"):
+        return False
+    if raw in ("1", "true", "yes", "on"):
+        return True
+    return validation_traffic_mode()
+
+
 def probe_by_domain_waves() -> bool:
-    """Off по умолчанию — один залп local×domain (лучший yield)."""
-    raw = (os.getenv("VALIDEMAIL_PROBE_BY_DOMAIN") or "0").strip().lower()
-    return raw in ("1", "true", "yes", "on")
+    """Legacy alias: включено вместе с domain_first или VALIDEMAIL_PROBE_BY_DOMAIN=1."""
+    if not domain_first_probe():
+        raw = (os.getenv("VALIDEMAIL_PROBE_BY_DOMAIN") or "0").strip().lower()
+        return raw in ("1", "true", "yes", "on")
+    return True
 
 
 def probe_retry_count() -> int:

@@ -56,7 +56,7 @@ def validemail_rps_per_key() -> float:
             return max(1.0, min(10.0, float(raw)))
         except (TypeError, ValueError):
             pass
-    return 9.0
+    return 10.0
 
 
 def per_key_concurrency_limit() -> int:
@@ -78,7 +78,7 @@ def seller_parallel_per_key() -> int:
             return max(1, min(32, int(raw)))
         except (TypeError, ValueError):
             pass
-    n = _env_int("VALIDEMAIL_SELLER_PARALLEL_PER_KEY", default=14, traffic=6)
+    n = _env_int("VALIDEMAIL_SELLER_PARALLEL_PER_KEY", default=14, traffic=8)
     return max(1, min(32, n))
 
 
@@ -177,7 +177,7 @@ def global_inflight_cap(num_keys: int | None = None) -> int:
 def max_locals_per_seller() -> int:
     raw = (os.getenv("VALIDEMAIL_MAX_LOCALS") or "").strip()
     if not raw:
-        raw = "4"
+        raw = "6"
     try:
         return max(1, min(6, int(raw)))
     except (TypeError, ValueError):
@@ -190,9 +190,13 @@ def domain_tiers_for_probe(domains: list[str]) -> list[list[str]]:
 
 
 def probe_by_domain_waves() -> bool:
-    """Off по умолчанию — один залп local×domain (как когда было 131 email)."""
-    raw = (os.getenv("VALIDEMAIL_PROBE_BY_DOMAIN") or "0").strip().lower()
-    return raw in ("1", "true", "yes", "on")
+    """По доменам приоритета (4–6 local @ gmx, потом @ gmail…) — меньше 429, тот же охват."""
+    raw = (os.getenv("VALIDEMAIL_PROBE_BY_DOMAIN") or "").strip().lower()
+    if raw in ("0", "false", "no", "off"):
+        return False
+    if raw in ("1", "true", "yes", "on"):
+        return True
+    return validation_traffic_mode()
 
 
 def probe_retry_count() -> int:

@@ -298,24 +298,51 @@ def _probe_max_attempts() -> int:
 
 def _extract_emails_from_offer(offer: dict[str, Any]) -> list[str]:
     out: list[str] = []
-    for key in ("emails", "email", "seller_email", "from_email"):
-        if key not in offer:
-            continue
-        v = offer.get(key)
-        if isinstance(v, str):
-            e = v.strip()
-            if e:
-                out.append(e)
-        elif isinstance(v, list):
-            for x in v:
-                if isinstance(x, str):
-                    e = x.strip()
-                    if e:
-                        out.append(e)
-                elif isinstance(x, dict):
-                    ev = x.get("email")
-                    if isinstance(ev, str) and ev.strip():
-                        out.append(ev.strip())
+    keys_direct = (
+        "emails",
+        "email",
+        "seller_email",
+        "from_email",
+        "contact_email",
+        "mail",
+        "valid_email",
+        "validated_email",
+        "item_email",
+    )
+
+    def _collect_from(obj: dict[str, Any]) -> None:
+        if not isinstance(obj, dict):
+            return
+        for key in keys_direct:
+            if key not in obj:
+                continue
+            v = obj.get(key)
+            if isinstance(v, str):
+                e = v.strip()
+                if e and "@" in e:
+                    out.append(e)
+            elif isinstance(v, list):
+                for x in v:
+                    if isinstance(x, str):
+                        e = x.strip()
+                        if e and "@" in e:
+                            out.append(e)
+                    elif isinstance(x, dict):
+                        ev = x.get("email") or x.get("address")
+                        if isinstance(ev, str) and "@" in ev.strip():
+                            out.append(ev.strip())
+            elif isinstance(v, dict):
+                ev = v.get("email") or v.get("address")
+                if isinstance(ev, str) and "@" in ev.strip():
+                    out.append(ev.strip())
+        void = obj.get("void")
+        if isinstance(void, dict):
+            _collect_from(void)
+        data = obj.get("data")
+        if isinstance(data, dict):
+            _collect_from(data)
+
+    _collect_from(offer)
 
     seen = set()
     uniq: list[str] = []

@@ -179,6 +179,10 @@ def _format_validation_status(
         )
     if traffic_mode and not finished:
         lines.append(f"{html_emoji('rocket')} Режим: <b>balanced</b> · цель ~4–6 мин на ~600")
+        lines.append(
+            f"<i>Проверка — GET validemail.co (ящик на их сервере). "
+            f"Отправка с ваших SMTP — только после подбора.</i>"
+        )
     if not finished and ph == "api_retry" and int(api_retry_queued or 0) > 0:
         lines.append(
             f"{html_emoji('refresh')} Дожима API: <b>{int(api_retry_done or 0)}"
@@ -211,8 +215,8 @@ def _format_validation_status(
         f"{html_emoji('refresh')} Дубликатов: <b>{duplicates}</b>",
         f"{html_emoji('fail')} Повтор продавца (пропуск): <b>{added_blacklist}</b>",
         f"{html_emoji('edit')} Коротких ников: <b>{short_nicks}</b>",
-        f"{html_emoji('wait')} Без email (SMTP): <b>{no_email_smtp if finished else no_email}</b>",
-        f"{html_emoji('yellow')} Сбоев API (продавцов): <b>{errors}</b>",
+        f"{html_emoji('wait')} Не найден ящик (ValidEmail): <b>{no_email_smtp if finished else no_email}</b>",
+        f"{html_emoji('yellow')} Сбои API / сеть (продавцов): <b>{errors}</b>",
     ])
     if sellers_api_unresolved > 0:
         lines.append(
@@ -658,11 +662,13 @@ async def _run_validation_pipeline_inner(
         if finished:
             api_u = int(vstats.get("sellers_api_unresolved") or 0)
             no_email = max(0, eligible - added)
+            # Ящик не найден после API (не сбой сети).
             no_email_smtp = max(0, no_email - api_u)
         else:
             api_u = 0
-            no_email_smtp = 0
-            no_email = max(0, seller_i - added)
+            # Уже обработанные продавцы без найденного ящика (ещё идёт ValidEmail).
+            no_email_smtp = max(0, seller_i - added)
+            no_email = no_email_smtp
         return _format_validation_status(
             finished=finished,
             user_line=user_line,
@@ -676,7 +682,7 @@ async def _run_validation_pipeline_inner(
             no_email=no_email,
             errors=err,
             sellers_api_unresolved=int(vstats.get("sellers_api_unresolved") or 0),
-            no_email_smtp=no_email_smtp if finished else 0,
+            no_email_smtp=no_email_smtp,
             validemail_keys=int(vstats.get("validemail_keys") or 0),
             validemail_pool=int(vstats.get("validemail_pool") or 0),
             validemail_per_key=int(vstats.get("validemail_per_key") or 0),

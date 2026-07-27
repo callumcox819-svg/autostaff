@@ -49,14 +49,14 @@ def _env_int(name: str, *, default: int, traffic: int | None = None) -> int:
 
 
 def validemail_rps_per_key() -> float:
-    """validemail.co: 10 req/s на ключ (api-doc). Чуть ниже — меньше 429."""
-    raw = (os.getenv("VALIDEMAIL_RPS_PER_KEY") or "").strip()
-    if raw:
-        try:
-            return max(1.0, min(10.0, float(raw)))
-        except (TypeError, ValueError):
-            pass
-    return 10.0
+    """validemail.co: 10 req/s на ключ. 0 = без клиентского лимитера (не рекомендуется)."""
+    raw = (os.getenv("VALIDEMAIL_RPS_PER_KEY") or "10").strip()
+    if raw in ("0", "off", "false", "no"):
+        return 0.0
+    try:
+        return max(1.0, min(10.0, float(raw)))
+    except (TypeError, ValueError):
+        return 10.0
 
 
 def per_key_concurrency_limit() -> int:
@@ -65,10 +65,8 @@ def per_key_concurrency_limit() -> int:
     except (TypeError, ValueError):
         base = 40
     if not (os.getenv("VALIDEMAIL_CONCURRENCY_PER_KEY") or "").strip():
-        # In-flight ≈ RPS×timeout; cap by documented rate limit (10/s).
-        base = _env_int("VALIDEMAIL_CONCURRENCY_PER_KEY", default=base, traffic=10)
-    rps_cap = max(1, int(validemail_rps_per_key()) + 1)
-    return max(1, min(rps_cap, min(64, base)))
+        base = _env_int("VALIDEMAIL_CONCURRENCY_PER_KEY", default=base, traffic=20)
+    return max(1, min(64, base))
 
 
 def seller_parallel_per_key() -> int:
@@ -78,7 +76,7 @@ def seller_parallel_per_key() -> int:
             return max(1, min(32, int(raw)))
         except (TypeError, ValueError):
             pass
-    n = _env_int("VALIDEMAIL_SELLER_PARALLEL_PER_KEY", default=14, traffic=8)
+    n = _env_int("VALIDEMAIL_SELLER_PARALLEL_PER_KEY", default=14, traffic=12)
     return max(1, min(32, n))
 
 
@@ -190,19 +188,15 @@ def domain_tiers_for_probe(domains: list[str]) -> list[list[str]]:
 
 
 def probe_by_domain_waves() -> bool:
-    """По доменам приоритета (4–6 local @ gmx, потом @ gmail…) — меньше 429, тот же охват."""
-    raw = (os.getenv("VALIDEMAIL_PROBE_BY_DOMAIN") or "").strip().lower()
-    if raw in ("0", "false", "no", "off"):
-        return False
-    if raw in ("1", "true", "yes", "on"):
-        return True
-    return validation_traffic_mode()
+    """Off по умолчанию — один залп local×domain (лучший yield)."""
+    raw = (os.getenv("VALIDEMAIL_PROBE_BY_DOMAIN") or "0").strip().lower()
+    return raw in ("1", "true", "yes", "on")
 
 
 def probe_retry_count() -> int:
     raw = (os.getenv("VALIDEMAIL_PROBE_RETRIES") or "").strip()
     if not raw:
-        return 1
+        return 2
     try:
         return max(1, min(5, int(raw)))
     except (TypeError, ValueError):

@@ -266,7 +266,7 @@ async def _get_session() -> aiohttp.ClientSession:
         return _SESSION
 
     api_t = _validemail_api_timeout()
-    total = max(20, api_t + 12)
+    total = max(35, api_t + 22)
     timeout = aiohttp.ClientTimeout(
         total=total, connect=8, sock_connect=8, sock_read=api_t + 8
     )
@@ -317,6 +317,20 @@ _BAD_EMAIL_STATES = frozenset(
 _GOOD_DELIVERABLE_REASONS = frozenset({"accepted", "other"})  # legacy, не используется для отсева
 
 
+def _as_bool(val: object) -> bool | None:
+    if val is True or val is False:
+        return bool(val)
+    if isinstance(val, (int, float)) and val in (0, 1):
+        return bool(val)
+    if isinstance(val, str):
+        s = val.strip().lower()
+        if s in ("true", "1", "yes"):
+            return True
+        if s in ("false", "0", "no"):
+            return False
+    return None
+
+
 def _normalize_ok_v1(data: dict, *, strict: bool, min_score: int) -> bool:
     """validemail.co v1 — главный сигнал isDeliverable, без whitelist reason."""
     status = str(data.get("status") or "").lower().strip()
@@ -324,12 +338,16 @@ def _normalize_ok_v1(data: dict, *, strict: bool, min_score: int) -> bool:
 
     if reason in _TRANSIENT_REASONS:
         return False
-    if data.get("isDisposable") is True:
+    if _as_bool(data.get("isDisposable")) is True:
         return False
-    if data.get("isFormatValid") is False or data.get("isDomainValid") is False:
+    if _as_bool(data.get("isFormatValid")) is False or _as_bool(data.get("isDomainValid")) is False:
         return False
 
-    if data.get("isDeliverable") is True and status != "undeliverable":
+    deliverable = _as_bool(data.get("isDeliverable"))
+    if deliverable is None and "isDeliverable" not in data:
+        deliverable = _as_bool(data.get("IsDeliverable"))
+
+    if deliverable is True and status != "undeliverable":
         if strict:
             raw_sc = data.get("score") if data.get("score") is not None else data.get("Score")
             if raw_sc is not None:
@@ -480,7 +498,14 @@ async def _fetch_validemail_once(
     use_ssl_verify: bool,
 ) -> tuple[bool, dict]:
     await _await_validemail_rate_limit()
-    await _rate_limiter_for_key(api_key).acquire()
+    try:
+        from services.validemail_keys import validemail_rps_per_key
+
+        rps = validemail_rps_per_key()
+    except Exception:
+        rps = 10.0
+    if rps > 0:
+        await _rate_limiter_for_key(api_key).acquire()
     s = await _get_session()
     headers, params = _build_request(url, api_key, email_lc)
     ssl = None if use_ssl_verify else False

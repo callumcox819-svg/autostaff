@@ -114,6 +114,7 @@ def _format_validation_status(
     seller_index: int = 0,
     validemail_domains: int = 0,
     validemail_max_locals: int = 0,
+    validemail_api_timeout: int = 0,
     traffic_mode: bool = False,
     api_retry_queued: int = 0,
     api_retry_done: int = 0,
@@ -176,6 +177,11 @@ def _format_validation_status(
         loc_note = f" · логинов/продавца: <b>{ml or 2}</b>" if ml else ""
         lines.append(
             f"{html_emoji('presets')} Доменов в приоритете: <b>{dc}</b>{loc_note}"
+        )
+    if not finished and int(validemail_api_timeout or 0) in range(1, 7):
+        lines.append(
+            f"{html_emoji('warn')} API timeout <b>{int(validemail_api_timeout)}s</b> — "
+            f"на Railway поставь <code>VALIDEMAIL_API_TIMEOUT=8</code> (gmx часто &gt;5s)"
         )
     if traffic_mode and not finished:
         lines.append(f"{html_emoji('rocket')} Режим: <b>balanced</b> · цель ~4–6 мин на ~600")
@@ -692,6 +698,7 @@ async def _run_validation_pipeline_inner(
             seller_index=seller_i,
             validemail_domains=int(vstats.get("domains_count") or 0),
             validemail_max_locals=int(vstats.get("max_locals") or 0),
+            validemail_api_timeout=int(vstats.get("validemail_api_timeout") or 0),
             traffic_mode=bool(vstats.get("traffic_mode")),
             api_retry_queued=int(vstats.get("api_retry_queued") or 0),
             api_retry_done=int(vstats.get("api_retry_done") or 0),

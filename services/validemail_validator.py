@@ -589,6 +589,12 @@ async def _validate_offers_old(
         stats["domains_count"] = len(domains_clean)
         stats["max_locals"] = max_locals_per_seller()
         stats["traffic_mode"] = validation_traffic_mode()
+        try:
+            from config import config as _cfg
+
+            stats["validemail_api_timeout"] = int(getattr(_cfg, "VALIDEMAIL_API_TIMEOUT", 8))
+        except Exception:
+            stats["validemail_api_timeout"] = 8
 
     logger.info(
         "validemail start: keys=%s pool=%s per_key=%s sellers=%s domains=%s",
@@ -625,7 +631,7 @@ async def _validate_offers_old(
         seller_i: int,
         dom: str,
         api_key: str,
-        stop_on_first_ok: bool = True,
+        stop_on_first_ok: bool = False,
     ) -> list[tuple[str, bool, dict]]:
         if not batch_emails:
             return []
@@ -999,6 +1005,15 @@ async def _validate_offers_old(
             int(stats.get("emails_checked") or 0),
             int(stats.get("api_errors") or 0),
         )
+        if found_count == 0 and len(prepared) >= 30:
+            logger.warning(
+                "validemail ZERO yield: sellers=%s timeout=%s pool=%s per_key=%s probe_domains=%s",
+                len(prepared),
+                stats.get("validemail_api_timeout"),
+                stats.get("validemail_pool"),
+                stats.get("validemail_per_key"),
+                stats.get("domains_count"),
+            )
 
     # 3) собираем результат
     out_rows: list[dict[str, Any]] = []

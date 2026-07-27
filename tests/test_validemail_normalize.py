@@ -32,7 +32,18 @@ class ValidEmailNormalizeTests(unittest.TestCase):
             )
         )
 
-    def test_undeliverable_invalid_smtp(self):
+    def test_deliverable_string_flag(self):
+        self.assertTrue(
+            _normalize_ok(
+                {
+                    "status": "deliverable",
+                    "reason": "accepted",
+                    "isDeliverable": "true",
+                    "isFormatValid": True,
+                    "isDomainValid": True,
+                }
+            )
+        )
         self.assertFalse(
             _normalize_ok(
                 {

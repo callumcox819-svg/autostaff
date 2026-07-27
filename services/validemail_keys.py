@@ -36,15 +36,15 @@ def seller_batch_size() -> int:
     raw = (os.getenv("VALIDEMAIL_SELLER_BATCH_SIZE") or "").strip()
     if not raw:
         n = len(keys_from_config())
-        raw = "65" if n >= 4 else "35"
+        raw = "50" if n >= 4 else "30"
     try:
-        return max(1, min(80, int(raw)))
+        return max(1, min(70, int(raw)))
     except (TypeError, ValueError):
         return 25
 
 
 def seller_batch_pause_sec() -> float:
-    raw = (os.getenv("VALIDEMAIL_SELLER_BATCH_PAUSE_SEC") or "0").strip()
+    raw = (os.getenv("VALIDEMAIL_SELLER_BATCH_PAUSE_SEC") or "0.15").strip()
     try:
         return max(0.0, min(15.0, float(raw)))
     except (TypeError, ValueError):
@@ -122,7 +122,7 @@ def global_inflight_cap(num_keys: int | None = None) -> int:
             return max(12, min(200, int(raw)))
         except (TypeError, ValueError):
             pass
-    return max(24, min(220, int(per * n * 1.15) + 8))
+    return max(24, min(180, per * n))
 
 
 def max_locals_per_seller() -> int:

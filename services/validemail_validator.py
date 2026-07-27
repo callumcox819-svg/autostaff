@@ -267,7 +267,7 @@ def _should_retry_same_domain(ok: bool, raw: object) -> bool:
 
 def _probe_max_attempts() -> int:
     try:
-        return max(1, min(5, int(os.getenv("VALIDEMAIL_PROBE_RETRIES", "1"))))
+        return max(1, min(5, int(os.getenv("VALIDEMAIL_PROBE_RETRIES", "2"))))
     except (TypeError, ValueError):
         return 3
 
@@ -667,14 +667,15 @@ async def _validate_offers_old(
         api_key: str,
         priority_emails: list[str],
     ) -> None:
-        """Один параллельный запрос; порядок priority_emails = приоритет доменов/логинов."""
-        if found_by_idx[seller_i] or not priority_emails:
+        """Параллельный запрос; при 429 повторяем только упавшие адреса."""
+        pending = [e for e in priority_emails if (e or "").strip()]
+        if found_by_idx[seller_i] or not pending:
             return
         max_attempts = _probe_max_attempts()
         for attempt in range(max_attempts):
-            dom_hint = (priority_emails[0].split("@")[-1] if priority_emails else "") or ""
+            dom_hint = (pending[0].split("@")[-1] if pending else "") or ""
             results = await _run_batch(
-                priority_emails,
+                pending,
                 seller_i=seller_i,
                 dom=dom_hint,
                 api_key=api_key,
@@ -683,7 +684,7 @@ async def _validate_offers_old(
             cv = await _consume_wave_priority(
                 seller_i,
                 results,
-                priority_emails,
+                pending,
                 count_api_errors=is_last,
             )
             async with state_lock:
@@ -696,11 +697,19 @@ async def _validate_offers_old(
                 return
             if any(r[1] for r in results):
                 return
-            retry = any(
-                _should_retry_same_domain(ok, raw) for _e, ok, raw in results
-            )
-            if not retry or is_last:
+            by_lc = {(e or "").strip().lower(): (e, ok, raw) for e, ok, raw in results}
+            retry_list: list[str] = []
+            for em in pending:
+                row = by_lc.get((em or "").strip().lower())
+                if not row:
+                    retry_list.append(em)
+                    continue
+                _e, ok, raw = row
+                if _should_retry_same_domain(ok, raw):
+                    retry_list.append(_e)
+            if not retry_list or is_last:
                 break
+            pending = retry_list
             raw0 = results[0][2] if results else {}
             await asyncio.sleep(
                 _retry_delay_sec(attempt, raw0 if isinstance(raw0, dict) else {})
@@ -716,17 +725,14 @@ async def _validate_offers_old(
         if not locals_list:
             return
 
-        # Сначала primary на всех доменах по приоритету, затем запасной local
-        priority_emails: list[str] = []
         for loc in locals_list:
+            if found_by_idx[i]:
+                break
             loc = (loc or "").strip().lower()
             if not loc:
                 continue
-            for dom in domains_clean:
-                priority_emails.append(f"{loc}@{dom}".lower())
-
-        if not found_by_idx[i]:
-            await _probe_batch(i, api_key, priority_emails)
+            batch = [f"{loc}@{dom}".lower() for dom in domains_clean]
+            await _probe_batch(i, api_key, batch)
 
         if found_by_idx[i]:
             nk = str(prepared[i].get("name_key") or "").strip()

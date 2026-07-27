@@ -110,6 +110,8 @@ def _format_validation_status(
     phase: str = "",
     sellers_total: int = 0,
     seller_index: int = 0,
+    validemail_domains: int = 0,
+    validemail_max_locals: int = 0,
 ) -> str:
     title = (
         f"{html_emoji('ok')} Подбор завершён"
@@ -144,6 +146,13 @@ def _format_validation_status(
         lines.append(
             f"{html_emoji('key')} Ключей API: <b>{vk}</b> · потоков: <b>{th}</b> · "
             f"до <b>{pk}</b> запросов/ключ"
+        )
+    dc = int(validemail_domains or 0)
+    if dc > 0 and not finished:
+        ml = int(validemail_max_locals or 0)
+        loc_note = f" · логинов/продавца: <b>{ml or 2}</b>" if ml else ""
+        lines.append(
+            f"{html_emoji('presets')} Доменов в приоритете: <b>{dc}</b>{loc_note}"
         )
     lines.extend([
         "",
@@ -617,6 +626,8 @@ async def _run_validation_pipeline_inner(
             phase=str(vstats.get("phase") or ""),
             sellers_total=int(vstats.get("sellers_total") or 0),
             seller_index=seller_i,
+            validemail_domains=int(vstats.get("domains_count") or 0),
+            validemail_max_locals=int(vstats.get("max_locals") or 0),
         )
 
     try:

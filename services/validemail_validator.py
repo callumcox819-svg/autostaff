@@ -480,6 +480,7 @@ async def _validate_offers_old(
 
     from services.validemail_keys import (
         max_domains_per_seller,
+        max_locals_per_seller,
         seller_batch_pause_sec,
         seller_batch_size,
         seller_parallel_per_key,
@@ -513,6 +514,8 @@ async def _validate_offers_old(
         stats["validemail_per_key"] = per_key_limit
         stats["validemail_threads"] = n_keys
         stats["validemail_pool"] = parallel_pool
+        stats["domains_count"] = len(domains_clean)
+        stats["max_locals"] = max_locals_per_seller()
 
     logger.info(
         "validemail: keys=%s × %s req/key pool=%s batch=%s pause=%.2fs sellers=%s domains=%s",
@@ -709,7 +712,7 @@ async def _validate_offers_old(
             if stats is not None:
                 stats["current_seller_name"] = str(row.get("person_name") or "")[:60]
 
-        locals_list = list(row.get("locals") or [])[:2]
+        locals_list = list(row.get("locals") or [])[: max_locals_per_seller()]
         if not locals_list:
             return
 

@@ -36,9 +36,9 @@ def seller_batch_size() -> int:
     raw = (os.getenv("VALIDEMAIL_SELLER_BATCH_SIZE") or "").strip()
     if not raw:
         n = len(keys_from_config())
-        raw = "55" if n >= 4 else "30"
+        raw = "65" if n >= 4 else "35"
     try:
-        return max(1, min(60, int(raw)))
+        return max(1, min(80, int(raw)))
     except (TypeError, ValueError):
         return 25
 
@@ -122,7 +122,16 @@ def global_inflight_cap(num_keys: int | None = None) -> int:
             return max(12, min(200, int(raw)))
         except (TypeError, ValueError):
             pass
-    return max(24, min(160, per * n))
+    return max(24, min(220, int(per * n * 1.15) + 8))
+
+
+def max_locals_per_seller() -> int:
+    """1 = только primary local (быстрее, меньше yield). 2 = primary + запасной."""
+    raw = (os.getenv("VALIDEMAIL_MAX_LOCALS") or "2").strip()
+    try:
+        return max(1, min(3, int(raw)))
+    except (TypeError, ValueError):
+        return 2
 
 
 def optional_tail_domain_count() -> int:

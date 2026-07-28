@@ -17,6 +17,7 @@ from models import User
 from services.validemail_fast import (
     validate_emails_fast,
     _DEFINITIVE_BAD_REASONS,
+    _TRANSIENT_REASONS,
     _is_transient_failure,
     _retry_delay_sec,
 )

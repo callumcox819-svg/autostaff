@@ -17,10 +17,11 @@ from models import User
 from services.validemail_fast import (
     validate_emails_fast,
     _DEFINITIVE_BAD_REASONS,
-    _TRANSIENT_REASONS,
     _is_transient_failure,
     _retry_delay_sec,
 )
+
+_TRANSIENT_API_REASONS = frozenset({"connection_error", "timeout"})
 from utils.ui_emoji import html_emoji
 from services.seller_name import (
     MIN_NAME_TOKEN_LEN,
@@ -202,7 +203,7 @@ def _is_api_failure(_ok: bool, raw: object) -> bool:
     reason = str(raw.get("reason") or raw.get("Reason") or "").lower().strip()
 
     if st == 200:
-        if reason in _TRANSIENT_REASONS:
+        if reason in _TRANSIENT_API_REASONS:
             return True
         return False
 

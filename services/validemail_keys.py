@@ -78,7 +78,7 @@ def seller_parallel_per_key() -> int:
             return max(1, min(32, int(raw)))
         except (TypeError, ValueError):
             pass
-    n = _env_int("VALIDEMAIL_SELLER_PARALLEL_PER_KEY", default=14, traffic=8)
+    n = _env_int("VALIDEMAIL_SELLER_PARALLEL_PER_KEY", default=14, traffic=10)
     return max(1, min(32, n))
 
 
@@ -190,7 +190,7 @@ def quick_combined_probe_size() -> int:
     """Первый быстрый залп (топ домены × local-part); остальное — только если не нашли."""
     raw = (os.getenv("VALIDEMAIL_QUICK_PROBE_SIZE") or "").strip()
     if not raw:
-        return 12 if validation_traffic_mode() else 0
+        return 18 if validation_traffic_mode() else 0
     try:
         return max(0, min(36, int(raw)))
     except (TypeError, ValueError):

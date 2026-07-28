@@ -643,6 +643,7 @@ async def _validate_offers_old(
         validation_concurrency_plan,
         validation_pool_size,
         validation_traffic_mode,
+        validation_fast_mode,
         domain_first_probe,
     )
 
@@ -677,6 +678,7 @@ async def _validate_offers_old(
         stats["traffic_mode"] = validation_traffic_mode()
         stats["domain_first"] = domain_first_probe()
         stats["combined_local_probe"] = combined_local_probe()
+        stats["validation_fast"] = validation_fast_mode()
         if domains_clean:
             stats["priority_domains"] = domains_clean[:8]
         try:

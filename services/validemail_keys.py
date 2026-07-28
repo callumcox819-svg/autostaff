@@ -21,6 +21,16 @@ def validation_traffic_mode() -> bool:
     return raw not in ("0", "false", "no", "off")
 
 
+def validation_fast_mode() -> bool:
+    """Цель ~2–4 мин на ~600 лотов (5 ключей): полный залп + высокий inflight."""
+    raw = (os.getenv("VALIDEMAIL_FAST") or "").strip().lower()
+    if raw in ("1", "true", "yes", "on"):
+        return True
+    if raw in ("0", "false", "no", "off"):
+        return False
+    return validation_traffic_mode()
+
+
 def api_retry_max_sellers() -> int:
     """Повтор продавцов после transient API (0 = выкл)."""
     raw = (os.getenv("VALIDEMAIL_API_RETRY_MAX") or "").strip()
@@ -67,8 +77,9 @@ def per_key_concurrency_limit() -> int:
     except (TypeError, ValueError):
         base = 40
     if not (os.getenv("VALIDEMAIL_CONCURRENCY_PER_KEY") or "").strip():
-        base = _env_int("VALIDEMAIL_CONCURRENCY_PER_KEY", default=base, traffic=10)
-    return max(1, min(10, base))
+        base = _env_int("VALIDEMAIL_CONCURRENCY_PER_KEY", default=base, traffic=15)
+    cap = 20 if validation_fast_mode() else 10
+    return max(1, min(cap, base))
 
 
 def seller_parallel_per_key() -> int:
@@ -78,7 +89,7 @@ def seller_parallel_per_key() -> int:
             return max(1, min(32, int(raw)))
         except (TypeError, ValueError):
             pass
-    n = _env_int("VALIDEMAIL_SELLER_PARALLEL_PER_KEY", default=14, traffic=10)
+    n = _env_int("VALIDEMAIL_SELLER_PARALLEL_PER_KEY", default=14, traffic=12)
     return max(1, min(32, n))
 
 
@@ -172,7 +183,11 @@ def global_inflight_cap(num_keys: int | None = None) -> int:
             return max(12, min(280, int(raw)))
         except (TypeError, ValueError):
             pass
-    return max(20, min(100, per * n))
+    # Держим очередь SMTP полной: 5 ключей × ~15 concurrent × ~5 с ≈ 50 завершений/с
+    target = per * n * 5
+    if validation_fast_mode():
+        return max(80, min(250, target))
+    return max(40, min(120, per * n * 3))
 
 
 def combined_probe_max_emails() -> int:
@@ -187,10 +202,10 @@ def combined_probe_max_emails() -> int:
 
 
 def quick_combined_probe_size() -> int:
-    """Первый быстрый залп (топ домены × local-part); остальное — только если не нашли."""
+    """0 = один полный залп (быстрее и не теряет хвост доменов). >0 = сначала N адресов."""
     raw = (os.getenv("VALIDEMAIL_QUICK_PROBE_SIZE") or "").strip()
     if not raw:
-        return 18 if validation_traffic_mode() else 0
+        return 0 if validation_fast_mode() else 0
     try:
         return max(0, min(36, int(raw)))
     except (TypeError, ValueError):

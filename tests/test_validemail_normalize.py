@@ -57,5 +57,22 @@ class ValidEmailNormalizeTests(unittest.TestCase):
         )
 
 
+    def test_risky_accept_in_traffic_mode(self):
+        import os
+        from unittest.mock import patch
+
+        payload = {
+            "status": "risky",
+            "reason": "catch_all",
+            "isDeliverable": False,
+            "isFormatValid": True,
+            "isDomainValid": True,
+        }
+        with patch.dict(os.environ, {"VALIDEMAIL_ACCEPT_RISKY": "", "VALIDEMAIL_TRAFFIC_MODE": "1"}):
+            self.assertTrue(_normalize_ok(payload))
+        with patch.dict(os.environ, {"VALIDEMAIL_ACCEPT_RISKY": "0", "VALIDEMAIL_TRAFFIC_MODE": "1"}):
+            self.assertFalse(_normalize_ok(payload))
+
+
 if __name__ == "__main__":
     unittest.main()

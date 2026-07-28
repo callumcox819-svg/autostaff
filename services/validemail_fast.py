@@ -370,13 +370,19 @@ def _normalize_ok_v1(data: dict, *, strict: bool, min_score: int) -> bool:
     if status == "unknown":
         return False
     if status == "risky":
-        if not (os.getenv("VALIDEMAIL_ACCEPT_RISKY") or "").strip().lower() in (
-            "1",
-            "true",
-            "yes",
-            "on",
-        ):
+        accept_risky = (os.getenv("VALIDEMAIL_ACCEPT_RISKY") or "").strip().lower()
+        if accept_risky in ("0", "false", "no", "off"):
             return False
+        if accept_risky in ("1", "true", "yes", "on"):
+            return True
+        try:
+            from services.validemail_keys import validation_traffic_mode
+
+            if validation_traffic_mode():
+                return True
+        except Exception:
+            pass
+        return False
 
     if status == "deliverable":
         if strict:

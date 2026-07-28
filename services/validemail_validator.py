@@ -384,6 +384,26 @@ async def _get_validemail_key_for_user(session: Session, telegram_id: int) -> st
 ProgressCb = Callable[[int, int, int, int], None]
 
 
+def _build_domain_first_emails(
+    locals_list: list[str],
+    domains_clean: list[str],
+) -> list[str]:
+    """Домен 1 × все local-part, затем домен 2 × … (как «Приоритет доменов»)."""
+    out: list[str] = []
+    seen: set[str] = set()
+    for dom in domains_clean:
+        for loc in locals_list:
+            loc = (loc or "").strip().lower()
+            if not loc:
+                continue
+            em = f"{loc}@{dom}".lower()
+            if em in seen:
+                continue
+            seen.add(em)
+            out.append(em)
+    return out
+
+
 def merge_validation_domains(user_domains: list[str]) -> list[str]:
     """
     Домены в порядке «Приоритет отправки» (настройки) + остальные из БД, без дублей.
@@ -576,6 +596,7 @@ async def _validate_offers_old(
     from services.validemail_keys import (
         api_retry_max_sellers,
         combined_local_probe,
+        combined_probe_max_emails,
         domain_tiers_for_probe,
         max_domains_per_seller,
         max_locals_per_seller,
@@ -620,6 +641,7 @@ async def _validate_offers_old(
         stats["max_locals"] = max_locals_per_seller()
         stats["traffic_mode"] = validation_traffic_mode()
         stats["domain_first"] = domain_first_probe()
+        stats["combined_local_probe"] = combined_local_probe()
         if domains_clean:
             stats["priority_domains"] = domains_clean[:8]
         try:
@@ -944,31 +966,51 @@ async def _validate_offers_old(
 
         use_priority_domains = domain_first_probe()
         if use_priority_domains:
-            for dom in domains_clean:
-                if found_by_idx[i]:
-                    break
-                wave: list[str] = []
-                seen_probe: set[str] = set()
-                for loc in locals_list:
-                    loc = (loc or "").strip().lower()
-                    if not loc:
+            if combined_local_probe():
+                priority_emails = _build_domain_first_emails(locals_list, domains_clean)
+                chunk_max = combined_probe_max_emails()
+                for off in range(0, len(priority_emails), chunk_max):
+                    if found_by_idx[i]:
+                        break
+                    chunk = priority_emails[off : off + chunk_max]
+                    if not chunk:
                         continue
-                    em = f"{loc}@{dom}".lower()
-                    if em in seen_probe:
+                    if stats is not None:
+                        async with state_lock:
+                            dom_hint = (chunk[0].split("@")[-1] if chunk else "") or ""
+                            stats["current_domain"] = dom_hint
+                    await _probe_one_list(
+                        i,
+                        api_key,
+                        chunk,
+                        count_api_errors=count_api_errors,
+                    )
+            else:
+                for dom in domains_clean:
+                    if found_by_idx[i]:
+                        break
+                    wave: list[str] = []
+                    seen_probe: set[str] = set()
+                    for loc in locals_list:
+                        loc = (loc or "").strip().lower()
+                        if not loc:
+                            continue
+                        em = f"{loc}@{dom}".lower()
+                        if em in seen_probe:
+                            continue
+                        seen_probe.add(em)
+                        wave.append(em)
+                    if not wave:
                         continue
-                    seen_probe.add(em)
-                    wave.append(em)
-                if not wave:
-                    continue
-                await _probe_one_list(
-                    i,
-                    api_key,
-                    wave,
-                    count_api_errors=count_api_errors,
-                )
-                if stats is not None:
-                    async with state_lock:
-                        stats["current_domain"] = dom
+                    await _probe_one_list(
+                        i,
+                        api_key,
+                        wave,
+                        count_api_errors=count_api_errors,
+                    )
+                    if stats is not None:
+                        async with state_lock:
+                            stats["current_domain"] = dom
         else:
             priority_emails: list[str] = []
             seen_probe: set[str] = set()

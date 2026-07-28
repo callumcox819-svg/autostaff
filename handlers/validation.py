@@ -122,6 +122,7 @@ def _format_validation_status(
     seller_parallel_cap: int = 0,
     api_retry_queued: int = 0,
     api_retry_done: int = 0,
+    seller_timeouts: int = 0,
 ) -> str:
     title = (
         f"{html_emoji('ok')} Подбор завершён"
@@ -250,6 +251,11 @@ def _format_validation_status(
     if sellers_api_unresolved > 0:
         lines.append(
             f"{html_emoji('warn')} Не дожали проверку (API): <b>{sellers_api_unresolved}</b>"
+        )
+    if finished and seller_timeouts > 0:
+        lines.append(
+            f"{html_emoji('warn')} Обрезано по таймауту продавца: <b>{seller_timeouts}</b> "
+            f"(увеличь <code>VALIDEMAIL_SELLER_TIMEOUT_SEC</code>)"
         )
     return "\n".join(l for l in lines if l is not None)
 
@@ -728,6 +734,7 @@ async def _run_validation_pipeline_inner(
             seller_parallel_cap=int(vstats.get("seller_parallel_cap") or 0),
             api_retry_queued=int(vstats.get("api_retry_queued") or 0),
             api_retry_done=int(vstats.get("api_retry_done") or 0),
+            seller_timeouts=int(vstats.get("seller_timeouts") or 0),
         )
 
     try:

@@ -139,6 +139,7 @@ def _format_validation_status(
 
     bar_total = total
     bar_done = processed
+    rq = rd = 0
     if not finished and ph == "api_retry":
         rq = int(api_retry_queued or 0)
         rd = int(api_retry_done or 0)

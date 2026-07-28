@@ -78,7 +78,7 @@ def seller_parallel_per_key() -> int:
             return max(1, min(32, int(raw)))
         except (TypeError, ValueError):
             pass
-    n = _env_int("VALIDEMAIL_SELLER_PARALLEL_PER_KEY", default=14, traffic=12)
+    n = _env_int("VALIDEMAIL_SELLER_PARALLEL_PER_KEY", default=14, traffic=5)
     return max(1, min(32, n))
 
 
@@ -171,7 +171,7 @@ def global_inflight_cap(num_keys: int | None = None) -> int:
             return max(12, min(280, int(raw)))
         except (TypeError, ValueError):
             pass
-    return max(per * n, min(100, per * n + 20))
+    return max(10, min(60, per * n))
 
 
 def max_locals_per_seller() -> int:

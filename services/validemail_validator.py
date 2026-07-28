@@ -422,6 +422,18 @@ async def _validate_offers_old(
     require_fl = bool(cfg.require_first_and_last)
 
     if stats is not None:
+        _preserve = {
+            k: stats[k]
+            for k in (
+                "validemail_keys",
+                "validemail_pool",
+                "validemail_per_key",
+                "validemail_threads",
+                "traffic_mode",
+                "validation_t0",
+            )
+            if k in stats
+        }
         stats.clear()
         stats.update(
             {
@@ -447,6 +459,7 @@ async def _validate_offers_old(
                 "cache_negative_hits": 0,
             }
         )
+        stats.update(_preserve)
 
     if (os.getenv("VALIDEMAIL_CLEAR_CACHE") or "1").strip().lower() not in (
         "0",
@@ -599,6 +612,7 @@ async def _validate_offers_old(
     seller_api_fail: list[int] = [0] * len(prepared)
 
     if stats is not None:
+        stats["validemail_keys"] = n_keys
         stats["validemail_per_key"] = per_key_limit
         stats["validemail_threads"] = n_keys
         stats["validemail_pool"] = parallel_pool
@@ -781,6 +795,22 @@ async def _validate_offers_old(
                 if seller_api_fail[seller_i] == 0 and stats is not None:
                     stats["api_errors"] = int(stats.get("api_errors") or 0) + 1
                 seller_api_fail[seller_i] = 1
+            if len(found_by_idx[seller_i]) < per_seller_limit:
+                for _e, ok, raw in results:
+                    if not ok or _is_cancelled_raw(raw):
+                        continue
+                    key = (_e or "").strip().lower()
+                    if not key or key in seen_valid_emails:
+                        continue
+                    if len(found_by_idx[seller_i]) >= per_seller_limit:
+                        break
+                    seen_valid_emails.add(key)
+                    found_by_idx[seller_i].append(key)
+                    if stats is not None:
+                        stats["last_valid_email"] = key
+                        logger.info("validemail hit seller=%s email=%s", seller_i, key)
+                    combos_valid += 1
+                    break
             return combos_valid
 
     async def _probe_one_list(

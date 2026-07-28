@@ -168,97 +168,17 @@ def _format_validation_status(
         user_line,
         f"<code>{bar}</code> <b>{pct}%</b>",
     ]
-    vk = int(validemail_keys or 0)
-    if vk > 0 and not finished:
-        th = validemail_threads or vk
-        pk = validemail_per_key or max(1, validemail_pool // max(1, vk))
-        rps_total = min(10 * vk, 10 * th)
-        lines.append(
-            f"{html_emoji('key')} Ключей: <b>{vk}</b> · пул HTTP <b>{validemail_pool}</b> · "
-            f"<b>{pk}</b> parallel/ключ · API ≤ <b>{rps_total}</b> req/s"
-        )
-    dc = int(validemail_domains or 0)
-    if dc > 0 and not finished:
-        ml = int(validemail_max_locals or 0)
-        loc_note = f" · логинов/продавца: <b>{ml or 2}</b>" if ml else ""
-        lines.append(
-            f"{html_emoji('presets')} Доменов в приоритете: <b>{dc}</b>{loc_note}"
-        )
-    if not finished and int(validemail_api_timeout or 0) >= 12:
-        lines.append(
-            f"{html_emoji('warn')} API timeout <b>{int(validemail_api_timeout)}s</b> — "
-            f"для скорости на Railway: <code>VALIDEMAIL_API_TIMEOUT=7</code> или убери переменную"
-        )
-    if traffic_mode and not finished:
-        lines.append(
-            f"{html_emoji('rocket')} Домены по приоритету (1 продавец → 1-й домен → 2-й…)"
-        )
-        pd = [str(d or "").strip().lower() for d in (priority_domains or []) if str(d or "").strip()]
-        if pd:
-            shown = " → ".join(pd[:6])
-            if len(pd) > 6:
-                shown += "…"
-            lines.append(f"{html_emoji('presets')} Порядок: <code>{shown}</code>")
-        cur = (current_domain or "").strip().lower()
-        if cur:
-            lines.append(f"{html_emoji('search')} Сейчас домен: <b>{cur}</b>")
-        if sellers_total > 0 and seller_index > 3 and validation_t0 > 0:
-            elapsed = max(1.0, time.time() - float(validation_t0))
-            spm = seller_index / elapsed * 60.0
-            left = max(0, sellers_total - seller_index)
-            eta_min = (left / max(0.05, seller_index / elapsed)) / 60.0
-            lines.append(
-                f"{html_emoji('wait')} ~<b>{spm:.0f}</b> прод/мин · до конца ~<b>{eta_min:.0f}</b> мин"
-            )
-        spc = int(seller_parallel_cap or 0)
-        lines.append(
-            f"<i><b>{vk}</b> ключей × 10 req/s · до <b>{spc or '?'}</b> продавцов параллельно</i>"
-        )
-    if not finished and ph == "api_retry" and int(api_retry_queued or 0) > 0:
-        lines.append(
-            f"{html_emoji('refresh')} Дожима API: <b>{int(api_retry_done or 0)}"
-            f"/{int(api_retry_queued)}</b> продавцов"
-        )
-    if (
-        not finished
-        and vk > 0
-        and validemail_pool > 0
-        and validemail_pool < vk * 8
-    ):
-        lines.append(
-            f"{html_emoji('warn')} HTTP-пул <b>{validemail_pool}</b> мал для <b>{vk}</b> ключей — "
-            f"проверь <code>VALIDEMAIL_API_KEYS</code> и <code>VALIDEMAIL_CONCURRENCY_PER_KEY</code> (≈10/ключ)"
-        )
-    lines.extend([
-        "",
-        f"{html_emoji('presets')} Объявлений в файле: <b>{total}</b>"
-        + (
-            f" · продавцов: <b>{seller_index}/{sellers_total}</b>"
-            if sellers_total > 0 and not finished
-            else ""
-        ),
-        f"{html_emoji('email')} Добавлено: <b>{added}</b>"
-        + (
-            f" · <b>{int(round(100 * added / max(1, total - short_nicks)))}%</b> от имён"
-            if finished and total > short_nicks
-            else ""
-        ),
-        f"{html_emoji('refresh')} Дубликатов: <b>{duplicates}</b>",
-        f"{html_emoji('fail')} Повтор продавца (пропуск): <b>{added_blacklist}</b>",
-        f"{html_emoji('edit')} Коротких ников: <b>{short_nicks}</b>",
-        f"{html_emoji('wait')} Не найден ящик (ValidEmail): <b>{no_email_smtp if finished else no_email}</b>",
-        f"{html_emoji('yellow')} Продавцов с сбоем API: <b>{errors}</b>",
-    ])
-    if sellers_api_unresolved > 0:
-        lines.append(
-            f"{html_emoji('warn')} Не дожали проверку (API): <b>{sellers_api_unresolved}</b>"
-        )
-    if finished and seller_timeouts > 0:
-        lines.append(
-            f"{html_emoji('warn')} Обрезано по таймауту продавца: <b>{seller_timeouts}</b> "
-            f"(увеличь <code>VALIDEMAIL_SELLER_TIMEOUT_SEC</code>)"
-        )
-    return "\n".join(l for l in lines if l is not None)
+    bl_total = int(added_blacklist or 0) + int(in_blacklist or 0)
+    not_found = int(no_email_smtp if finished else no_email)
+    lines.extend(
+        [
+            "",
+            f"{html_emoji('email')} Добавлено: <b>{added}</b>",
+            f"{html_emoji('fail')} В ЧС / пропуск: <b>{bl_total}</b>",
+            f"{html_emoji('wait')} Без email: <b>{not_found}</b>",
+        ]
+    )
+    return "\n".join(lines)
 
 
 def _norm_email(e: str) -> str:

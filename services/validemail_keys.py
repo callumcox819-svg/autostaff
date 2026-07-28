@@ -35,7 +35,7 @@ def api_retry_max_sellers() -> int:
     """Повтор продавцов после transient API (0 = выкл)."""
     raw = (os.getenv("VALIDEMAIL_API_RETRY_MAX") or "").strip()
     if not raw:
-        return 30 if validation_traffic_mode() else 0
+        return 120 if validation_traffic_mode() else 0
     try:
         return max(0, min(120, int(raw)))
     except (TypeError, ValueError):
@@ -77,8 +77,8 @@ def per_key_concurrency_limit() -> int:
     except (TypeError, ValueError):
         base = 40
     if not (os.getenv("VALIDEMAIL_CONCURRENCY_PER_KEY") or "").strip():
-        base = _env_int("VALIDEMAIL_CONCURRENCY_PER_KEY", default=base, traffic=20)
-    cap = 30 if validation_fast_mode() else 12
+        base = _env_int("VALIDEMAIL_CONCURRENCY_PER_KEY", default=base, traffic=18)
+    cap = 25 if validation_fast_mode() else 12
     return max(1, min(cap, base))
 
 
@@ -89,7 +89,7 @@ def seller_parallel_per_key() -> int:
             return max(1, min(32, int(raw)))
         except (TypeError, ValueError):
             pass
-    n = _env_int("VALIDEMAIL_SELLER_PARALLEL_PER_KEY", default=14, traffic=12)
+    n = _env_int("VALIDEMAIL_SELLER_PARALLEL_PER_KEY", default=14, traffic=10)
     return max(1, min(32, n))
 
 
@@ -188,9 +188,9 @@ def global_inflight_cap(num_keys: int | None = None) -> int:
         from_config = 0
     if from_config >= 12:
         return from_config
-    target = per * n * 6
+    target = per * n * 5
     if validation_fast_mode():
-        return max(120, min(280, target))
+        return max(100, min(220, target))
     return max(40, min(160, per * n * 3))
 
 

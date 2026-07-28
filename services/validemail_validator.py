@@ -1125,38 +1125,47 @@ async def _validate_offers_old(
 
     await _run_sellers_batched()
 
-    retry_idx = [
-        i for i in range(n_sellers) if not found_by_idx[i] and seller_api_fail[i] > 0
-    ]
-    cap_retry = api_retry_max_sellers()
-    if cap_retry >= 0 and len(retry_idx) > cap_retry:
-        retry_idx = retry_idx[:cap_retry]
-    if retry_idx:
-        if stats is not None:
-            stats["phase"] = "api_retry"
-            stats["api_retry_queued"] = len(retry_idx)
-            stats["api_retry_done"] = 0
-        retry_sem = asyncio.Semaphore(max(12, min(seller_sem_cap, 40)))
-        retry_done = 0
-        retry_lock = asyncio.Lock()
+    async def _run_api_retry_passes() -> None:
+        cap = api_retry_max_sellers()
+        retry_sem = asyncio.Semaphore(max(8, min(20, seller_sem_cap // 3)))
+        for pass_no in range(2):
+            retry_idx = [
+                i
+                for i in range(n_sellers)
+                if not found_by_idx[i] and seller_api_fail[i] > 0
+            ]
+            if not retry_idx:
+                break
+            if cap >= 0 and len(retry_idx) > cap:
+                retry_idx = retry_idx[:cap]
+            if stats is not None:
+                stats["phase"] = "api_retry"
+                stats["api_retry_pass"] = pass_no + 1
+                stats["api_retry_queued"] = len(retry_idx)
+                stats["api_retry_done"] = 0
+            retry_done = 0
+            retry_lock = asyncio.Lock()
 
-        async def _retry_seller(ri: int) -> None:
-            nonlocal retry_done
-            async with retry_sem:
-                await asyncio.sleep(0.12 * (ri % 8))
-                seller_api_fail[ri] = 0
-                await _validate_seller(
-                    ri,
-                    api_keys[ri % n_keys],
-                    tier_probe=False,
-                    count_api_errors=False,
-                )
-            async with retry_lock:
-                retry_done += 1
-                if stats is not None:
-                    stats["api_retry_done"] = retry_done
+            async def _retry_seller(ri: int) -> None:
+                nonlocal retry_done
+                async with retry_sem:
+                    if pass_no > 0:
+                        await asyncio.sleep(0.05 * (ri % 6))
+                    seller_api_fail[ri] = 0
+                    await _validate_seller(
+                        ri,
+                        api_keys[ri % n_keys],
+                        tier_probe=False,
+                        count_api_errors=False,
+                    )
+                async with retry_lock:
+                    retry_done += 1
+                    if stats is not None:
+                        stats["api_retry_done"] = retry_done
 
-        await asyncio.gather(*(_retry_seller(i) for i in retry_idx))
+            await asyncio.gather(*(_retry_seller(i) for i in retry_idx))
+
+    await _run_api_retry_passes()
 
     if stats is not None:
         stats["sellers_api_unresolved"] = sum(

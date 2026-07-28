@@ -674,7 +674,8 @@ async def _validate_offers_old(
 
         use_keys = api_keys if n_keys > 1 else [api_key]
         doms_in_batch = {(e or "").split("@")[-1].lower() for e in batch_emails if "@" in (e or "")}
-        use_stop = False
+        wave_one_domain = len(doms_in_batch) <= 1 and domain_first_probe()
+        use_stop = wave_one_domain and len(batch_emails) <= max(6, max_locals_per_seller() + 1)
         return await validate_emails_fast(
             batch_emails,
             api_keys=use_keys,
@@ -973,6 +974,8 @@ async def _validate_offers_old(
         stats["sellers_total"] = n_sellers
 
     seller_sem_cap = max(1, sellers_parallel * n_keys)
+    if stats is not None:
+        stats["seller_parallel_cap"] = seller_sem_cap
 
     async def _run_sellers_batched() -> None:
         """Все продавцы в одной очереди (sem), без синхронных «волн» по 120 шт."""

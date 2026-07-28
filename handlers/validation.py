@@ -119,6 +119,7 @@ def _format_validation_status(
     priority_domains: list[str] | None = None,
     current_domain: str = "",
     validation_t0: float = 0,
+    seller_parallel_cap: int = 0,
     api_retry_queued: int = 0,
     api_retry_done: int = 0,
 ) -> str:
@@ -207,6 +208,10 @@ def _format_validation_status(
             lines.append(
                 f"{html_emoji('wait')} ~<b>{spm:.0f}</b> прод/мин · до конца ~<b>{eta_min:.0f}</b> мин"
             )
+        spc = int(seller_parallel_cap or 0)
+        lines.append(
+            f"<i>5 ключей × 10 req/s (API) · до <b>{spc or '?'}</b> продавцов параллельно</i>"
+        )
     if not finished and ph == "api_retry" and int(api_retry_queued or 0) > 0:
         lines.append(
             f"{html_emoji('refresh')} Дожима API: <b>{int(api_retry_done or 0)}"

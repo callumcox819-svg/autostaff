@@ -673,9 +673,6 @@ async def _validate_offers_old(
                 pass
 
         use_keys = api_keys if n_keys > 1 else [api_key]
-        doms_in_batch = {(e or "").split("@")[-1].lower() for e in batch_emails if "@" in (e or "")}
-        wave_one_domain = len(doms_in_batch) <= 1 and domain_first_probe()
-        use_stop = wave_one_domain and len(batch_emails) <= max(6, max_locals_per_seller() + 1)
         return await validate_emails_fast(
             batch_emails,
             api_keys=use_keys,
@@ -683,7 +680,7 @@ async def _validate_offers_old(
             url=url,
             use_ssl_verify=bool(cfg.use_ssl_verify),
             progress_cb=lambda d, t, l, u, _bd=base_done: _wrap_progress(d, t, l, u, _bd),
-            stop_on_first_ok=use_stop,
+            stop_on_first_ok=False,
         )
 
     async def _consume_results(

@@ -691,13 +691,11 @@ async def _run_validation_pipeline_inner(
         eligible = int(vstats.get("offers_eligible") or 0)
         if finished:
             api_u = int(vstats.get("sellers_api_unresolved") or 0)
-            no_email = max(0, eligible - added)
-            # Ящик не найден после API (не сбой сети).
-            no_email_smtp = max(0, no_email - api_u)
+            no_email = max(0, eligible - added - api_u)
+            no_email_smtp = no_email
         else:
-            api_u = 0
-            # Уже обработанные продавцы без найденного ящика (ещё идёт ValidEmail).
-            no_email_smtp = max(0, seller_i - added)
+            api_u = int(vstats.get("sellers_api_unresolved") or 0)
+            no_email_smtp = max(0, seller_i - added - api_u)
             no_email = no_email_smtp
         return _format_validation_status(
             finished=finished,
@@ -727,6 +725,7 @@ async def _run_validation_pipeline_inner(
             priority_domains=vstats.get("priority_domains") if isinstance(vstats.get("priority_domains"), list) else None,
             current_domain=str(vstats.get("current_domain") or ""),
             validation_t0=float(vstats.get("validation_t0") or 0),
+            seller_parallel_cap=int(vstats.get("seller_parallel_cap") or 0),
             api_retry_queued=int(vstats.get("api_retry_queued") or 0),
             api_retry_done=int(vstats.get("api_retry_done") or 0),
         )

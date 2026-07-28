@@ -168,13 +168,14 @@ def _format_validation_status(
         user_line,
         f"<code>{bar}</code> <b>{pct}%</b>",
     ]
-    vk = validemail_keys if not finished else 0
-    if vk > 0:
+    vk = int(validemail_keys or 0)
+    if vk > 0 and not finished:
         th = validemail_threads or vk
         pk = validemail_per_key or max(1, validemail_pool // max(1, vk))
+        rps_total = min(10 * vk, 10 * th)
         lines.append(
-            f"{html_emoji('key')} Ключей: <b>{vk}</b> · пул <b>{validemail_pool}</b> · "
-            f"<b>{pk}</b> req/s/ключ (API max 10)"
+            f"{html_emoji('key')} Ключей: <b>{vk}</b> · пул HTTP <b>{validemail_pool}</b> · "
+            f"<b>{pk}</b> parallel/ключ · API ≤ <b>{rps_total}</b> req/s"
         )
     dc = int(validemail_domains or 0)
     if dc > 0 and not finished:
@@ -183,10 +184,10 @@ def _format_validation_status(
         lines.append(
             f"{html_emoji('presets')} Доменов в приоритете: <b>{dc}</b>{loc_note}"
         )
-    if not finished and int(validemail_api_timeout or 0) in range(1, 9):
+    if not finished and int(validemail_api_timeout or 0) >= 12:
         lines.append(
             f"{html_emoji('warn')} API timeout <b>{int(validemail_api_timeout)}s</b> — "
-            f"на Railway: <code>VALIDEMAIL_API_TIMEOUT=10</code>"
+            f"для скорости на Railway: <code>VALIDEMAIL_API_TIMEOUT=7</code> или убери переменную"
         )
     if traffic_mode and not finished:
         lines.append(
@@ -211,7 +212,7 @@ def _format_validation_status(
             )
         spc = int(seller_parallel_cap or 0)
         lines.append(
-            f"<i>5 ключей × 10 req/s (API) · до <b>{spc or '?'}</b> продавцов параллельно</i>"
+            f"<i><b>{vk}</b> ключей × 10 req/s · до <b>{spc or '?'}</b> продавцов параллельно</i>"
         )
     if not finished and ph == "api_retry" and int(api_retry_queued or 0) > 0:
         lines.append(

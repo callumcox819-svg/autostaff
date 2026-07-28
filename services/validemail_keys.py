@@ -77,8 +77,8 @@ def per_key_concurrency_limit() -> int:
     except (TypeError, ValueError):
         base = 40
     if not (os.getenv("VALIDEMAIL_CONCURRENCY_PER_KEY") or "").strip():
-        base = _env_int("VALIDEMAIL_CONCURRENCY_PER_KEY", default=base, traffic=15)
-    cap = 20 if validation_fast_mode() else 10
+        base = _env_int("VALIDEMAIL_CONCURRENCY_PER_KEY", default=base, traffic=20)
+    cap = 30 if validation_fast_mode() else 12
     return max(1, min(cap, base))
 
 
@@ -188,10 +188,10 @@ def global_inflight_cap(num_keys: int | None = None) -> int:
         from_config = 0
     if from_config >= 12:
         return from_config
-    target = per * n * 5
+    target = per * n * 6
     if validation_fast_mode():
-        return max(80, min(250, target))
-    return max(40, min(120, per * n * 3))
+        return max(120, min(280, target))
+    return max(40, min(160, per * n * 3))
 
 
 def combined_probe_max_emails() -> int:

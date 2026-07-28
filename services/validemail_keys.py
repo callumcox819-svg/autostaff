@@ -35,7 +35,7 @@ def api_retry_max_sellers() -> int:
     """Повтор продавцов после transient API (0 = выкл)."""
     raw = (os.getenv("VALIDEMAIL_API_RETRY_MAX") or "").strip()
     if not raw:
-        return 35 if validation_traffic_mode() else 0
+        return 30 if validation_traffic_mode() else 0
     try:
         return max(0, min(120, int(raw)))
     except (TypeError, ValueError):
@@ -115,8 +115,7 @@ def seller_batch_pause_sec() -> float:
 def seller_validation_timeout_sec() -> float:
     raw = (os.getenv("VALIDEMAIL_SELLER_TIMEOUT_SEC") or "").strip()
     if not raw:
-        # 6 доменов × ~10–15 с SMTP + очередь; 50 с обрезало хвост (gmx/sunrise/bluewin).
-        return 180.0 if validation_traffic_mode() else 120.0
+        return 120.0
     try:
         return max(30.0, min(300.0, float(raw)))
     except (TypeError, ValueError):
@@ -183,7 +182,12 @@ def global_inflight_cap(num_keys: int | None = None) -> int:
             return max(12, min(280, int(raw)))
         except (TypeError, ValueError):
             pass
-    # Держим очередь SMTP полной: 5 ключей × ~15 concurrent × ~5 с ≈ 50 завершений/с
+    try:
+        from_config = int(getattr(config, "VALIDEMAIL_GLOBAL_INFLIGHT", 0) or 0)
+    except (TypeError, ValueError):
+        from_config = 0
+    if from_config >= 12:
+        return from_config
     target = per * n * 5
     if validation_fast_mode():
         return max(80, min(250, target))

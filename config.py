@@ -11,6 +11,15 @@ except ImportError:
 from region import TEAM_NAME
 
 
+def _validemail_traffic_mode() -> bool:
+    return (os.getenv("VALIDEMAIL_TRAFFIC_MODE") or "1").strip().lower() not in (
+        "0",
+        "false",
+        "no",
+        "off",
+    )
+
+
 def _parse_validemail_api_keys() -> list[str]:
     """VALIDEMAIL_API_KEYS=a,b,c и/или VALIDEMAIL_API_KEY_1= … _32= (без дубликатов)."""
     seen: set[str] = set()
@@ -37,19 +46,37 @@ def _parse_validemail_api_keys() -> list[str]:
 
 
 def _validemail_per_key_concurrency() -> int:
-    raw = (os.getenv("VALIDEMAIL_CONCURRENCY_PER_KEY") or "20").strip()
+    raw = (os.getenv("VALIDEMAIL_CONCURRENCY_PER_KEY") or "").strip()
+    if not raw:
+        return 15 if _validemail_traffic_mode() else 20
     try:
         return max(1, min(64, int(raw)))
     except (TypeError, ValueError):
-        return 40
+        return 15 if _validemail_traffic_mode() else 40
 
 
 def _validemail_seller_parallel_per_key() -> int:
-    raw = (os.getenv("VALIDEMAIL_SELLER_PARALLEL_PER_KEY") or "14").strip()
+    raw = (os.getenv("VALIDEMAIL_SELLER_PARALLEL_PER_KEY") or "").strip()
+    if not raw:
+        return 12 if _validemail_traffic_mode() else 14
     try:
         return max(1, min(32, int(raw)))
     except (TypeError, ValueError):
         return 12
+
+
+def _validemail_global_inflight_default() -> int:
+    raw = (os.getenv("VALIDEMAIL_GLOBAL_INFLIGHT") or "").strip()
+    if raw.isdigit():
+        return max(12, min(280, int(raw)))
+    return 200 if _validemail_traffic_mode() else 0
+
+
+def _validemail_max_retries_default() -> int:
+    raw = (os.getenv("VALIDEMAIL_MAX_RETRIES") or "").strip()
+    if raw.isdigit():
+        return max(1, min(5, int(raw)))
+    return 1 if _validemail_traffic_mode() else 2
 
 
 def _validemail_domain_wave_size() -> int:
@@ -94,9 +121,12 @@ class Config:
     _conc_env = (os.getenv("VALIDEMAIL_CONCURRENCY") or "").strip()
     if _conc_env.isdigit():
         VALIDEMAIL_CONCURRENCY = max(2, int(_conc_env))
+    elif _validemail_traffic_mode():
+        VALIDEMAIL_CONCURRENCY = 200
     else:
         n_k = max(1, len(VALIDEMAIL_API_KEYS))
         VALIDEMAIL_CONCURRENCY = max(2, VALIDEMAIL_CONCURRENCY_PER_KEY * n_k)
+    VALIDEMAIL_GLOBAL_INFLIGHT = _validemail_global_inflight_default()
     VALIDEMAIL_API_TIMEOUT = max(
         2,
         min(
@@ -111,7 +141,7 @@ class Config:
             ),
         ),
     )
-    VALIDEMAIL_MAX_RETRIES = max(1, min(5, int(os.getenv("VALIDEMAIL_MAX_RETRIES", "2"))))
+    VALIDEMAIL_MAX_RETRIES = _validemail_max_retries_default()
 
     GLOBAL_SUBJECT_TEMPLATE = os.getenv("GLOBAL_SUBJECT_TEMPLATE", "Re: OFFER").strip() or "Re: OFFER"
 

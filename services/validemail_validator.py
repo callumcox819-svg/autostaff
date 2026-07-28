@@ -197,10 +197,14 @@ def _is_api_failure(_ok: bool, raw: object) -> bool:
         st = int(raw.get("_http_status") or 0)
     except (TypeError, ValueError):
         st = 0
-    if st == 200:
-        return False
 
     reason = str(raw.get("reason") or raw.get("Reason") or "").lower().strip()
+
+    if st == 200:
+        if reason in _TRANSIENT_REASONS:
+            return True
+        return False
+
     if reason in ("connection_error", "timeout"):
         return True
     if reason in _DEFINITIVE_BAD_REASONS:
@@ -668,10 +672,7 @@ async def _validate_offers_old(
 
         use_keys = api_keys if n_keys > 1 else [api_key]
         doms_in_batch = {(e or "").split("@")[-1].lower() for e in batch_emails if "@" in (e or "")}
-        wave_one_domain = len(doms_in_batch) <= 1
-        use_stop = bool(stop_on_first_ok) or (
-            wave_one_domain and domain_first_probe() and len(batch_emails) <= max(8, max_locals_per_seller() + 2)
-        )
+        use_stop = False
         return await validate_emails_fast(
             batch_emails,
             api_keys=use_keys,
@@ -915,8 +916,6 @@ async def _validate_offers_old(
         if use_priority_domains:
             for dom in domains_clean:
                 if found_by_idx[i]:
-                    break
-                if seller_api_fail[i] > 0:
                     break
                 wave: list[str] = []
                 seen_probe: set[str] = set()

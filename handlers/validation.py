@@ -171,8 +171,8 @@ def _format_validation_status(
         th = validemail_threads or vk
         pk = validemail_per_key or max(1, validemail_pool // max(1, vk))
         lines.append(
-            f"{html_emoji('key')} Ключей API: <b>{vk}</b> · HTTP-пул: <b>{validemail_pool}</b> · "
-            f"до <b>{pk}</b> запросов/ключ"
+            f"{html_emoji('key')} Ключей: <b>{vk}</b> · пул <b>{validemail_pool}</b> · "
+            f"<b>{pk}</b> req/s/ключ (API max 10)"
         )
     dc = int(validemail_domains or 0)
     if dc > 0 and not finished:
@@ -721,6 +721,7 @@ async def _run_validation_pipeline_inner(
             traffic_mode=bool(vstats.get("traffic_mode")),
             priority_domains=vstats.get("priority_domains") if isinstance(vstats.get("priority_domains"), list) else None,
             current_domain=str(vstats.get("current_domain") or ""),
+            validation_t0=float(vstats.get("validation_t0") or 0),
             api_retry_queued=int(vstats.get("api_retry_queued") or 0),
             api_retry_done=int(vstats.get("api_retry_done") or 0),
         )

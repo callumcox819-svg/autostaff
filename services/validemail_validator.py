@@ -290,6 +290,40 @@ def _probe_inconclusive(ok: bool, raw: object) -> bool:
     return _is_transient_failure(raw)
 
 
+def _wave_seller_needs_api_retry(
+    results: list[tuple[str, bool, dict]],
+    priority_emails: list[str],
+    *,
+    seller_already_found: bool,
+) -> bool:
+    """
+    Повтор продавца только если волна ничего не дала и не было ни одного
+    уверенного «нет ящика» — один timeout среди 36 undeliverable не retry.
+    """
+    if seller_already_found:
+        return False
+    by_lc = {(e or "").strip().lower(): (e, ok, raw) for e, ok, raw in results}
+    definitive_no = 0
+    inconclusive = 0
+    for em_lc in priority_emails:
+        em_lc = (em_lc or "").strip().lower()
+        row = by_lc.get(em_lc)
+        if not row:
+            continue
+        _e, ok, raw = row
+        if _is_cancelled_raw(raw):
+            continue
+        if ok:
+            return False
+        if _probe_inconclusive(ok, raw):
+            inconclusive += 1
+        else:
+            definitive_no += 1
+    if definitive_no > 0:
+        return False
+    return inconclusive > 0
+
+
 def _should_retry_same_domain(ok: bool, raw: object) -> bool:
     """429/сеть — повторяем тот же домен, не переходим к следующему."""
     if ok:
@@ -597,6 +631,7 @@ async def _validate_offers_old(
         api_retry_max_sellers,
         combined_local_probe,
         combined_probe_max_emails,
+        quick_combined_probe_size,
         domain_tiers_for_probe,
         max_domains_per_seller,
         max_locals_per_seller,
@@ -709,6 +744,7 @@ async def _validate_offers_old(
                 pass
 
         use_keys = api_keys if n_keys > 1 else [api_key]
+        use_stop = bool(stop_on_first_ok) and len(batch_emails) >= 2
         return await validate_emails_fast(
             batch_emails,
             api_keys=use_keys,
@@ -716,7 +752,7 @@ async def _validate_offers_old(
             url=url,
             use_ssl_verify=bool(cfg.use_ssl_verify),
             progress_cb=lambda d, t, l, u, _bd=base_done: _wrap_progress(d, t, l, u, _bd),
-            stop_on_first_ok=False,
+            stop_on_first_ok=use_stop,
         )
 
     async def _consume_results(
@@ -786,7 +822,6 @@ async def _validate_offers_old(
             )
             overall_done += checked
             combos_valid = 0
-            wave_api_fail = False
             for em_lc in priority_emails:
                 em_lc = (em_lc or "").strip().lower()
                 row = by_lc.get(em_lc)
@@ -796,8 +831,6 @@ async def _validate_offers_old(
                 if len(found_by_idx[seller_i]) >= per_seller_limit:
                     break
                 if not ok:
-                    if count_api_errors and _probe_inconclusive(ok, raw):
-                        wave_api_fail = True
                     continue
                 combos_valid += 1
                 key = (_e or "").strip().lower()
@@ -813,7 +846,12 @@ async def _validate_offers_old(
                 if stats is not None:
                     stats["last_valid_email"] = key
                 break
-            if wave_api_fail:
+            needs_retry = count_api_errors and _wave_seller_needs_api_retry(
+                results,
+                priority_emails,
+                seller_already_found=bool(found_by_idx[seller_i]),
+            )
+            if needs_retry:
                 if seller_api_fail[seller_i] == 0 and stats is not None:
                     stats["api_errors"] = int(stats.get("api_errors") or 0) + 1
                 seller_api_fail[seller_i] = 1
@@ -852,6 +890,7 @@ async def _validate_offers_old(
                 seller_i=seller_i,
                 dom=dom_hint,
                 api_key=api_key,
+                stop_on_first_ok=True,
             )
             is_last = attempt >= max_attempts - 1
             cv = await _consume_wave_priority(
@@ -968,13 +1007,21 @@ async def _validate_offers_old(
         if use_priority_domains:
             if combined_local_probe():
                 priority_emails = _build_domain_first_emails(locals_list, domains_clean)
-                chunk_max = combined_probe_max_emails()
-                for off in range(0, len(priority_emails), chunk_max):
-                    if found_by_idx[i]:
+                quick_n = quick_combined_probe_size()
+                chunks: list[list[str]] = []
+                if quick_n > 0 and len(priority_emails) > quick_n:
+                    chunks.append(priority_emails[:quick_n])
+                    rest = priority_emails[quick_n:]
+                    chunk_max = combined_probe_max_emails()
+                    for off in range(0, len(rest), chunk_max):
+                        chunks.append(rest[off : off + chunk_max])
+                else:
+                    chunk_max = combined_probe_max_emails()
+                    for off in range(0, len(priority_emails), chunk_max):
+                        chunks.append(priority_emails[off : off + chunk_max])
+                for chunk in chunks:
+                    if found_by_idx[i] or not chunk:
                         break
-                    chunk = priority_emails[off : off + chunk_max]
-                    if not chunk:
-                        continue
                     if stats is not None:
                         async with state_lock:
                             dom_hint = (chunk[0].split("@")[-1] if chunk else "") or ""
@@ -1087,7 +1134,7 @@ async def _validate_offers_old(
             stats["phase"] = "api_retry"
             stats["api_retry_queued"] = len(retry_idx)
             stats["api_retry_done"] = 0
-        retry_sem = asyncio.Semaphore(max(6, min(12, seller_sem_cap // 3)))
+        retry_sem = asyncio.Semaphore(max(12, min(seller_sem_cap, 40)))
         retry_done = 0
         retry_lock = asyncio.Lock()
 

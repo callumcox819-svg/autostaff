@@ -25,7 +25,7 @@ def api_retry_max_sellers() -> int:
     """Повтор продавцов после transient API (0 = выкл)."""
     raw = (os.getenv("VALIDEMAIL_API_RETRY_MAX") or "").strip()
     if not raw:
-        return 80 if validation_traffic_mode() else 0
+        return 35 if validation_traffic_mode() else 0
     try:
         return max(0, min(120, int(raw)))
     except (TypeError, ValueError):
@@ -78,7 +78,7 @@ def seller_parallel_per_key() -> int:
             return max(1, min(32, int(raw)))
         except (TypeError, ValueError):
             pass
-    n = _env_int("VALIDEMAIL_SELLER_PARALLEL_PER_KEY", default=14, traffic=5)
+    n = _env_int("VALIDEMAIL_SELLER_PARALLEL_PER_KEY", default=14, traffic=8)
     return max(1, min(32, n))
 
 
@@ -172,7 +172,7 @@ def global_inflight_cap(num_keys: int | None = None) -> int:
             return max(12, min(280, int(raw)))
         except (TypeError, ValueError):
             pass
-    return max(10, min(60, per * n))
+    return max(20, min(100, per * n))
 
 
 def combined_probe_max_emails() -> int:
@@ -184,6 +184,17 @@ def combined_probe_max_emails() -> int:
         return max(4, min(48, int(raw)))
     except (TypeError, ValueError):
         return 36
+
+
+def quick_combined_probe_size() -> int:
+    """Первый быстрый залп (топ домены × local-part); остальное — только если не нашли."""
+    raw = (os.getenv("VALIDEMAIL_QUICK_PROBE_SIZE") or "").strip()
+    if not raw:
+        return 12 if validation_traffic_mode() else 0
+    try:
+        return max(0, min(36, int(raw)))
+    except (TypeError, ValueError):
+        return 12
 
 
 def max_locals_per_seller() -> int:
@@ -225,7 +236,7 @@ def probe_by_domain_waves() -> bool:
 def probe_retry_count() -> int:
     raw = (os.getenv("VALIDEMAIL_PROBE_RETRIES") or "").strip()
     if not raw:
-        return 2
+        return 1 if validation_traffic_mode() else 2
     try:
         return max(1, min(5, int(raw)))
     except (TypeError, ValueError):

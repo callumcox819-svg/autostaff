@@ -952,6 +952,27 @@ def render_mail_text_chunks(
         extra += f"<b>Сервис:</b> {_service_html(service_label)}\n"
     if product_title:
         extra += f"<b>Товар:</b> <code>{_e(product_title)}</code>\n"
+    try:
+        from services.offer_matching import (
+            product_title_from_subject,
+            subject_is_informative,
+        )
+
+        if subject_is_informative(subject or ""):
+            in_thread = product_title_from_subject(subject or "")
+            pt = (product_title or "").strip()
+            if (
+                in_thread
+                and pt
+                and in_thread.lower() not in pt.lower()
+                and pt.lower() not in in_thread.lower()
+                and len(in_thread) >= 4
+            ):
+                extra += (
+                    f"<b>Лот в теме письма:</b> <code>{_e(in_thread)}</code>\n"
+                )
+    except Exception:
+        pass
     price_s = (offer_price or "").strip()
     if price_s:
         extra += f"<b>Цена:</b> <code>{_e(price_s)}</code>\n"

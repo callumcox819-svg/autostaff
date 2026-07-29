@@ -43,8 +43,15 @@ def _norm_subject(subject: str) -> str:
 
 
 def product_title_from_subject(subject: str) -> str:
-    """Название из темы (Re: Tuote …) — если оффер в БД привязан к другому лоту."""
+    """Название из темы (Re: … / Interesse an …)."""
     subj = _norm_subject(subject)
+    subj = re.sub(
+        r"^(interesse an|kurze frage zu|anfrage zu|frage zu)\s+",
+        "",
+        subj,
+        flags=re.I,
+    ).strip()
+    subj = _strip_subject_edges(subj)
     if len(subj) > 140:
         subj = subj[:137] + "…"
     return subj

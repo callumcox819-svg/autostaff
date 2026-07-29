@@ -60,6 +60,12 @@ class OfferSubjectMatchTests(unittest.TestCase):
         subj = "Re: Trampoline"
         self.assertEqual(offer_display_title(subj, tramp), "Trampoline")
 
+    def test_product_title_strips_interesse_an(self):
+        self.assertEqual(
+            product_title_from_subject("Re: Interesse an Thömus Lightrider"),
+            "Thömus Lightrider",
+        )
+
     def test_gag_link_title_from_mail_subject_only(self):
         tramp = SimpleNamespace(title="Trampoline van Berg", raw_json=None)
         subj = "Re: Trampoline"

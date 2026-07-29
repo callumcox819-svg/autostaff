@@ -189,6 +189,11 @@ async def find_offer_from_mailing_log(
     if subj_needle and not any(subject_title_agrees(subject, off) for _log, off in rows[:12]):
         return None, ""
 
+    if subj_needle and subject_is_informative(subject):
+        _log, off = rows[0]
+        if not subject_title_agrees(subject, off):
+            return None, ""
+
     _log, off = rows[0]
     link = (offer_effective_link(off) or "").strip()
     if link:

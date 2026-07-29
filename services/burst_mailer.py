@@ -32,6 +32,9 @@ BURST_RETRY_PAUSE_SEC = max(
 BURST_PER_LETTER_TIMEOUT_SEC = max(
     12, min(60, int(os.getenv("BURST_PER_LETTER_TIMEOUT_SEC", "24")))
 )
+BURST_MAX_INFLIGHT = max(
+    4, min(120, int(os.getenv("BURST_MAX_INFLIGHT", "36")))
+)
 
 
 def shuffle_accounts(accounts: Sequence[EmailAccount]) -> List[EmailAccount]:
@@ -109,23 +112,35 @@ async def _send_pair(
     if start_delay_sec > 0:
         await asyncio.sleep(start_delay_sec)
 
-    async with db_session() as session:
-        subject, body = await build_message(session, tgt)
-    to_addr = (tgt.email or "").strip()
-    ok, err = await _send_one_with_retry(
-        db_user_id=db_user_id,
-        account=account,
-        to_email=to_addr,
-        subject=subject,
-        body=body,
-        sender_name=sender_name,
-        sticky_proxy_id=sticky_proxy_id,
-    )
-    if ok:
-        await on_success(tgt, subject, (account.email or "").strip())
-        return 1, 0
-    await on_failure(tgt, err, account)
-    return 0, 1
+    try:
+        async with db_session() as session:
+            subject, body = await build_message(session, tgt)
+        to_addr = (tgt.email or "").strip()
+        ok, err = await _send_one_with_retry(
+            db_user_id=db_user_id,
+            account=account,
+            to_email=to_addr,
+            subject=subject,
+            body=body,
+            sender_name=sender_name,
+            sticky_proxy_id=sticky_proxy_id,
+        )
+        if ok:
+            await on_success(tgt, subject, (account.email or "").strip())
+            return 1, 0
+        await on_failure(tgt, err, account)
+        return 0, 1
+    except Exception as ex:
+        logger.exception(
+            "burst send_pair failed tg_target=%s acc=%s",
+            getattr(tgt, "id", None),
+            getattr(account, "email", None),
+        )
+        try:
+            await on_failure(tgt, normalize_send_error(str(ex)), account)
+        except Exception:
+            pass
+        return 0, 1
 
 
 def _should_continue_burst(tg_user_id: int) -> bool:
@@ -172,7 +187,7 @@ async def run_burst_mailing(
     sticky_proxy_id = int(sticky_px.id)
     acc_ordered = order_accounts_for_burst(list(accounts), last_sent=last_sent)
     pairs = pair_targets_with_accounts(targets, acc_ordered)
-    wave_size = max(1, len(acc_ordered))
+    wave_size = max(1, min(len(acc_ordered), BURST_MAX_INFLIGHT))
     waves = split_into_waves(pairs, wave_size=wave_size)
     est_wave = min(
         float(BURST_PER_LETTER_TIMEOUT_SEC) * 0.45,
@@ -204,9 +219,14 @@ async def run_burst_mailing(
                 )
                 for j, (tgt, acc) in enumerate(wave)
             ],
-            return_exceptions=False,
+            return_exceptions=True,
         )
-        for s, f in results:
+        for r in results:
+            if isinstance(r, BaseException):
+                logger.exception("burst wave task failed: %s", r)
+                failed += 1
+                continue
+            s, f = r
             sent += int(s)
             failed += int(f)
 

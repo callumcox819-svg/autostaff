@@ -532,20 +532,29 @@ async def _burst_sending_loop(*, bot: Bot, chat_id: int, tg_user_id: int) -> Non
 
         db_user_id = 0
         sender_name = None
+        stall_batches = 0
 
-        while not state.is_stopping:
+        while True:
+            live = get_sending_state(tg_user_id)
+            if live and live.is_stopping:
+                state.is_stopping = True
+                break
+            if state.is_stopping:
+                break
+
             async with db_session() as session:
                 user = await get_or_create_user(session, tg_user_id)
                 db_user_id = int(user.id)
                 sender_name = getattr(user, "sender_name", None)
                 accounts = await _get_active_accounts(session, db_user_id)
                 targets = await _get_targets(session, db_user_id)
+                pending_count = len(targets)
 
             if not accounts or not targets:
                 break
 
             state.last_status = "BURST"
-            state.current_to = f"{html_emoji('burst')} burst × {len(targets)}"
+            state.current_to = f"{html_emoji('burst')} burst × {pending_count}"
             set_sending_state(tg_user_id, state=state)
 
             active_accounts = [a for a in accounts if int(a.id) not in blocked_account_ids]
@@ -568,10 +577,25 @@ async def _burst_sending_loop(*, bot: Bot, chat_id: int, tg_user_id: int) -> Non
             if proxy_id:
                 state.sticky_proxy_id = proxy_id
 
+            async with db_session() as session:
+                pending_after = int(await _get_targets_count(session, db_user_id))
+
+            if pending_after <= 0:
+                break
             if sent == 0 and failed == 0:
-                break
-            if sent == 0 and failed > 0:
-                break
+                stall_batches += 1
+                logger.warning(
+                    "burst stall tg=%s pending=%s batch=%s",
+                    tg_user_id,
+                    pending_after,
+                    stall_batches,
+                )
+                if stall_batches >= 2:
+                    state.last_error = state.last_error or "BURST_STALL|no_progress"
+                    break
+                await asyncio.sleep(1.5)
+                continue
+            stall_batches = 0
 
         state.current_to = ""
         state.burst_elapsed_sec = total_elapsed

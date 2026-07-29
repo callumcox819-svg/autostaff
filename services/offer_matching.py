@@ -43,7 +43,7 @@ def _norm_subject(subject: str) -> str:
 
 
 def product_title_from_subject(subject: str) -> str:
-    """Название из темы (Re: … / Interesse an …)."""
+    """Название из темы (Re: … / Interesse an … / Ist … noch zu haben?)."""
     subj = _norm_subject(subject)
     subj = re.sub(
         r"^(?:"
@@ -55,6 +55,27 @@ def product_title_from_subject(subject: str) -> str:
         subj,
         flags=re.I,
     ).strip()
+
+    _extract_patterns = (
+        r"^ist\s+(.+?)\s+noch zu haben\??\s*$",
+        r"^haben sie\s+(.+?)\s+noch\??\s*$",
+        r"^noch nicht verkauft\?\s*(.+)\s*$",
+        r"^guten tag,?\s*(.+?)\s+noch verfügbar\??\s*$",
+        r"^guten tag,?\s*(.+?)\s+noch verfugbar\??\s*$",
+        r"^(.+?)\s*[-–—]\s*noch da\??\s*$",
+        r"^(.+?)\s*[-–—]\s*noch aktuell\??\s*$",
+        r"^(.+?)\s*[-–—]\s*noch im verkauf\??\s*$",
+        r"^(.+?)\s+noch verfügbar\??\s*$",
+        r"^(.+?)\s+noch verfugbar\??\s*$",
+    )
+    for pat in _extract_patterns:
+        m = re.match(pat, subj, flags=re.I)
+        if m:
+            extracted = _strip_subject_edges((m.group(1) or "").strip())
+            if len(extracted) >= 4:
+                subj = extracted
+                break
+
     subj = _strip_subject_edges(subj)
     if len(subj) > 140:
         subj = subj[:137] + "…"
@@ -648,6 +669,49 @@ def _pick_best_linked_by_subject(
     _, second_sc = ranked[1]
     if best_sc - second_sc >= min_gap or best_sc >= min_score + 18:
         return best
+    return None
+
+
+async def find_offer_by_catalog_subject_match(
+    session,
+    *,
+    user_id: int,
+    subject: str,
+) -> Offer | None:
+    """
+    Re: + уникальное название в теме → лот из каталога (legacy без email в JSON).
+    Не подставляет чужой лот при близких score у двух офферов.
+    """
+    from services.offer_storage import offer_effective_link
+
+    subj = (subject or "").strip()
+    if not is_seller_reply_subject(subj):
+        return None
+    needle = product_title_from_subject(subj)
+    if len(needle) < 6:
+        return None
+
+    rows = (
+        await session.execute(
+            sa_select(Offer)
+            .where(Offer.user_id == int(user_id))
+            .order_by(Offer.id.desc())
+            .limit(5000)
+        )
+    ).scalars().all()
+    linked = [o for o in rows if offer_effective_link(o)]
+    if not linked:
+        return None
+
+    for subj_try in (subj, f"Re: {needle}" if needle else subj):
+        hit = _pick_best_linked_by_subject(
+            linked,
+            subject=subj_try,
+            min_score=38.0,
+            min_gap=6.0,
+        )
+        if hit and incoming_subject_binds_offer(subj, hit):
+            return hit
     return None
 
 

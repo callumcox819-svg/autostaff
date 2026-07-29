@@ -1161,7 +1161,7 @@ async def mail_card_offer_meta(
             offer_id = int(off.id)
             if not snap:
                 product_title = (
-                    offer_display_title(subject, off, mailing_bound=mailing_bound) or None
+                    offer_display_title(subject, off, mailing_bound=True) or None
                 )
             if not service_label:
                 service_label = _service_label_from_link(offer_effective_link(off))
@@ -1760,30 +1760,11 @@ async def _process_mails_for_account_impl(
             photo_to_send: str | None = None
             photo_caption: str | None = None
             if photo_url:
-                try:
-                    is_first = False
-                    try:
-                        async with _imap_db_session() as _s2:
-                            cnt = (
-                                await _s2.execute(
-                                    sa_select(func.count(IncomingMail.id))
-                                    .where(IncomingMail.user_id == int(user_id))
-                                    .where(IncomingMail.account_id == int(acc_id))
-                                    .where(IncomingMail.from_email == str(from_email_clean).strip())
-                                )
-                            ).scalar() or 0
-                            is_first = int(cnt) <= 1
-                    except Exception:
-                        is_first = False
-
-                    if is_first:
-                        photo_to_send = photo_url
-                        photo_caption = format_first_incoming_photo_caption(
-                            product_title=product_title,
-                            offer_price=offer_price,
-                        )
-                except Exception:
-                    photo_to_send = None
+                photo_to_send = photo_url
+                photo_caption = format_first_incoming_photo_caption(
+                    product_title=product_title,
+                    offer_price=offer_price,
+                )
 
             chunks = render_mail_text_chunks(
                 account_email=account_email,

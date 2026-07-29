@@ -61,6 +61,12 @@ class OfferSubjectMatchTests(unittest.TestCase):
         subj = "Re: Trampoline"
         self.assertEqual(offer_display_title(subj, tramp), "Trampoline")
 
+    def test_product_title_ist_noch_zu_haben(self):
+        self.assertEqual(
+            product_title_from_subject("Re: Ist Nordica Dobermann SLR 165 noch zu haben?"),
+            "Nordica Dobermann SLR 165",
+        )
+
     def test_product_title_strips_pretenda_per(self):
         self.assertEqual(
             product_title_from_subject("Re: Pretenda per Minivan VW California"),

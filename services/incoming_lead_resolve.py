@@ -35,7 +35,7 @@ def _reply_bound(*, how: str, subject: str, mailed: bool = False, has_conv_ancho
         return True
     if has_conv_anchor and is_seller_reply_subject(subject):
         return True
-    if how in ("listing", "subject_only", "conversation", "validated", "legacy_subject") and is_seller_reply_subject(subject):
+    if how in ("listing", "subject_only", "conversation", "validated", "legacy_subject", "catalog_subject") and is_seller_reply_subject(subject):
         return True
     return False
 
@@ -263,6 +263,30 @@ async def resolve_offer_for_incoming_lead(
                     ),
                 )
                 return off_legacy, link, "legacy_subject", snap
+
+        from services.offer_matching import find_offer_by_catalog_subject_match
+
+        off_cat = await find_offer_by_catalog_subject_match(
+            session,
+            user_id=int(user_id),
+            subject=subj,
+        )
+        if off_cat:
+            link = (offer_effective_link(off_cat) or "").strip()
+            if link:
+                mailed = await offer_was_mailed_to(
+                    session, int(user_id), int(off_cat.id), contact_email
+                )
+                snap = _snapshot_from_offer(
+                    subj,
+                    off_cat,
+                    mailing_bound=_reply_bound(
+                        how="catalog_subject",
+                        subject=subj,
+                        mailed=mailed,
+                    ),
+                )
+                return off_cat, link, "catalog_subject", snap
 
     return None, "", "", snap
 

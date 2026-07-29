@@ -1880,7 +1880,11 @@ async def _process_mails_for_account_impl(
                         reply_to_message_id=int(m.message_id),
                     )
                 except Exception:
-                    pass
+                    logger.exception(
+                        "send_photo failed tg=%s url=%s",
+                        tg_id,
+                        (photo_to_send or "")[:120],
+                    )
 
             forwarded += 1
 

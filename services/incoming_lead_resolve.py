@@ -35,7 +35,7 @@ def _reply_bound(*, how: str, subject: str, mailed: bool = False, has_conv_ancho
         return True
     if has_conv_anchor and is_seller_reply_subject(subject):
         return True
-    if how in ("listing", "subject_only", "conversation", "validated", "legacy_subject", "catalog_subject") and is_seller_reply_subject(subject):
+    if how in ("listing", "subject_only", "conversation", "validated", "legacy_subject", "catalog_subject", "title_needle") and is_seller_reply_subject(subject):
         return True
     return False
 
@@ -120,6 +120,29 @@ async def resolve_offer_for_incoming_lead(
     }
 
     subj = (subject or "").strip()
+
+    if subject_is_informative(subj) and is_seller_reply_subject(subj):
+        from services.offer_storage import find_offer_by_product_title_in_subject
+
+        off_needle = await find_offer_by_product_title_in_subject(
+            session, user_id=int(user_id), subject=subj
+        )
+        if off_needle:
+            link = (offer_effective_link(off_needle) or "").strip()
+            if link:
+                mailed = await offer_was_mailed_to(
+                    session, int(user_id), int(off_needle.id), contact_email
+                )
+                snap = _snapshot_from_offer(
+                    subj,
+                    off_needle,
+                    mailing_bound=_reply_bound(
+                        how="title_needle",
+                        subject=subj,
+                        mailed=mailed,
+                    ),
+                )
+                return off_needle, link, "title_needle", snap
 
     if mailing_bound and resolved_offer_id:
         from services.offer_matching import _load_offer

@@ -324,6 +324,75 @@ async def find_offer_by_subject_and_seller_hint(
     return None
 
 
+async def find_offer_by_product_title_in_subject(
+    session,
+    *,
+    user_id: int,
+    subject: str,
+) -> Offer | None:
+    """
+    Aw:/Re: + название в теме → лот по title в БД (без email/log).
+    Один однозначный match или лучший score среди кандидатов.
+    """
+    from services.offer_matching import (
+        _pick_offer_by_subject_in_list,
+        _pick_best_linked_by_subject,
+        incoming_subject_binds_offer,
+        is_seller_reply_subject,
+        product_title_from_subject,
+        subject_is_informative,
+    )
+
+    subj = (subject or "").strip()
+    if not subject_is_informative(subj) or not is_seller_reply_subject(subj):
+        return None
+
+    needle = product_title_from_subject(subj).strip().lower()
+    if len(needle) < 5:
+        return None
+
+    rows = (
+        await session.execute(
+            sa_select(Offer)
+            .where(Offer.user_id == int(user_id))
+            .order_by(Offer.id.desc())
+            .limit(8000)
+        )
+    ).scalars().all()
+
+    hits: list[Offer] = []
+    for off in rows:
+        if not offer_effective_link(off):
+            continue
+        title = (offer_effective_title(off) or "").strip().lower()
+        if not title or len(title) < 4:
+            continue
+        if title == needle:
+            hits.append(off)
+            continue
+        if len(needle) >= 8 and needle in title:
+            hits.append(off)
+            continue
+        if len(title) >= 8 and title in needle:
+            hits.append(off)
+
+    if not hits:
+        return None
+    if len(hits) == 1:
+        return hits[0]
+
+    pick = _pick_offer_by_subject_in_list(hits, subj)
+    if pick:
+        return pick
+
+    best = _pick_best_linked_by_subject(
+        hits, subject=subj, min_score=32.0, min_gap=4.0
+    )
+    if best and incoming_subject_binds_offer(subj, best):
+        return best
+    return None
+
+
 async def list_offers_for_validated_contact_email(
     session,
     *,

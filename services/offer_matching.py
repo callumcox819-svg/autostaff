@@ -46,7 +46,11 @@ def product_title_from_subject(subject: str) -> str:
     """Название из темы (Re: … / Interesse an …)."""
     subj = _norm_subject(subject)
     subj = re.sub(
-        r"^(interesse an|kaufinteresse|kurze frage zu|anfrage zu|frage zu)\s*:?\s*",
+        r"^(?:"
+        r"interesse an|kaufinteresse|kurze frage zu|kurze anfrage zu|"
+        r"anfrage zu|anfrage:|frage zu|pretenda per|"
+        r"noch verfügbar\??|noch verfugbar\??|guten tag,?"
+        r")\s*:?\s*",
         "",
         subj,
         flags=re.I,
@@ -864,7 +868,7 @@ async def resolve_listing_for_incoming_mail(
             from services.mailing_send_log import list_allowed_offers_for_incoming_contact
 
             return await list_allowed_offers_for_incoming_contact(
-                session, int(user_id), fe, limit=80
+                session, int(user_id), fe, from_name=from_name, limit=80
             )
         return await list_offers_for_seller_email(
             session, user_id=int(user_id), from_email=fe
@@ -876,7 +880,7 @@ async def resolve_listing_for_incoming_mail(
         from services.mailing_send_log import offer_allowed_for_incoming_contact
 
         return await offer_allowed_for_incoming_contact(
-            session, int(user_id), int(off.id), fe
+            session, int(user_id), int(off.id), fe, from_name=from_name
         )
 
     if resolved_offer_id and subj_strong:

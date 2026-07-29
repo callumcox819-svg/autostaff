@@ -35,7 +35,7 @@ def _reply_bound(*, how: str, subject: str, mailed: bool = False, has_conv_ancho
         return True
     if has_conv_anchor and is_seller_reply_subject(subject):
         return True
-    if how in ("listing", "subject_only", "conversation", "validated") and is_seller_reply_subject(subject):
+    if how in ("listing", "subject_only", "conversation", "validated", "legacy_subject") and is_seller_reply_subject(subject):
         return True
     return False
 
@@ -63,11 +63,12 @@ async def _resolve_from_allowed_offers(
     user_id: int,
     contact_email: str,
     subject: str,
+    from_name: str = "",
 ) -> tuple[Offer | None, str, str]:
     """Журнал рассылки + OfferEmail на этот contact; лот по теме Re:/Kaufinteresse."""
     subj = (subject or "").strip()
     allowed = await list_allowed_offers_for_incoming_contact(
-        session, int(user_id), contact_email, limit=80
+        session, int(user_id), contact_email, from_name=from_name or "", limit=80
     )
     if not allowed:
         return None, "", ""
@@ -127,7 +128,7 @@ async def resolve_offer_for_incoming_lead(
         if off:
             link = (offer_effective_link(off) or "").strip()
             if link and await offer_allowed_for_incoming_contact(
-                session, int(user_id), int(off.id), contact_email
+                session, int(user_id), int(off.id), contact_email, from_name=from_name
             ):
                 if not subject_is_informative(subj) or incoming_subject_binds_offer(subj, off):
                     snap = _snapshot_from_offer(subj, off, mailing_bound=True)
@@ -150,6 +151,7 @@ async def resolve_offer_for_incoming_lead(
         user_id=int(user_id),
         contact_email=contact_email,
         subject=subj,
+        from_name=from_name or "",
     )
     if off_v and link_v:
         mailed = await offer_was_mailed_to(session, int(user_id), int(off_v.id), contact_email)
@@ -175,7 +177,7 @@ async def resolve_offer_for_incoming_lead(
         )
         if off_subj and link_subj and incoming_subject_binds_offer(subj, off_subj):
             if await offer_allowed_for_incoming_contact(
-                session, int(user_id), int(off_subj.id), contact_email
+                session, int(user_id), int(off_subj.id), contact_email, from_name=from_name
             ):
                 mailed = await offer_was_mailed_to(
                     session, int(user_id), int(off_subj.id), contact_email
@@ -196,7 +198,7 @@ async def resolve_offer_for_incoming_lead(
     )
     if off_d and incoming_subject_binds_offer(subj, off_d):
         if await offer_allowed_for_incoming_contact(
-            session, int(user_id), int(off_d.id), contact_email
+            session, int(user_id), int(off_d.id), contact_email, from_name=from_name
         ):
             link = (offer_effective_link(off_d) or "").strip()
             if link:
@@ -216,7 +218,7 @@ async def resolve_offer_for_incoming_lead(
                 off = await find_offer_by_link(session, user_id=int(user_id), ad_url=curl)
                 if off and incoming_subject_binds_offer(subject, off):
                     if await offer_allowed_for_incoming_contact(
-                        session, int(user_id), int(off.id), contact_email
+                        session, int(user_id), int(off.id), contact_email, from_name=from_name
                     ):
                         link = (offer_effective_link(off) or curl).strip()
                         if link:
@@ -234,6 +236,33 @@ async def resolve_offer_for_incoming_lead(
                                 ),
                             )
                             return off, link, "conversation", snap
+
+    if subject_is_informative(subj) and is_seller_reply_subject(subj):
+        from services.offer_storage import find_offer_by_subject_and_seller_hint
+
+        off_legacy = await find_offer_by_subject_and_seller_hint(
+            session,
+            user_id=int(user_id),
+            contact_email=contact_email,
+            from_name=from_name or "",
+            subject=subj,
+        )
+        if off_legacy:
+            link = (offer_effective_link(off_legacy) or "").strip()
+            if link:
+                mailed = await offer_was_mailed_to(
+                    session, int(user_id), int(off_legacy.id), contact_email
+                )
+                snap = _snapshot_from_offer(
+                    subj,
+                    off_legacy,
+                    mailing_bound=_reply_bound(
+                        how="legacy_subject",
+                        subject=subj,
+                        mailed=mailed,
+                    ),
+                )
+                return off_legacy, link, "legacy_subject", snap
 
     return None, "", "", snap
 

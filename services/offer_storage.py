@@ -11,6 +11,7 @@ from sqlalchemy import select as sa_select
 from models import Offer, OfferEmail
 
 _LINK_QS_RE = re.compile(r"\?.*$")
+_RAW_EMAIL_RE = re.compile(r"[\w.+-]+@[\w.-]+\.[a-z]{2,}", re.I)
 
 
 def link_key(url: str) -> str:
@@ -138,6 +139,191 @@ def offer_validated_emails(offer: Offer | None) -> list[str]:
     return out
 
 
+def _emails_in_raw_value(val: Any, *, depth: int = 0) -> list[str]:
+    if depth > 10:
+        return []
+    found: list[str] = []
+    if isinstance(val, str):
+        for m in _RAW_EMAIL_RE.findall(val):
+            s = (m or "").strip()
+            if s and "@" in s and not s.lower().startswith("http"):
+                found.append(s)
+    elif isinstance(val, dict):
+        for k, v in val.items():
+            if k in ("item_photo", "photo", "image", "img", "void"):
+                if k != "void":
+                    continue
+            found.extend(_emails_in_raw_value(v, depth=depth + 1))
+    elif isinstance(val, list):
+        for x in val:
+            found.extend(_emails_in_raw_value(x, depth=depth + 1))
+    return found
+
+
+def offer_contact_emails(offer: Offer | None) -> list[str]:
+    """Email продавца: validated_emails + любые @ в raw_json (старые импорты)."""
+    if not offer:
+        return []
+    seen: set[str] = set()
+    out: list[str] = []
+    for em in offer_validated_emails(offer):
+        s = (em or "").strip()
+        if not s:
+            continue
+        key = s.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(s)
+    raw = parse_offer_raw(getattr(offer, "raw_json", None))
+    for key in ("email", "seller_email", "contact_email", "validated_email", "item_email"):
+        v = raw.get(key)
+        if isinstance(v, str) and "@" in v:
+            s = v.strip()
+            if s.lower() not in seen:
+                seen.add(s.lower())
+                out.append(s)
+    for em in _emails_in_raw_value(raw):
+        if em.lower() not in seen:
+            seen.add(em.lower())
+            out.append(em)
+    return out
+
+
+def seller_hint_matches_offer(
+    offer: Offer | None,
+    *,
+    contact_email: str = "",
+    from_name: str = "",
+) -> bool:
+    """Связь лота с продавцом: email в JSON или имя."""
+    if not offer:
+        return False
+    from services.offer_matching import canon_seller_email
+    from services.seller_name import normalize_seller_name
+
+    want = canon_seller_email(contact_email)
+    if want:
+        for em in offer_contact_emails(offer):
+            if canon_seller_email(em) == want:
+                return True
+        local = want.split("@", 1)[0] if "@" in want else ""
+        if len(local) >= 4:
+            raw = parse_offer_raw(getattr(offer, "raw_json", None))
+            pn = (
+                (offer.person_name or "")
+                or str(raw.get("item_person_name") or raw.get("person_name") or "")
+            ).strip()
+            if pn and local.lower() in normalize_seller_name(pn).lower().replace(" ", ""):
+                return True
+
+    fn = normalize_seller_name(from_name or "")
+    if len(fn) >= 4:
+        raw = parse_offer_raw(getattr(offer, "raw_json", None))
+        pn = normalize_seller_name(
+            (offer.person_name or "")
+            or str(raw.get("item_person_name") or raw.get("person_name") or "")
+        )
+        if pn:
+            fl = fn.lower()
+            pl = pn.lower()
+            if fl in pl or pl in fl or fl.split()[0] in pl:
+                return True
+    return False
+
+
+async def list_offers_for_seller_contact_hints(
+    session,
+    *,
+    user_id: int,
+    contact_email: str,
+    from_name: str = "",
+    limit: int = 80,
+) -> list[Offer]:
+    """Лоты, где в JSON/имени есть этот продавец (рассылка до MailingSendLog / без validated_emails)."""
+    rows = (
+        await session.execute(
+            sa_select(Offer)
+            .where(Offer.user_id == int(user_id))
+            .order_by(Offer.id.desc())
+            .limit(5000)
+        )
+    ).scalars().all()
+
+    seen: set[int] = set()
+    out: list[Offer] = []
+    for off in rows:
+        oid = int(off.id)
+        if oid in seen:
+            continue
+        if not offer_effective_link(off):
+            continue
+        if not seller_hint_matches_offer(
+            off, contact_email=contact_email, from_name=from_name
+        ):
+            continue
+        seen.add(oid)
+        out.append(off)
+        if len(out) >= int(limit):
+            break
+    return out
+
+
+async def offer_has_seller_contact(
+    session,
+    *,
+    user_id: int,
+    offer_id: int,
+    contact_email: str,
+    from_name: str = "",
+) -> bool:
+    off = await session.get(Offer, int(offer_id))
+    if not off or int(off.user_id) != int(user_id):
+        return False
+    return seller_hint_matches_offer(
+        off, contact_email=contact_email, from_name=from_name
+    )
+
+
+async def find_offer_by_subject_and_seller_hint(
+    session,
+    *,
+    user_id: int,
+    contact_email: str,
+    from_name: str,
+    subject: str,
+) -> Offer | None:
+    """Тема Re: + привязка к продавцу (legacy, без журнала рассылки)."""
+    from services.offer_matching import (
+        _pick_offer_by_subject_in_list,
+        incoming_subject_binds_offer,
+        subject_is_informative,
+    )
+
+    subj = (subject or "").strip()
+    if not subject_is_informative(subj):
+        return None
+
+    pool = await list_offers_for_seller_contact_hints(
+        session,
+        user_id=int(user_id),
+        contact_email=contact_email,
+        from_name=from_name,
+        limit=120,
+    )
+    if pool:
+        hit = _pick_offer_by_subject_in_list(pool, subj)
+        if hit and incoming_subject_binds_offer(subj, hit):
+            return hit
+        for cand in pool:
+            if incoming_subject_binds_offer(subj, cand):
+                return cand
+        if len(pool) == 1 and incoming_subject_binds_offer(subj, pool[0]):
+            return pool[0]
+
+    return None
+
+
 async def list_offers_for_validated_contact_email(
     session,
     *,
@@ -169,7 +355,7 @@ async def list_offers_for_validated_contact_email(
             continue
         if not offer_effective_link(off):
             continue
-        for em in offer_validated_emails(off):
+        for em in offer_contact_emails(off):
             if canon_seller_email(em) == want:
                 seen.add(oid)
                 out.append(off)
@@ -194,7 +380,33 @@ async def offer_has_validated_email(
     off = await session.get(Offer, int(offer_id))
     if not off or int(off.user_id) != int(user_id):
         return False
-    return any(canon_seller_email(em) == want for em in offer_validated_emails(off))
+    return any(canon_seller_email(em) == want for em in offer_contact_emails(off))
+
+
+async def append_contact_email_to_offer_raw(
+    session,
+    *,
+    offer_id: int,
+    email: str,
+) -> None:
+    """После /send сохранить email в raw_json (переживает purge OfferEmail)."""
+    from services.offer_matching import canon_seller_email
+
+    em = (email or "").strip()
+    if not em or "@" not in em or not int(offer_id or 0):
+        return
+    off = await session.get(Offer, int(offer_id))
+    if not off:
+        return
+    raw = parse_offer_raw(getattr(off, "raw_json", None))
+    canon = canon_seller_email(em)
+    existing = [canon_seller_email(x) for x in offer_contact_emails(off)]
+    if canon in existing:
+        return
+    lst = list(raw.get("validated_emails") or [])
+    lst.append(em)
+    raw["validated_emails"] = lst
+    off.raw_json = json.dumps(raw, ensure_ascii=False)
 
 
 async def offer_for_mailing_target(session, tgt: OfferEmail) -> Offer | None:

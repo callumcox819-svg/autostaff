@@ -174,12 +174,15 @@ async def list_allowed_offers_for_incoming_contact(
     user_id: int,
     contact_email: str,
     *,
+    from_name: str = "",
     limit: int = 80,
 ) -> list[Offer]:
-    """Лоты, на которые реально валидировали/слали этому email (log + очередь OfferEmail)."""
+    """Лоты: журнал рассылки, email в JSON, очередь, имя продавца (legacy)."""
     from services.offer_matching import list_offers_for_seller_email
-
-    from services.offer_storage import list_offers_for_validated_contact_email
+    from services.offer_storage import (
+        list_offers_for_seller_contact_hints,
+        list_offers_for_validated_contact_email,
+    )
 
     seen: set[int] = set()
     out: list[Offer] = []
@@ -208,6 +211,18 @@ async def list_allowed_offers_for_incoming_contact(
         if await offer_has_queued_email(session, int(user_id), oid, contact_email):
             seen.add(oid)
             out.append(off)
+    for off in await list_offers_for_seller_contact_hints(
+        session,
+        user_id=int(user_id),
+        contact_email=contact_email,
+        from_name=from_name or "",
+        limit=limit,
+    ):
+        oid = int(off.id)
+        if oid in seen:
+            continue
+        seen.add(oid)
+        out.append(off)
     return out
 
 
@@ -216,6 +231,8 @@ async def offer_allowed_for_incoming_contact(
     user_id: int,
     offer_id: int,
     contact_email: str,
+    *,
+    from_name: str = "",
 ) -> bool:
     if await offer_was_mailed_to(session, int(user_id), int(offer_id), contact_email):
         return True
@@ -223,13 +240,21 @@ async def offer_allowed_for_incoming_contact(
         session, int(user_id), int(offer_id), contact_email
     ):
         return True
-    from services.offer_storage import offer_has_validated_email
+    from services.offer_storage import offer_has_seller_contact, offer_has_validated_email
 
-    return await offer_has_validated_email(
+    if await offer_has_validated_email(
         session,
         user_id=int(user_id),
         offer_id=int(offer_id),
         contact_email=contact_email,
+    ):
+        return True
+    return await offer_has_seller_contact(
+        session,
+        user_id=int(user_id),
+        offer_id=int(offer_id),
+        contact_email=contact_email,
+        from_name=from_name or "",
     )
 
 

@@ -61,6 +61,12 @@ class OfferSubjectMatchTests(unittest.TestCase):
         subj = "Re: Trampoline"
         self.assertEqual(offer_display_title(subj, tramp), "Trampoline")
 
+    def test_product_title_strips_pretenda_per(self):
+        self.assertEqual(
+            product_title_from_subject("Re: Pretenda per Minivan VW California"),
+            "Minivan VW California",
+        )
+
     def test_subject_agrees_kurze_frage_strips_prefix(self):
         roomba = SimpleNamespace(
             title="Zubehör zu iRobot Roomba Saugroboter",

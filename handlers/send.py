@@ -150,6 +150,13 @@ async def _record_successful_send(
             from_account_email=from_account_email,
             offer_email_id=int(tgt.id),
         )
+        from services.offer_storage import append_contact_email_to_offer_raw
+
+        await append_contact_email_to_offer_raw(
+            session,
+            offer_id=int(tgt.offer_id),
+            email=(tgt.email or "").strip(),
+        )
         await _safe_commit(session)
     except Exception:
         await _safe_rollback(session)

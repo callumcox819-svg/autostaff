@@ -1504,6 +1504,7 @@ async def _process_mails_for_account_impl(
                                     int(user_id),
                                     int(off_fb.id),
                                     from_email_clean,
+                                    from_name=from_name or "",
                                 ):
                                     if not subject_is_informative(subj) or incoming_subject_binds_offer(
                                         subj, off_fb

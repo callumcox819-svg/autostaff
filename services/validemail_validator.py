@@ -1195,20 +1195,44 @@ async def _validate_offers_old(
                 stats.get("domains_count"),
             )
 
-    # 3) собираем результат
-    out_rows: list[dict[str, Any]] = []
+    # 3) результат: одна проверка API на продавца, email — на каждый его лот в VOID
+    from services.offer_storage import link_key
+    from services.seller_name import seller_name_from_item
+
+    seller_emails: dict[str, list[str]] = {}
     for i, row in enumerate(prepared):
         found = found_by_idx[i][:per_seller_limit]
         if not found:
             continue
+        nk = str(row.get("name_key") or "").strip()
+        if nk:
+            seller_emails[nk] = found
+
+    out_rows: list[dict[str, Any]] = []
+    seen_link_keys: set[str] = set()
+    for it in items:
+        if not isinstance(it, dict):
+            continue
+        raw_name = seller_name_from_item(it)
+        nk = seller_name_key(raw_name) if (raw_name or "").strip() else ""
+        found = seller_emails.get(nk) if nk else None
+        if not found:
+            continue
+        lk = link_key(str(it.get("item_link") or it.get("link") or it.get("url") or ""))
+        if lk:
+            if lk in seen_link_keys:
+                continue
+            seen_link_keys.add(lk)
         out_rows.append({
-            "raw": row["raw"],
-            "person_name": _normalize_name(row["person_name"]),
-            "title": row["title"],
-            "price": row["price"],
-            "link": row["link"],
-            "photo": row["photo"],
-            "emails": found,
+            "raw": it,
+            "person_name": _normalize_name(raw_name),
+            "title": str(it.get("item_title") or it.get("title") or "").strip(),
+            "price": str(it.get("item_price") or it.get("price") or "").strip(),
+            "link": str(it.get("item_link") or it.get("link") or it.get("url") or "").strip(),
+            "photo": str(
+                it.get("item_photo") or it.get("photo") or it.get("image") or it.get("img") or ""
+            ).strip(),
+            "emails": list(found),
         })
 
     return out_rows

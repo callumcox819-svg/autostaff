@@ -247,11 +247,9 @@ async def save_all_offers_from_import(
     skip_queue_emails: set[str] | None = None,
 ) -> tuple[int, int, int, list[dict[str, Any]]]:
     """
-    Сохранить объявления из файла: один лот на продавца (первый в VOID), одна почта на лот.
+    Сохранить в БД каждый VOID-лот с валидной почтой (по item_link), полный raw_json.
     Returns: (offers_saved, offers_with_email, email_rows_saved, output_json_rows)
     """
-    from services.seller_blacklist import seller_name_key_from_item
-
     vindex = index_validated_rows(validated_rows)
     skip_q = {e.strip().lower() for e in (skip_queue_emails or set()) if e and str(e).strip()}
     offers_saved = 0
@@ -259,21 +257,49 @@ async def save_all_offers_from_import(
     email_rows_saved = 0
     output_rows: list[dict[str, Any]] = []
     offer_batch: list[tuple[Offer, list[str]]] = []
-    seen_seller_keys: set[str] = set()
+    seen_link_keys: set[str] = set()
 
-    for it in items:
-        if not isinstance(it, dict):
+    work: list[tuple[dict[str, Any], dict[str, Any] | None]] = []
+    for row in validated_rows or []:
+        raw = row.get("raw") if isinstance(row.get("raw"), dict) else row
+        if not isinstance(raw, dict):
             continue
-        seller_key = seller_name_key_from_item(it)
-        if seller_key:
-            if seller_key in seen_seller_keys:
+        picked = emails_from_validated_row(
+            row, norm_email, max_emails=max_emails_per_offer
+        )
+        if not picked:
+            continue
+        lk = link_key(str(raw.get("item_link") or raw.get("link") or ""))
+        if lk:
+            if lk in seen_link_keys:
                 continue
-            seen_seller_keys.add(seller_key)
-        vrow = match_validated_row_for_item(it, vindex)
+            seen_link_keys.add(lk)
+        work.append((raw, row))
+
+    if not work:
+        for it in items:
+            if not isinstance(it, dict):
+                continue
+            vrow = match_validated_row_for_item(it, vindex)
+            picked = emails_from_validated_row(
+                vrow, norm_email, max_emails=max_emails_per_offer
+            )
+            if not picked:
+                continue
+            lk = link_key(str(it.get("item_link") or it.get("link") or ""))
+            if lk:
+                if lk in seen_link_keys:
+                    continue
+                seen_link_keys.add(lk)
+            work.append((it, vrow))
+
+    for it, vrow in work:
         fields = fields_from_item(it)
         picked = emails_from_validated_row(
             vrow, norm_email, max_emails=max_emails_per_offer
         )
+        if not picked:
+            continue
 
         payload = dict(it)
         payload.setdefault(

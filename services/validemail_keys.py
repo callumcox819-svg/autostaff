@@ -77,8 +77,8 @@ def per_key_concurrency_limit() -> int:
     except (TypeError, ValueError):
         base = 40
     if not (os.getenv("VALIDEMAIL_CONCURRENCY_PER_KEY") or "").strip():
-        base = _env_int("VALIDEMAIL_CONCURRENCY_PER_KEY", default=base, traffic=18)
-    cap = 25 if validation_fast_mode() else 12
+        base = _env_int("VALIDEMAIL_CONCURRENCY_PER_KEY", default=base, traffic=22)
+    cap = 28 if validation_fast_mode() else 12
     return max(1, min(cap, base))
 
 
@@ -89,7 +89,7 @@ def seller_parallel_per_key() -> int:
             return max(1, min(32, int(raw)))
         except (TypeError, ValueError):
             pass
-    n = _env_int("VALIDEMAIL_SELLER_PARALLEL_PER_KEY", default=14, traffic=10)
+    n = _env_int("VALIDEMAIL_SELLER_PARALLEL_PER_KEY", default=14, traffic=16)
     return max(1, min(32, n))
 
 
@@ -115,7 +115,7 @@ def seller_batch_pause_sec() -> float:
 def seller_validation_timeout_sec() -> float:
     raw = (os.getenv("VALIDEMAIL_SELLER_TIMEOUT_SEC") or "").strip()
     if not raw:
-        return 120.0
+        return 85.0 if validation_traffic_mode() else 120.0
     try:
         return max(30.0, min(300.0, float(raw)))
     except (TypeError, ValueError):
@@ -190,7 +190,7 @@ def global_inflight_cap(num_keys: int | None = None) -> int:
         return from_config
     target = per * n * 5
     if validation_fast_mode():
-        return max(100, min(220, target))
+        return max(120, min(240, target))
     return max(40, min(160, per * n * 3))
 
 
@@ -198,7 +198,7 @@ def combined_probe_max_emails() -> int:
     """Один залп local×domain на продавца (порядок = приоритет доменов)."""
     raw = (os.getenv("VALIDEMAIL_COMBINED_PROBE_MAX") or "").strip()
     if not raw:
-        return 36
+        return 42 if validation_fast_mode() else 36
     try:
         return max(4, min(48, int(raw)))
     except (TypeError, ValueError):

@@ -48,7 +48,7 @@ def _parse_validemail_api_keys() -> list[str]:
 def _validemail_per_key_concurrency() -> int:
     raw = (os.getenv("VALIDEMAIL_CONCURRENCY_PER_KEY") or "").strip()
     if not raw:
-        return 20 if _validemail_traffic_mode() else 20
+        return 22 if _validemail_traffic_mode() else 20
     try:
         return max(1, min(64, int(raw)))
     except (TypeError, ValueError):
@@ -58,7 +58,7 @@ def _validemail_per_key_concurrency() -> int:
 def _validemail_seller_parallel_per_key() -> int:
     raw = (os.getenv("VALIDEMAIL_SELLER_PARALLEL_PER_KEY") or "").strip()
     if not raw:
-        return 12 if _validemail_traffic_mode() else 14
+        return 16 if _validemail_traffic_mode() else 14
     try:
         return max(1, min(32, int(raw)))
     except (TypeError, ValueError):
@@ -134,7 +134,7 @@ class Config:
             int(
                 os.getenv(
                     "VALIDEMAIL_API_TIMEOUT",
-                    "8" if (os.getenv("VALIDEMAIL_TRAFFIC_MODE") or "1").strip().lower()
+                    "6" if (os.getenv("VALIDEMAIL_TRAFFIC_MODE") or "1").strip().lower()
                     not in ("0", "false", "no", "off")
                     else "8",
                 )

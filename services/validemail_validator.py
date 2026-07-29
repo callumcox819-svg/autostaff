@@ -1127,8 +1127,9 @@ async def _validate_offers_old(
 
     async def _run_api_retry_passes() -> None:
         cap = api_retry_max_sellers()
-        retry_sem = asyncio.Semaphore(max(8, min(20, seller_sem_cap // 3)))
-        for pass_no in range(2):
+        retry_sem = asyncio.Semaphore(max(12, min(32, max(8, seller_sem_cap // 2))))
+        max_passes = 1 if validation_fast_mode() else 2
+        for pass_no in range(max_passes):
             retry_idx = [
                 i
                 for i in range(n_sellers)

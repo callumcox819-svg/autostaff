@@ -8,6 +8,7 @@ from models import MailingSendLog, Offer
 from services.offer_matching import (
     canon_seller_email,
     product_title_from_subject,
+    subject_is_informative,
     subject_title_agrees,
     _norm_subject,
 )
@@ -179,6 +180,8 @@ async def find_offer_from_mailing_log(
     unique_ids = {int(off.id) for _log, off in rows}
     if len(unique_ids) == 1:
         _log, off = rows[0]
+        if subj_needle and subject_is_informative(subject) and not subject_title_agrees(subject, off):
+            return None, ""
         link = (offer_effective_link(off) or "").strip()
         if link:
             return off, "mailing_only_offer"

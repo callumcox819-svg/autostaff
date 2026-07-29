@@ -34,12 +34,20 @@ class OfferSubjectMatchTests(unittest.TestCase):
         subj = "Re: Carte panini 2026"
         self.assertGreater(subject_match_score(subj, panini), subject_match_score(subj, shirt))
 
-    def test_display_title_mailing_bound_uses_offer_not_marketing_subject(self):
+    def test_display_title_mailing_bound_uses_offer_when_subject_agrees(self):
+        shorts = SimpleNamespace(title="Shorts - Damen - Spitze Weiss - Grösse S neu !", raw_json=None)
+        subj = "Re: Shorts - Damen - Spitze Weiss"
+        self.assertEqual(
+            offer_display_title(subj, shorts, mailing_bound=True),
+            "Shorts - Damen - Spitze Weiss - Grösse S neu !",
+        )
+
+    def test_display_title_mailing_bound_shows_subject_when_offer_mismatch(self):
         shorts = SimpleNamespace(title="Shorts - Damen - Spitze Weiss - Grösse S neu !", raw_json=None)
         subj = "Re: Haben Sie X-Pole X-Stage Lite Tanzbühne Weiß 45mm 3,00m noch?"
         self.assertEqual(
             offer_display_title(subj, shorts, mailing_bound=True),
-            "Shorts - Damen - Spitze Weiss - Grösse S neu !",
+            "Haben Sie X-Pole X-Stage Lite Tanzbühne Weiß 45mm 3,00m noch?",
         )
 
     def test_display_title_prefers_subject_when_offer_mismatch(self):

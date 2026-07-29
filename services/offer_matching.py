@@ -115,6 +115,13 @@ def offer_display_title(
 
     ot = (offer_effective_title(offer) or "").strip() if offer else ""
     if offer and mailing_bound and ot:
+        subj_t = product_title_from_subject(subject)
+        if (
+            subject_is_informative(subject)
+            and subj_t
+            and not subject_title_agrees(subject, offer)
+        ):
+            return subj_t
         return ot
     subj_t = product_title_from_subject(subject)
     if subject_is_informative(subject) and subj_t:
@@ -711,6 +718,8 @@ async def find_offer_from_incoming_dialog(
                 continue
         off = await _load_offer(session, user_id=int(user_id), offer_id=int(oid))
         if off and offer_effective_link(off):
+            if subject_is_informative(subject) and not subject_title_agrees(subject, off):
+                continue
             return off, "incoming_dialog"
 
     return None, ""

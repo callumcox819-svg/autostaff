@@ -9,8 +9,10 @@ from services.offer_matching import (
     find_offer_by_incoming_subject,
     find_offer_from_incoming_dialog,
     is_seller_reply_subject,
-    gag_link_title_from_mail,
+    offer_display_title,
     resolve_listing_for_incoming_mail,
+    subject_is_informative,
+    subject_title_agrees,
 )
 from services.offer_storage import (
     find_offer_by_link,
@@ -73,8 +75,33 @@ async def resolve_offer_for_incoming_lead(
         if off:
             link = (offer_effective_link(off) or "").strip()
             if link:
-                snap = _snapshot_from_offer(subject, off, mailing_bound=True)
-                return off, link, "mailing_bound", snap
+                if subject_is_informative(subject) and not subject_title_agrees(subject, off):
+                    pass
+                else:
+                    snap = _snapshot_from_offer(subject, off, mailing_bound=True)
+                    return off, link, "mailing_bound", snap
+
+    subj = (subject or "").strip()
+    if subject_is_informative(subj):
+        off_subj, link_subj = await resolve_listing_for_incoming_mail(
+            session,
+            user_id=int(user_id),
+            from_email=contact_email,
+            subject=subj,
+            from_name=from_name,
+            body_text=body_text,
+            resolved_offer_id=resolved_offer_id,
+            mail_ad_url=mail_ad_url,
+            inbox_email=inbox_email,
+        )
+        if off_subj and link_subj and subject_title_agrees(subj, off_subj):
+            mailed = await offer_was_mailed_to(session, int(user_id), int(off_subj.id), contact_email)
+            snap = _snapshot_from_offer(
+                subj,
+                off_subj,
+                mailing_bound=_reply_bound(how="subject_first", subject=subj, mailed=mailed),
+            )
+            return off_subj, link_subj, "subject_first", snap
 
     off, how = await find_offer_from_mailing_log(
         session, int(user_id), contact_email, subject
@@ -171,10 +198,13 @@ def _snapshot_from_offer(subject: str, offer: Offer, *, mailing_bound: bool) -> 
     link = (offer_effective_link(offer) or "").strip()
     price = (offer_effective_price(offer, default="") or "").strip()
     photo = (offer_effective_photo(offer) or "").strip()
+    bound = mailing_bound
+    if subject_is_informative(subject) and not subject_title_agrees(subject, offer):
+        bound = False
     return {
-        "product_title": gag_link_title_from_mail(subject, offer),
+        "product_title": offer_display_title(subject, offer, mailing_bound=bound),
         "offer_price": price,
         "photo_url": photo,
         "service_label": _service_label_from_link(link) or "",
-        "mailing_bound": mailing_bound,
+        "mailing_bound": bound,
     }

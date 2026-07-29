@@ -1197,7 +1197,6 @@ async def _validate_offers_old(
 
     # 3) результат: одна проверка API на продавца, email — на каждый его лот в VOID
     from services.offer_storage import link_key
-    from services.seller_name import seller_name_from_item
 
     seller_emails: dict[str, list[str]] = {}
     for i, row in enumerate(prepared):

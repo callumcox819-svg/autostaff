@@ -93,7 +93,10 @@ def subject_title_agrees(subject: str, offer: Offer) -> bool:
     """Poputka-style: Re: <товар> совпадает с названием лота (не только год/стоп-слова)."""
     from services.offer_storage import offer_effective_title
 
-    needle = _norm_subject(subject).lower()
+    if subject_is_informative(subject):
+        needle = product_title_from_subject(subject).lower()
+    else:
+        needle = _norm_subject(subject).lower()
     if len(needle) < 4:
         return False
     title = (offer_effective_title(offer) or "").strip().lower()
@@ -664,7 +667,7 @@ def _pick_offer_by_subject_in_list(offers: list[Offer], subject: str) -> Offer |
     """Лучший лот из списка по теме Re: (substring / токены)."""
     from services.offer_storage import offer_effective_link, offer_effective_title
 
-    needle = _norm_subject(subject)
+    needle = product_title_from_subject(subject) if subject_is_informative(subject) else _norm_subject(subject)
     if len(needle) < 4:
         return None
     nl = needle.lower()
@@ -858,7 +861,9 @@ async def resolve_listing_for_incoming_mail(
         if not fe:
             return []
         if mailed_only:
-            return await list_offers_from_mailing_log(
+            from services.mailing_send_log import list_allowed_offers_for_incoming_contact
+
+            return await list_allowed_offers_for_incoming_contact(
                 session, int(user_id), fe, limit=80
             )
         return await list_offers_for_seller_email(
@@ -868,7 +873,9 @@ async def resolve_listing_for_incoming_mail(
     async def _mailed_ok(off: Offer | None) -> bool:
         if not off or not mailed_only or not fe:
             return True
-        return await offer_was_mailed_to(
+        from services.mailing_send_log import offer_allowed_for_incoming_contact
+
+        return await offer_allowed_for_incoming_contact(
             session, int(user_id), int(off.id), fe
         )
 

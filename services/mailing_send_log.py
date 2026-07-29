@@ -6,6 +6,7 @@ from sqlalchemy import func, or_, select
 
 from models import MailingSendLog, Offer
 from services.offer_matching import (
+    _pick_offer_by_subject_in_list,
     canon_seller_email,
     incoming_subject_binds_offer,
     product_title_from_subject,
@@ -178,10 +179,20 @@ async def list_allowed_offers_for_incoming_contact(
     """Лоты, на которые реально валидировали/слали этому email (log + очередь OfferEmail)."""
     from services.offer_matching import list_offers_for_seller_email
 
+    from services.offer_storage import list_offers_for_validated_contact_email
+
     seen: set[int] = set()
     out: list[Offer] = []
     for off in await list_offers_from_mailing_log(
         session, int(user_id), contact_email, limit=limit
+    ):
+        oid = int(off.id)
+        if oid in seen:
+            continue
+        seen.add(oid)
+        out.append(off)
+    for off in await list_offers_for_validated_contact_email(
+        session, user_id=int(user_id), contact_email=contact_email, limit=limit
     ):
         oid = int(off.id)
         if oid in seen:
@@ -208,8 +219,17 @@ async def offer_allowed_for_incoming_contact(
 ) -> bool:
     if await offer_was_mailed_to(session, int(user_id), int(offer_id), contact_email):
         return True
-    return await offer_has_queued_email(
+    if await offer_has_queued_email(
         session, int(user_id), int(offer_id), contact_email
+    ):
+        return True
+    from services.offer_storage import offer_has_validated_email
+
+    return await offer_has_validated_email(
+        session,
+        user_id=int(user_id),
+        offer_id=int(offer_id),
+        contact_email=contact_email,
     )
 
 
@@ -230,6 +250,7 @@ async def find_offer_from_mailing_log(
 
     subj_needle = product_title_from_subject(subject)
     in_norm = _norm_subject(subject).lower()
+    in_product = (subj_needle or "").strip().lower()
 
     for log, off in rows:
         sent_norm = _norm_subject(log.mail_subject or "").lower()
@@ -237,6 +258,20 @@ async def find_offer_from_mailing_log(
             link = (offer_effective_link(off) or "").strip()
             if link:
                 return off, "mailing_same_subject"
+
+    if in_product:
+        for log, off in rows:
+            sent_product = product_title_from_subject(log.mail_subject or "").lower()
+            if not sent_product:
+                continue
+            if (
+                in_product == sent_product
+                or in_product in sent_product
+                or sent_product in in_product
+            ):
+                link = (offer_effective_link(off) or "").strip()
+                if link:
+                    return off, "mailing_product_thread"
 
     if subj_needle:
         best: tuple[float, MailingSendLog, Offer] | None = None
@@ -281,7 +316,16 @@ async def find_offer_from_mailing_log(
             return off, "mailing_only_offer"
 
     if subj_needle and subject_is_informative(subject):
-        if not any(incoming_subject_binds_offer(subject, off) for _log, off in rows[:24]):
-            return None, ""
+        bound = [
+            off
+            for _log, off in rows[:48]
+            if incoming_subject_binds_offer(subject, off)
+        ]
+        if bound:
+            hit = _pick_offer_by_subject_in_list(bound, subject)
+            if hit:
+                link = (offer_effective_link(hit) or "").strip()
+                if link:
+                    return hit, "mailing_subject_pick"
 
     return None, ""

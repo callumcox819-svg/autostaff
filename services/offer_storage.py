@@ -123,6 +123,80 @@ def offer_effective_title(offer: Offer | None) -> str:
     return ""
 
 
+def offer_validated_emails(offer: Offer | None) -> list[str]:
+    raw = parse_offer_raw(getattr(offer, "raw_json", None) if offer else None)
+    out: list[str] = []
+    for key in ("validated_emails", "emails"):
+        val = raw.get(key)
+        if isinstance(val, list):
+            for em in val:
+                s = str(em or "").strip()
+                if s and "@" in s:
+                    out.append(s)
+        elif isinstance(val, str) and "@" in val:
+            out.append(val.strip())
+    return out
+
+
+async def list_offers_for_validated_contact_email(
+    session,
+    *,
+    user_id: int,
+    contact_email: str,
+    limit: int = 80,
+) -> list[Offer]:
+    """Лоты, у которых в raw_json validated_emails есть этот продавец (после purge OfferEmail)."""
+    from services.offer_matching import canon_seller_email
+
+    want = canon_seller_email(contact_email)
+    if not want:
+        return []
+
+    rows = (
+        await session.execute(
+            sa_select(Offer)
+            .where(Offer.user_id == int(user_id))
+            .order_by(Offer.id.desc())
+            .limit(3000)
+        )
+    ).scalars().all()
+
+    seen: set[int] = set()
+    out: list[Offer] = []
+    for off in rows:
+        oid = int(off.id)
+        if oid in seen:
+            continue
+        if not offer_effective_link(off):
+            continue
+        for em in offer_validated_emails(off):
+            if canon_seller_email(em) == want:
+                seen.add(oid)
+                out.append(off)
+                break
+        if len(out) >= int(limit):
+            break
+    return out
+
+
+async def offer_has_validated_email(
+    session,
+    *,
+    user_id: int,
+    offer_id: int,
+    contact_email: str,
+) -> bool:
+    from services.offer_matching import canon_seller_email
+
+    want = canon_seller_email(contact_email)
+    if not want or not int(offer_id or 0):
+        return False
+    off = await session.get(Offer, int(offer_id))
+    if not off or int(off.user_id) != int(user_id):
+        return False
+    return any(canon_seller_email(em) == want for em in offer_validated_emails(off))
+
+
 async def offer_for_mailing_target(session, tgt: OfferEmail) -> Offer | None:
     """Offer для /send — всегда из БД по offer_id (не от detached relationship)."""
     oid = int(getattr(tgt, "offer_id", 0) or 0)

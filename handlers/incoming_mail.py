@@ -1804,6 +1804,12 @@ async def _create_aqua_link_from_db_work(callback: CallbackQuery, mail_id: int) 
         if offer_id:
             mail.resolved_offer_id = int(offer_id)
         mail.ad_url = url
+        if title:
+            mail.product_title = title[:500]
+        if price:
+            mail.offer_price = str(price)[:64]
+        if offer_image:
+            mail.photo_url = str(offer_image)[:2000]
         await session.commit()
 
         mail_uid = str(getattr(mail, "imap_uid", "") or "")

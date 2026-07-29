@@ -451,7 +451,10 @@ async def _notify_sending_finished(*, bot: Bot, chat_id: int, tg_user_id: int) -
     if state.is_stopping:
         title = f"{html_emoji('stop')} <b>Рассылка остановлена</b>"
     elif status in ("DONE", "BURST"):
-        title = f"{html_emoji('ok')} <b>Burst-рассылка завершена</b>"
+        if pending > 0:
+            title = f"{html_emoji('warn')} <b>Рассылка завершена, очередь не пуста</b>"
+        else:
+            title = f"{html_emoji('ok')} <b>Burst-рассылка завершена</b>"
     else:
         title = f"{html_emoji('warn')} <b>Рассылка прервана</b>"
 
@@ -487,67 +490,73 @@ async def _notify_sending_finished(*, bot: Bot, chat_id: int, tg_user_id: int) -
 async def _burst_sending_loop(*, bot: Bot, chat_id: int, tg_user_id: int) -> None:
     state = get_sending_state(tg_user_id) or SendingState(user_id=tg_user_id)
     blocked_account_ids: set[int] = set()
+    total_elapsed = 0.0
+
+    async def build_message(session: AsyncSession, tgt: OfferEmail) -> Tuple[str, str]:
+        return await _build_message_for_target(session, tg_user_id, tgt)
+
+    async def on_success(tgt: OfferEmail, subject: str, from_email: str) -> None:
+        state.sent_count += 1
+        set_sending_state(tg_user_id, state=state)
+        async with db_session() as ws:
+            await _record_successful_send(
+                ws,
+                user_id=db_user_id,
+                tgt=tgt,
+                subject=subject,
+                from_account_email=from_email,
+            )
+            await _purge_target(ws, db_user_id, int(tgt.id))
+
+    async def on_failure(tgt: OfferEmail, err: str, acc: EmailAccount) -> bool:
+        async with db_session() as ws:
+            blocked = await _handle_send_failure(
+                session=ws,
+                db_user_id=db_user_id,
+                state=state,
+                tgt=tgt,
+                err=err,
+                acc=acc,
+                bot=bot,
+                chat_id=chat_id,
+            )
+        if blocked:
+            blocked_account_ids.add(int(acc.id))
+        set_sending_state(tg_user_id, state=state)
+        return blocked
 
     try:
-        async with db_session() as session:
-            user = await get_or_create_user(session, tg_user_id)
-            db_user_id = int(user.id)
-            sender_name = getattr(user, "sender_name", None)
+        from handlers.templates import reset_smart_preset_rotation
 
-            accounts = await _get_active_accounts(session, db_user_id)
-            targets = await _get_targets(session, db_user_id)
+        reset_smart_preset_rotation(tg_user_id)
+
+        db_user_id = 0
+        sender_name = None
+
+        while not state.is_stopping:
+            async with db_session() as session:
+                user = await get_or_create_user(session, tg_user_id)
+                db_user_id = int(user.id)
+                sender_name = getattr(user, "sender_name", None)
+                accounts = await _get_active_accounts(session, db_user_id)
+                targets = await _get_targets(session, db_user_id)
 
             if not accounts or not targets:
-                state.is_running = False
-                state.last_status = "DONE"
-                set_sending_state(tg_user_id, state=state)
-                return
+                break
 
             state.last_status = "BURST"
             state.current_to = f"{html_emoji('burst')} burst × {len(targets)}"
             set_sending_state(tg_user_id, state=state)
 
-            from handlers.templates import reset_smart_preset_rotation
-
-            reset_smart_preset_rotation(tg_user_id)
-
-            async def build_message(session: AsyncSession, tgt: OfferEmail) -> Tuple[str, str]:
-                return await _build_message_for_target(session, tg_user_id, tgt)
-
-            async def on_success(tgt: OfferEmail, subject: str, from_email: str) -> None:
-                state.sent_count += 1
-                set_sending_state(tg_user_id, state=state)
-                async with db_session() as ws:
-                    await _record_successful_send(
-                        ws,
-                        user_id=db_user_id,
-                        tgt=tgt,
-                        subject=subject,
-                        from_account_email=from_email,
-                    )
-                    await _purge_target(ws, db_user_id, int(tgt.id))
-
-            async def on_failure(tgt: OfferEmail, err: str, acc: EmailAccount) -> bool:
-                async with db_session() as ws:
-                    blocked = await _handle_send_failure(
-                        session=ws,
-                        db_user_id=db_user_id,
-                        state=state,
-                        tgt=tgt,
-                        err=err,
-                        acc=acc,
-                        bot=bot,
-                        chat_id=chat_id,
-                    )
-                if blocked:
-                    blocked_account_ids.add(int(acc.id))
-                set_sending_state(tg_user_id, state=state)
-                return blocked
+            active_accounts = [a for a in accounts if int(a.id) not in blocked_account_ids]
+            if not active_accounts:
+                state.last_error = "NO_ACTIVE_ACCOUNTS"
+                break
 
             sent, failed, proxy_id, elapsed = await run_burst_mailing(
                 db_user_id=db_user_id,
                 tg_user_id=tg_user_id,
-                accounts=[a for a in accounts if int(a.id) not in blocked_account_ids],
+                accounts=active_accounts,
                 targets=targets,
                 sender_name=sender_name,
                 build_message=build_message,
@@ -555,15 +564,20 @@ async def _burst_sending_loop(*, bot: Bot, chat_id: int, tg_user_id: int) -> Non
                 on_failure=on_failure,
             )
 
-            state.sent_count = sent
-            state.failed_count = failed
-            state.burst_elapsed_sec = elapsed
+            total_elapsed += float(elapsed)
             if proxy_id:
                 state.sticky_proxy_id = proxy_id
-            state.current_to = ""
-            state.is_running = False
-            state.last_status = "DONE"
-            set_sending_state(tg_user_id, state=state)
+
+            if sent == 0 and failed == 0:
+                break
+            if sent == 0 and failed > 0:
+                break
+
+        state.current_to = ""
+        state.burst_elapsed_sec = total_elapsed
+        state.is_running = False
+        state.last_status = "DONE"
+        set_sending_state(tg_user_id, state=state)
 
     except RuntimeError as e:
         if "NO_ROTATING_PROXY" in str(e):

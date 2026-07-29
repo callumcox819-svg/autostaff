@@ -129,15 +129,14 @@ async def _send_pair(
 
 
 def _should_continue_burst(tg_user_id: int) -> bool:
+    """Между волнами — только явная остановка пользователем (не is_running)."""
     try:
         from services.sending_state import get_sending_state
 
         st = get_sending_state(tg_user_id)
         if st is None:
             return True
-        if st.is_stopping:
-            return False
-        return bool(st.is_running)
+        return not bool(st.is_stopping)
     except Exception:
         return True
 

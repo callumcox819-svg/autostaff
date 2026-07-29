@@ -48,7 +48,7 @@ class OfferSubjectMatchTests(unittest.TestCase):
         subj = "Re: Haben Sie X-Pole X-Stage Lite Tanzbühne Weiß 45mm 3,00m noch?"
         self.assertEqual(
             offer_display_title(subj, shorts, mailing_bound=True),
-            "Haben Sie X-Pole X-Stage Lite Tanzbühne Weiß 45mm 3,00m noch?",
+            "X-Pole X-Stage Lite Tanzbühne Weiß 45mm 3,00m",
         )
 
     def test_display_title_prefers_subject_when_offer_mismatch(self):

@@ -7,8 +7,10 @@ from sqlalchemy import func, or_, select
 from models import MailingSendLog, Offer
 from services.offer_matching import (
     canon_seller_email,
+    incoming_subject_binds_offer,
     product_title_from_subject,
     subject_is_informative,
+    subject_match_score,
     subject_title_agrees,
     _norm_subject,
 )
@@ -161,12 +163,27 @@ async def find_offer_from_mailing_log(
                 return off, "mailing_same_subject"
 
     if subj_needle:
-        for _log, off in rows:
+        best: tuple[float, MailingSendLog, Offer] | None = None
+        for log, off in rows:
+            if not incoming_subject_binds_offer(subject, off):
+                continue
+            sc = subject_match_score(subject, off)
+            if sc <= 0:
+                continue
+            if best is None or sc > best[0]:
+                best = (sc, log, off)
+        if best and best[0] >= 28.0:
+            _log, off = best[1], best[2]
+            link = (offer_effective_link(off) or "").strip()
+            if link:
+                return off, "mailing_subject_score"
+
+        for log, off in rows:
             if subject_title_agrees(subject, off):
                 link = (offer_effective_link(off) or "").strip()
                 if link:
                     return off, "mailing_subject"
-            sent_subj = (_log.mail_subject or "").strip()
+            sent_subj = (log.mail_subject or "").strip()
             if sent_subj and subj_needle.lower() in sent_subj.lower():
                 link = (offer_effective_link(off) or "").strip()
                 if link:
@@ -181,21 +198,14 @@ async def find_offer_from_mailing_log(
     if len(unique_ids) == 1:
         _log, off = rows[0]
         if subj_needle and subject_is_informative(subject) and not subject_title_agrees(subject, off):
-            return None, ""
+            if not incoming_subject_binds_offer(subject, off):
+                return None, ""
         link = (offer_effective_link(off) or "").strip()
         if link:
             return off, "mailing_only_offer"
 
-    if subj_needle and not any(subject_title_agrees(subject, off) for _log, off in rows[:12]):
-        return None, ""
-
     if subj_needle and subject_is_informative(subject):
-        _log, off = rows[0]
-        if not subject_title_agrees(subject, off):
+        if not any(incoming_subject_binds_offer(subject, off) for _log, off in rows[:24]):
             return None, ""
 
-    _log, off = rows[0]
-    link = (offer_effective_link(off) or "").strip()
-    if link:
-        return off, "mailing_latest"
     return None, ""

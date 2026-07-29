@@ -753,16 +753,30 @@ async def find_offer_by_incoming_subject(
     user_id: int,
     subject: str,
     from_email: str = "",
+    *,
+    mailed_only: bool = False,
 ) -> Offer | None:
     """Лид по теме Re: <товар> — сначала у этого продавца (poputka88)."""
     fe = (from_email or "").strip()
     if fe:
-        seller_offers = await list_offers_for_seller_email(
-            session, user_id=int(user_id), from_email=fe
-        )
+        if mailed_only:
+            from services.mailing_send_log import list_offers_from_mailing_log
+
+            seller_offers = await list_offers_from_mailing_log(
+                session, int(user_id), fe, limit=80
+            )
+        else:
+            seller_offers = await list_offers_for_seller_email(
+                session, user_id=int(user_id), from_email=fe
+            )
         hit = _pick_offer_by_subject_in_list(seller_offers, subject)
         if hit:
             return hit
+        if mailed_only:
+            return None
+
+    if mailed_only:
+        return None
 
     rows = (
         await session.execute(
@@ -827,16 +841,36 @@ async def resolve_listing_for_incoming_mail(
     inbox_email: str | None = None,
     pinned_offer_id: int | None = None,
     conv_ad_url: str | None = None,
+    mailed_only: bool = False,
 ) -> tuple[Offer | None, str]:
     """
     Единый выбор лота для карточки, IMAP и «Создать ссылку».
-    Приоритет: тема письма → привязка письма → закреплённый лот диалога → conv (с проверкой темы).
+    mailed_only: только лоты из MailingSendLog (реально отправленные на этот email).
     """
+    from services.mailing_send_log import list_offers_from_mailing_log, offer_was_mailed_to
     from services.offer_storage import ensure_offer_link_column, find_offer_by_link, offer_effective_link
 
     subj = _strip_subject_edges((subject or "").strip())
     fe = (from_email or "").strip()
     subj_strong = subject_is_informative(subj)
+
+    async def _seller_offers() -> list[Offer]:
+        if not fe:
+            return []
+        if mailed_only:
+            return await list_offers_from_mailing_log(
+                session, int(user_id), fe, limit=80
+            )
+        return await list_offers_for_seller_email(
+            session, user_id=int(user_id), from_email=fe
+        )
+
+    async def _mailed_ok(off: Offer | None) -> bool:
+        if not off or not mailed_only or not fe:
+            return True
+        return await offer_was_mailed_to(
+            session, int(user_id), int(off.id), fe
+        )
 
     if resolved_offer_id and subj_strong:
         off_stale = await _load_offer(
@@ -882,21 +916,19 @@ async def resolve_listing_for_incoming_mail(
         return off, link
 
     if subj_strong and fe:
-        seller_first = await list_offers_for_seller_email(
-            session, user_id=int(user_id), from_email=fe
-        )
+        seller_first = await _seller_offers()
         off_seller = _pick_offer_by_subject_in_list(seller_first, subj)
-        if off_seller:
+        if off_seller and await _mailed_ok(off_seller):
             return _ret(off_seller)
 
     if subj_strong:
         off_subj = await find_offer_by_incoming_subject(
-            session, int(user_id), subj, from_email=fe
+            session, int(user_id), subj, from_email=fe, mailed_only=mailed_only
         )
-        if off_subj:
+        if off_subj and await _mailed_ok(off_subj):
             return _ret(off_subj)
 
-    if subj_strong:
+    if subj_strong and not mailed_only:
         recent = (
             await session.execute(
                 sa_select(Offer)
@@ -925,9 +957,7 @@ async def resolve_listing_for_incoming_mail(
         if pair:
             return pair
 
-        seller_offers = await list_offers_for_seller_email(
-            session, user_id=int(user_id), from_email=fe
-        )
+        seller_offers = await _seller_offers()
         multi = len(seller_offers) > 1
         off = _pick_best_linked_by_subject(
             seller_offers,
@@ -954,9 +984,9 @@ async def resolve_listing_for_incoming_mail(
         off = await find_offer_by_link(session, user_id=int(user_id), ad_url=murl)
         min_sc = _CONV_AD_URL_MIN_SUBJECT_SCORE if subject_is_informative(subj) else None
         pair = _aqua_offer_pair(subj, off, min_score=min_sc)
-        if pair:
+        if pair and await _mailed_ok(off):
             return pair
-        if off and not subject_is_informative(subj):
+        if off and not subject_is_informative(subj) and await _mailed_ok(off):
             link = offer_effective_link(off) or murl
             if link:
                 ensure_offer_link_column(off, link)
@@ -966,44 +996,45 @@ async def resolve_listing_for_incoming_mail(
         off = await _load_offer(session, user_id=int(user_id), offer_id=int(resolved_offer_id))
         min_sc = _SUBJECT_EMAIL_AGREE_MIN_SCORE if subj_strong else None
         pair = _aqua_offer_pair(subj, off, min_score=min_sc)
-        if pair:
+        if pair and await _mailed_ok(off):
             return pair
 
     if pinned_offer_id:
         off = await _load_offer(session, user_id=int(user_id), offer_id=int(pinned_offer_id))
         min_sc = _SUBJECT_EMAIL_AGREE_MIN_SCORE if subj_strong else None
         pair = _aqua_offer_pair(subj, off, min_score=min_sc)
-        if pair:
+        if pair and await _mailed_ok(off):
             return pair
 
     curl = (conv_ad_url or "").strip()
     if curl:
         off = await find_offer_by_link(session, user_id=int(user_id), ad_url=curl)
-        if off:
+        if off and await _mailed_ok(off):
             if not subj_strong:
                 return _ret(off)
             if subject_title_agrees(subj, off):
                 return _ret(off)
 
-    oid, _ = await resolve_offer_for_incoming(
-        session,
-        user_id=int(user_id),
-        from_email=fe,
-        subject=subj,
-        from_name=from_name,
-        body_text=body_text,
-    )
-    if oid:
-        off = await _load_offer(session, user_id=int(user_id), offer_id=int(oid))
-        pair = _aqua_offer_pair(
-            subj,
-            off,
-            min_score=_AQUA_SUBJECT_MIN_SCORE if subject_is_informative(subj) else None,
+    if not mailed_only:
+        oid, _ = await resolve_offer_for_incoming(
+            session,
+            user_id=int(user_id),
+            from_email=fe,
+            subject=subj,
+            from_name=from_name,
+            body_text=body_text,
         )
-        if pair:
-            return pair
+        if oid:
+            off = await _load_offer(session, user_id=int(user_id), offer_id=int(oid))
+            pair = _aqua_offer_pair(
+                subj,
+                off,
+                min_score=_AQUA_SUBJECT_MIN_SCORE if subject_is_informative(subj) else None,
+            )
+            if pair:
+                return pair
 
-    seller_offers = await list_offers_for_seller_email(session, user_id=int(user_id), from_email=fe)
+    seller_offers = await _seller_offers()
     if subject_is_informative(subj) and len(seller_offers) > 1:
         off = _pick_best_linked_by_subject(
             seller_offers,
@@ -1011,16 +1042,18 @@ async def resolve_listing_for_incoming_mail(
             min_score=_SUBJECT_EMAIL_AGREE_MIN_SCORE,
             min_gap=10.0,
         )
-        if off:
+        if off and await _mailed_ok(off):
             return _ret(off)
         for cand in seller_offers:
-            if subject_title_agrees(subj, cand):
+            if subject_title_agrees(subj, cand) and await _mailed_ok(cand):
                 return _ret(cand)
         return None, ""
 
     if not subject_is_informative(subj):
         if len(seller_offers) == 1:
-            return _ret(seller_offers[0])
+            only = seller_offers[0]
+            if await _mailed_ok(only):
+                return _ret(only)
 
     return None, ""
 

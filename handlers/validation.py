@@ -123,6 +123,9 @@ def _format_validation_status(
     api_retry_queued: int = 0,
     api_retry_done: int = 0,
     seller_timeouts: int = 0,
+    offers_eligible: int = 0,
+    listings_in_file: int = 0,
+    no_name: int = 0,
 ) -> str:
     title = (
         f"{html_emoji('ok')} Подбор завершён"
@@ -169,16 +172,35 @@ def _format_validation_status(
         user_line,
         f"<code>{bar}</code> <b>{pct}%</b>",
     ]
-    bl_total = int(added_blacklist or 0) + int(in_blacklist or 0)
+    bl_total = (
+        int(added_blacklist or 0)
+        + int(in_blacklist or 0)
+        + int(short_nicks or 0)
+        + int(no_name or 0)
+    )
     not_found = int(no_email_smtp if finished else no_email)
+    if finished and int(listings_in_file or 0) > 0:
+        lines.append("")
+        lines.append(
+            f"{html_emoji('presets')} В JSON: <b>{int(listings_in_file)}</b> объявлений · "
+            f"в API: <b>{int(offers_eligible or 0)}</b> продавцов "
+            f"(1 имя = 1 проверка, остальные лоты — по email позже)"
+        )
     lines.extend(
         [
             "",
             f"{html_emoji('email')} Добавлено: <b>{added}</b>",
-            f"{html_emoji('fail')} В ЧС / пропуск: <b>{bl_total}</b>",
-            f"{html_emoji('wait')} Без email: <b>{not_found}</b>",
+            f"{html_emoji('fail')} Пропуск (ЧС / ник / нет имени / повтор): <b>{bl_total}</b>",
+            f"{html_emoji('wait')} Без email (API): <b>{not_found}</b>",
         ]
     )
+    if finished and int(sellers_api_unresolved or 0) > 0:
+        lines.append(
+            f"{html_emoji('warn')} API не дожали: <b>{int(sellers_api_unresolved)}</b> "
+            f"(не в «Без email» — можно повторить файл)"
+        )
+    if finished and int(errors or 0) > 0:
+        lines.append(f"{html_emoji('fail')} Ошибок API: <b>{int(errors)}</b>")
     return "\n".join(lines)
 
 
@@ -657,6 +679,9 @@ async def _run_validation_pipeline_inner(
             api_retry_queued=int(vstats.get("api_retry_queued") or 0),
             api_retry_done=int(vstats.get("api_retry_done") or 0),
             seller_timeouts=int(vstats.get("seller_timeouts") or 0),
+            offers_eligible=int(vstats.get("offers_eligible") or 0),
+            listings_in_file=int(vstats.get("offers_total") or total_offers),
+            no_name=int(vstats.get("no_name") or 0),
         )
 
     try:

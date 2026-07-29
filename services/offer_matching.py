@@ -46,7 +46,7 @@ def product_title_from_subject(subject: str) -> str:
     """Название из темы (Re: … / Interesse an …)."""
     subj = _norm_subject(subject)
     subj = re.sub(
-        r"^(interesse an|kurze frage zu|anfrage zu|frage zu)\s+",
+        r"^(interesse an|kaufinteresse|kurze frage zu|anfrage zu|frage zu)\s*:?\s*",
         "",
         subj,
         flags=re.I,

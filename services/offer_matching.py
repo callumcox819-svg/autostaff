@@ -58,10 +58,15 @@ def product_title_from_subject(subject: str) -> str:
 
 
 def gag_link_title_from_mail(subject: str, offer: Offer | None = None) -> str:
-    """Имя для GAG API — из лота в БД, если тема с префиксом рассылки; иначе из Re: темы."""
+    """Имя для GAG API — из Re:/Aw: темы, если лот в БД не совпадает с нитью письма."""
     from services.offer_storage import offer_effective_title
 
     subj_t = product_title_from_subject(subject)
+    if offer and subj_t and subject_is_informative(subject):
+        ot = (offer_effective_title(offer) or "").strip()
+        if ot and not subject_title_agrees(subject, offer):
+            if subject_match_score(subject, offer) < 40.0:
+                return subj_t
     if offer:
         ot = (offer_effective_title(offer) or "").strip()
         if ot:
@@ -145,6 +150,17 @@ def offer_display_title(
 _CONV_AD_URL_MIN_SUBJECT_SCORE = 40.0
 # Тема Re: и email продавца — лот только при явном совпадении названия
 _SUBJECT_EMAIL_AGREE_MIN_SCORE = 40.0
+
+
+def incoming_subject_binds_offer(subject: str, offer: Offer | None) -> bool:
+    """Тема письма относится к этому лоту (не подставлять старую рассылку / conv)."""
+    if not offer:
+        return False
+    if not subject_is_informative(subject):
+        return True
+    if subject_title_agrees(subject, offer):
+        return True
+    return subject_match_score(subject, offer) >= _SUBJECT_EMAIL_AGREE_MIN_SCORE
 
 
 def _price_token(price: str) -> str:

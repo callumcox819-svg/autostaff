@@ -844,6 +844,28 @@ def _canon_email(email: str) -> str:
     return f"{local}@{domain}"
 
 
+async def _aqua_resolve_pins_for_mail(
+    session,
+    *,
+    user_id: int,
+    subject: str,
+    resolved_offer_id: int | None,
+    mailing_bound: bool,
+) -> tuple[int | None, bool]:
+    """Сброс старой привязки (другой лот / рассылка до деплоя), если тема не совпадает."""
+    from services.offer_matching import _load_offer, incoming_subject_binds_offer
+
+    subj = (subject or "").strip()
+    oid = int(resolved_offer_id) if resolved_offer_id else None
+    bound = bool(mailing_bound)
+    if not oid or not bound or not subject_is_informative(subj):
+        return oid, bound
+    stale = await _load_offer(session, user_id=int(user_id), offer_id=oid)
+    if stale and not incoming_subject_binds_offer(subj, stale):
+        return None, False
+    return oid, bound
+
+
 def _parse_imap_uid_key(uid: str) -> int | None:
     uid_s = (uid or "").strip()
     if ":" in uid_s:
@@ -1703,6 +1725,13 @@ async def _create_aqua_link_from_db_work(callback: CallbackQuery, mail_id: int) 
 
         subj_mail = (getattr(mail, "subject", "") or "").strip()
         body_mail = (getattr(mail, "body", "") or "").strip()
+        resolved_id, mailing_bound = await _aqua_resolve_pins_for_mail(
+            session,
+            user_id=int(tg_user.id),
+            subject=subj_mail,
+            resolved_offer_id=getattr(mail, "resolved_offer_id", None),
+            mailing_bound=bool(getattr(mail, "mailing_bound", False)),
+        )
         offer, url = await resolve_offer_for_aqua_link(
             session,
             user_id=int(tg_user.id),
@@ -1710,10 +1739,10 @@ async def _create_aqua_link_from_db_work(callback: CallbackQuery, mail_id: int) 
             subject=subj_mail,
             from_name=(getattr(mail, "from_name", "") or ""),
             body_text=body_mail,
-            resolved_offer_id=getattr(mail, "resolved_offer_id", None),
+            resolved_offer_id=resolved_id,
             mail_ad_url=(getattr(mail, "ad_url", "") or "").strip() or None,
             inbox_email=inbox_email,
-            mailing_bound=bool(getattr(mail, "mailing_bound", False)),
+            mailing_bound=mailing_bound,
         )
 
         if not url:
@@ -1886,6 +1915,13 @@ async def _create_aqua_link_work(callback: CallbackQuery, acc_id: int, uid: str,
 
         subj_pre = (getattr(mail_pre, "subject", "") or meta.get("subject") or "").strip()
         body_pre = (getattr(mail_pre, "body", "") or "").strip() if mail_pre else ""
+        resolved_id, mailing_bound = await _aqua_resolve_pins_for_mail(
+            session,
+            user_id=int(owner_user_id),
+            subject=subj_pre,
+            resolved_offer_id=getattr(mail_pre, "resolved_offer_id", None) if mail_pre else None,
+            mailing_bound=bool(getattr(mail_pre, "mailing_bound", False)) if mail_pre else False,
+        )
         offer, url = await resolve_offer_for_aqua_link(
             session,
             user_id=int(owner_user_id),
@@ -1893,10 +1929,10 @@ async def _create_aqua_link_work(callback: CallbackQuery, acc_id: int, uid: str,
             subject=subj_pre,
             from_name=(getattr(mail_pre, "from_name", "") or meta.get("from_name") or "").strip(),
             body_text=body_pre,
-            resolved_offer_id=getattr(mail_pre, "resolved_offer_id", None) if mail_pre else None,
+            resolved_offer_id=resolved_id,
             mail_ad_url=(getattr(mail_pre, "ad_url", "") or "").strip() if mail_pre else None,
             inbox_email=inbox_email,
-            mailing_bound=bool(getattr(mail_pre, "mailing_bound", False)) if mail_pre else False,
+            mailing_bound=mailing_bound,
         )
 
         if not url:

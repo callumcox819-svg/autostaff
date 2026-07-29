@@ -7,6 +7,7 @@ from types import SimpleNamespace
 from services.offer_matching import (
     _pick_offer_by_subject_in_list,
     gag_link_title_from_mail,
+    incoming_subject_binds_offer,
     offer_display_title,
     product_title_from_subject,
     subject_match_score,
@@ -102,6 +103,24 @@ class OfferSubjectMatchTests(unittest.TestCase):
         )
         hit = _pick_offer_by_subject_in_list([sofa, tramp], "Re: Trampoline")
         self.assertIs(hit, tramp)
+
+    def test_incoming_subject_binds_rejects_unrelated_lot(self):
+        book = SimpleNamespace(
+            title="Neu erschienen: Tödlicher Rheinfall | Gabriela Kasperski",
+            raw_json=None,
+        )
+        desk = SimpleNamespace(
+            title="Zeichentisch höhenverstellbar weiss Metall Gestell verstellbar",
+            raw_json=None,
+        )
+        subj = "AW: Kaufinteresse: Zeichentisch höhenverstellbar weiss Metall Gestell verstellb"
+        self.assertFalse(incoming_subject_binds_offer(subj, book))
+        self.assertTrue(incoming_subject_binds_offer(subj, desk))
+
+    def test_gag_link_title_uses_subject_when_offer_mismatch(self):
+        book = SimpleNamespace(title="Tödlicher Rheinfall", raw_json=None)
+        subj = "AW: Kaufinteresse: Zeichentisch höhenverstellbar"
+        self.assertIn("Zeichentisch", gag_link_title_from_mail(subj, book))
 
 
 if __name__ == "__main__":

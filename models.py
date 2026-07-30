@@ -384,6 +384,7 @@ class IncomingMail(Base):
     photo_url = Column(Text, nullable=True)
     service_label = Column(String(64), nullable=True)
     mailing_bound = Column(Boolean, default=False, nullable=False, server_default="false")
+    outgoing_mail_subject = Column(String(500), nullable=True)
 
     resolved_offer_id = Column(ForeignKey("offers.id", ondelete="SET NULL"), nullable=True, index=True)
     resolved_offer_email_id = Column(ForeignKey("offer_emails.id", ondelete="SET NULL"), nullable=True, index=True)

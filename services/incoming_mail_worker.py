@@ -1212,7 +1212,10 @@ async def build_mail_card_from_mail(
         inbox_label=inbox_label,
         from_name=str(getattr(mail, "from_name", "") or ""),
         from_email=str(getattr(mail, "from_email", "") or ""),
-        subject=str(getattr(mail, "subject", "") or ""),
+        subject=(
+            (getattr(mail, "outgoing_mail_subject", "") or "").strip()
+            or str(getattr(mail, "subject", "") or "")
+        ),
         body=body_full,
         offer_id=oid or getattr(mail, "resolved_offer_id", None),
         link_id=link_id,
@@ -1434,6 +1437,7 @@ async def _process_mails_for_account_impl(
                     saved_offer_price = ""
                     saved_photo_url = ""
                     saved_service_label = ""
+                    saved_outgoing_mail_subject = ""
                     mailing_bound_flag = False
                     try:
                         from services.incoming_lead_resolve import resolve_offer_for_incoming_lead
@@ -1472,6 +1476,9 @@ async def _process_mails_for_account_impl(
                         saved_offer_price = (lead_snap.get("offer_price") or "").strip()
                         saved_photo_url = (lead_snap.get("photo_url") or "").strip()
                         saved_service_label = (lead_snap.get("service_label") or "").strip()
+                        saved_outgoing_mail_subject = (
+                            lead_snap.get("outgoing_mail_subject") or ""
+                        ).strip()
                         if saved_product_title:
                             existing.product_title = saved_product_title
                         if saved_offer_price:
@@ -1480,6 +1487,8 @@ async def _process_mails_for_account_impl(
                             existing.photo_url = saved_photo_url
                         if saved_service_label:
                             existing.service_label = saved_service_label[:64]
+                        if saved_outgoing_mail_subject:
+                            existing.outgoing_mail_subject = saved_outgoing_mail_subject[:500]
                         await _db_commit_retry(session)
                     except Exception:
                         logger.exception(
@@ -1730,12 +1739,13 @@ async def _process_mails_for_account_impl(
                         mail_db_id,
                     )
 
+            card_subject = (saved_outgoing_mail_subject or subject or "").strip()
             chunks = render_mail_text_chunks(
                 account_email=account_email,
                 inbox_label=inbox_label,
                 from_name=from_name,
                 from_email=from_email,
-                subject=subject,
+                subject=card_subject,
                 body=body,
                 offer_id=offer_id,
                 link_id=link_id,

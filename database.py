@@ -206,6 +206,11 @@ async def _ensure_incoming_mail_product_title_column() -> None:
                 "NOT NULL DEFAULT FALSE"
             )
         )
+        await conn.execute(
+            text(
+                "ALTER TABLE incoming_mails ADD COLUMN IF NOT EXISTS outgoing_mail_subject VARCHAR(500)"
+            )
+        )
 
 
 async def _ensure_mailing_send_log_table() -> None:

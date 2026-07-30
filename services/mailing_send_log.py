@@ -33,7 +33,9 @@ async def record_mailing_send(
     offer_email_id: int | None = None,
 ) -> None:
     """Записать: этому email ушло письмо по конкретному offer_id."""
-    rcpt = _canon_recipient(recipient_email)
+    from services.offer_storage import normalize_incoming_seller_email
+
+    rcpt = normalize_incoming_seller_email(recipient_email) or _canon_recipient(recipient_email)
     if not rcpt or not int(offer_id or 0):
         return
     row = MailingSendLog(
@@ -115,6 +117,65 @@ async def list_offers_from_mailing_log(
         if len(out) >= int(limit):
             break
     return out
+
+
+async def resolve_inbound_from_send_log(
+    session,
+    *,
+    user_id: int,
+    contact_email: str,
+    inbox_email: str = "",
+    pinned_offer_id: int | None = None,
+) -> tuple[Offer | None, str, str, str]:
+    """
+    Входящее → лот и тема исходящего письма (/send), без разбора Re:.
+    Returns: (offer, listing_url, outgoing_mail_subject, matched_by)
+    """
+    rows = await _mailing_log_rows_for_recipient(session, int(user_id), contact_email, limit=400)
+    inbox = (inbox_email or "").strip().lower()
+
+    def _pick(log: MailingSendLog, off: Offer) -> tuple[Offer | None, str, str, str]:
+        link = (offer_effective_link(off) or "").strip()
+        if not link:
+            return None, "", "", ""
+        out_subj = (log.mail_subject or "").strip()
+        return off, link, out_subj, "mailing_send_log"
+
+    if pinned_offer_id and int(pinned_offer_id or 0):
+        pid = int(pinned_offer_id)
+        for log, off in rows:
+            if int(off.id) != pid:
+                continue
+            hit = _pick(log, off)
+            if hit[0]:
+                return hit[0], hit[1], hit[2], "mailing_send_log_pinned"
+        from services.offer_matching import _load_offer
+
+        off = await _load_offer(session, user_id=int(user_id), offer_id=pid)
+        if off:
+            link = (offer_effective_link(off) or "").strip()
+            if link:
+                for log, off2 in rows:
+                    if int(off2.id) == pid:
+                        return off, link, (log.mail_subject or "").strip(), "mailing_send_log_pinned"
+                return off, link, "", "mailing_send_log_pinned"
+
+    if inbox:
+        for log, off in rows:
+            sent_from = (log.from_account_email or "").strip().lower()
+            if sent_from and sent_from != inbox:
+                continue
+            hit = _pick(log, off)
+            if hit[0]:
+                return hit[0], hit[1], hit[2], hit[3]
+
+    if rows:
+        log, off = rows[0]
+        hit = _pick(log, off)
+        if hit[0]:
+            return hit[0], hit[1], hit[2], hit[3]
+
+    return None, "", "", ""
 
 
 async def find_latest_mailed_offer_for_recipient(

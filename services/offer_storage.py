@@ -336,6 +336,7 @@ async def find_offer_by_product_title_in_subject(
     Один однозначный match или лучший score среди кандидатов.
     """
     from services.offer_matching import (
+        _offer_title_matches_needle,
         _pick_offer_by_subject_in_list,
         _pick_best_linked_by_subject,
         incoming_subject_binds_offer,
@@ -349,7 +350,7 @@ async def find_offer_by_product_title_in_subject(
         return None
 
     needle = product_title_from_subject(subj).strip().lower()
-    if len(needle) < 5:
+    if len(needle) < 4:
         return None
 
     scope: list[Offer] | None = None
@@ -388,14 +389,9 @@ async def find_offer_by_product_title_in_subject(
         title = (offer_effective_title(off) or "").strip().lower()
         if not title or len(title) < 4:
             continue
-        if title == needle:
+        if _offer_title_matches_needle(needle, title):
             hits.append(off)
             continue
-        if len(needle) >= 8 and needle in title:
-            hits.append(off)
-            continue
-        if len(title) >= 8 and title in needle:
-            hits.append(off)
 
     if not hits:
         return None

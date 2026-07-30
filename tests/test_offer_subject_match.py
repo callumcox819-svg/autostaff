@@ -61,6 +61,18 @@ class OfferSubjectMatchTests(unittest.TestCase):
         subj = "Re: Trampoline"
         self.assertEqual(offer_display_title(subj, tramp), "Trampoline")
 
+    def test_product_title_aw_ist_lampe(self):
+        self.assertEqual(
+            product_title_from_subject("Aw: Ist Lampe noch zu haben?"),
+            "Lampe",
+        )
+
+    def test_title_matches_short_needle_in_long_title(self):
+        from services.offer_matching import _offer_title_matches_needle
+
+        self.assertTrue(_offer_title_matches_needle("lampe", "Stehlampe schwarz"))
+        self.assertTrue(_offer_title_matches_needle("Lampe", "Lampe"))
+
     def test_product_title_anfrage_prefix(self):
         self.assertEqual(
             product_title_from_subject("Aw: Anfrage: ProLight Design Hängeleuchte"),

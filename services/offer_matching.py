@@ -114,6 +114,20 @@ def gag_link_title_from_mail(subject: str, offer: Offer | None = None) -> str:
     return (subject or "").strip() or "OFFER"
 
 
+def _offer_title_matches_needle(needle: str, title: str) -> bool:
+    n = (needle or "").strip().lower()
+    t = (title or "").strip().lower()
+    if len(n) < 4 or len(t) < 4:
+        return False
+    if n == t:
+        return True
+    if n in t or t in n:
+        return True
+    if len(n) >= 4 and re.search(rf"(?<![a-z0-9]){re.escape(n)}(?![a-z0-9])", t):
+        return True
+    return False
+
+
 def subject_title_agrees(subject: str, offer: Offer) -> bool:
     """Poputka-style: Re: <товар> совпадает с названием лота (не только год/стоп-слова)."""
     from services.offer_storage import offer_effective_title
@@ -129,9 +143,9 @@ def subject_title_agrees(subject: str, offer: Offer) -> bool:
         return False
     if needle == title:
         return True
-    if len(title) >= 8 and title in needle:
+    if _offer_title_matches_needle(needle, title):
         return True
-    if len(needle) >= 4 and needle in title:
+    if len(title) >= 8 and title in needle:
         return True
     mt = _meaningful_subject_tokens(needle)
     tt = _meaningful_subject_tokens(title)
@@ -749,7 +763,7 @@ def _pick_offer_by_subject_in_list(offers: list[Offer], subject: str) -> Offer |
         if not offer_effective_link(off):
             continue
         tl = title.lower()
-        if nl == tl or (len(tl) >= 8 and tl in nl) or (len(nl) >= 4 and nl in tl):
+        if _offer_title_matches_needle(needle, title):
             if len(title) > best_len:
                 best = off
                 best_len = len(title)

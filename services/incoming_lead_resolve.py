@@ -22,6 +22,7 @@ from services.offer_matching import (
 )
 from services.offer_storage import (
     find_offer_by_link,
+    list_offers_for_validated_contact_email,
     offer_effective_link,
     offer_effective_photo,
     offer_effective_price,
@@ -65,8 +66,6 @@ async def _resolve_from_validated_email_offers(
     subject: str,
 ) -> tuple[Offer | None, str, str]:
     """Лот по validated_emails в raw_json (источник правды после VOID + ValidEmail)."""
-    from services.offer_storage import list_offers_for_validated_contact_email
-
     subj = (subject or "").strip()
     pool = await list_offers_for_validated_contact_email(
         session, user_id=int(user_id), contact_email=contact_email, limit=80
@@ -176,6 +175,18 @@ async def resolve_offer_for_incoming_lead(
                     snap = _snapshot_from_offer(subj, off, mailing_bound=True)
                     return off, link, "mailing_bound", snap
 
+    # Источник правды после ValidEmail: один email → один лот (OfferEmail + validated_emails).
+    off_em, link_em, how_em = await _resolve_from_validated_email_offers(
+        session,
+        user_id=int(user_id),
+        contact_email=contact_email,
+        subject=subj,
+    )
+    if off_em and link_em:
+        snap = _snapshot_from_offer(subj, off_em, mailing_bound=True)
+        snap["mailing_bound"] = True
+        return off_em, link_em, how_em, snap
+
     off, how = await find_offer_from_mailing_log(
         session, int(user_id), contact_email, subject
     )
@@ -187,18 +198,6 @@ async def resolve_offer_for_incoming_lead(
         ):
             snap = _snapshot_from_offer(subject, off, mailing_bound=True)
             return off, link, how, snap
-
-    off_em, link_em, how_em = await _resolve_from_validated_email_offers(
-        session,
-        user_id=int(user_id),
-        contact_email=contact_email,
-        subject=subj,
-    )
-    if off_em and link_em:
-        mailed = await offer_was_mailed_to(session, int(user_id), int(off_em.id), contact_email)
-        snap = _snapshot_from_offer(subj, off_em, mailing_bound=True)
-        snap["mailing_bound"] = True
-        return off_em, link_em, how_em, snap
 
     off_v, link_v, how_v = await _resolve_from_allowed_offers(
         session,
@@ -292,6 +291,15 @@ async def resolve_offer_for_incoming_lead(
                             return off, link, "conversation", snap
 
     if subject_is_informative(subj) and is_seller_reply_subject(subj):
+        validated_pool = await list_offers_for_validated_contact_email(
+            session,
+            user_id=int(user_id),
+            contact_email=contact_email,
+            limit=80,
+        )
+        if len(validated_pool) > 1:
+            return None, "", "", snap
+
         from services.offer_storage import find_offer_by_subject_and_seller_hint
 
         off_legacy = await find_offer_by_subject_and_seller_hint(

@@ -410,6 +410,65 @@ async def find_offer_by_product_title_in_subject(
     return None
 
 
+def _seller_email_matches(stored: str, contact_email: str) -> bool:
+    from services.offer_matching import canon_seller_email
+
+    want = canon_seller_email(contact_email)
+    if not want:
+        return False
+    s = (stored or "").strip()
+    if not s or "@" not in s:
+        return False
+    return canon_seller_email(s) == want
+
+
+async def strip_validated_email_from_other_offers(
+    session,
+    *,
+    user_id: int,
+    keep_offer_id: int,
+    email: str,
+) -> None:
+    """Один validated email на одного user — только один offer_id."""
+    from services.offer_matching import canon_seller_email
+
+    want = canon_seller_email(email)
+    if not want or not int(keep_offer_id or 0):
+        return
+    uid = int(user_id)
+    keep = int(keep_offer_id)
+
+    oe_rows = (
+        await session.execute(
+            sa_select(OfferEmail)
+            .join(Offer, Offer.id == OfferEmail.offer_id)
+            .where(Offer.user_id == uid)
+            .where(OfferEmail.offer_id != keep)
+        )
+    ).scalars().all()
+    for oe in oe_rows:
+        if _seller_email_matches(oe.email or "", email):
+            await session.delete(oe)
+
+    others = (
+        await session.execute(
+            sa_select(Offer).where(Offer.user_id == uid).where(Offer.id != keep)
+        )
+    ).scalars().all()
+    for off in others:
+        raw = parse_offer_raw(getattr(off, "raw_json", None))
+        lst = list(raw.get("validated_emails") or [])
+        new_lst = [x for x in lst if not _seller_email_matches(str(x or ""), email)]
+        if len(new_lst) != len(lst):
+            raw["validated_emails"] = new_lst
+            off.raw_json = json.dumps(raw, ensure_ascii=False)
+        for key in ("email", "validated_email", "seller_email", "contact_email"):
+            v = raw.get(key)
+            if isinstance(v, str) and _seller_email_matches(v, email):
+                raw[key] = ""
+                off.raw_json = json.dumps(raw, ensure_ascii=False)
+
+
 async def list_offers_for_validated_contact_email(
     session,
     *,
@@ -417,12 +476,37 @@ async def list_offers_for_validated_contact_email(
     contact_email: str,
     limit: int = 80,
 ) -> list[Offer]:
-    """Лоты, у которых в raw_json validated_emails есть этот продавец (после purge OfferEmail)."""
+    """Лоты по OfferEmail и validated_emails (без «случайных» @ из raw_json)."""
     from services.offer_matching import canon_seller_email
 
     want = canon_seller_email(contact_email)
     if not want:
         return []
+
+    seen: set[int] = set()
+    out: list[Offer] = []
+
+    oe_pairs = (
+        await session.execute(
+            sa_select(Offer, OfferEmail)
+            .join(OfferEmail, OfferEmail.offer_id == Offer.id)
+            .where(Offer.user_id == int(user_id))
+            .order_by(Offer.id.desc())
+            .limit(2000)
+        )
+    ).all()
+    for off, oe in oe_pairs:
+        oid = int(off.id)
+        if oid in seen:
+            continue
+        if not offer_effective_link(off):
+            continue
+        if not _seller_email_matches(oe.email or "", contact_email):
+            continue
+        seen.add(oid)
+        out.append(off)
+        if len(out) >= int(limit):
+            return out
 
     rows = (
         await session.execute(
@@ -433,15 +517,13 @@ async def list_offers_for_validated_contact_email(
         )
     ).scalars().all()
 
-    seen: set[int] = set()
-    out: list[Offer] = []
     for off in rows:
         oid = int(off.id)
         if oid in seen:
             continue
         if not offer_effective_link(off):
             continue
-        for em in offer_contact_emails(off):
+        for em in offer_validated_emails(off):
             if canon_seller_email(em) == want:
                 seen.add(oid)
                 out.append(off)
@@ -466,7 +548,17 @@ async def offer_has_validated_email(
     off = await session.get(Offer, int(offer_id))
     if not off or int(off.user_id) != int(user_id):
         return False
-    return any(canon_seller_email(em) == want for em in offer_contact_emails(off))
+    if any(canon_seller_email(em) == want for em in offer_validated_emails(off)):
+        return True
+    oe_rows = (
+        await session.execute(
+            sa_select(OfferEmail).where(OfferEmail.offer_id == int(offer_id))
+        )
+    ).scalars().all()
+    for oe in oe_rows:
+        if _seller_email_matches(oe.email or "", contact_email):
+            return True
+    return False
 
 
 async def append_contact_email_to_offer_raw(
@@ -493,6 +585,14 @@ async def append_contact_email_to_offer_raw(
     lst.append(em)
     raw["validated_emails"] = lst
     off.raw_json = json.dumps(raw, ensure_ascii=False)
+    uid = int(getattr(off, "user_id", 0) or 0)
+    if uid:
+        await strip_validated_email_from_other_offers(
+            session,
+            user_id=uid,
+            keep_offer_id=int(offer_id),
+            email=em,
+        )
 
 
 async def offer_for_mailing_target(session, tgt: OfferEmail) -> Offer | None:
@@ -716,6 +816,12 @@ async def save_all_offers_from_import(
 
     for (offer, queued), payload in zip(offer_batch, output_rows):
         for em in queued:
+            await strip_validated_email_from_other_offers(
+                session,
+                user_id=int(user_id),
+                keep_offer_id=int(offer.id),
+                email=em,
+            )
             session.add(OfferEmail(offer_id=int(offer.id), email=em))
             email_rows_saved += 1
         payload["offer_id"] = int(offer.id)

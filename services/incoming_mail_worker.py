@@ -25,7 +25,6 @@ from database import Session
 from models import EmailAccount, User, ConversationLink, Offer, OfferEmail, IncomingMail
 from services.link_id import link_id_from_generated_url
 from services.user_settings import get_user_setting
-from services.offer_matching import resolve_offer_for_incoming as _resolve_offer_for_incoming
 
 logger = logging.getLogger(__name__)
 
@@ -1435,10 +1434,6 @@ async def _process_mails_for_account_impl(
                     mailing_bound_flag = False
                     try:
                         from services.incoming_lead_resolve import resolve_offer_for_incoming_lead
-                        from services.offer_matching import (
-                            incoming_subject_binds_offer,
-                            subject_is_informative,
-                        )
 
                         offer_bound, listing_url, _match_how, lead_snap = (
                             await resolve_offer_for_incoming_lead(
@@ -1458,42 +1453,9 @@ async def _process_mails_for_account_impl(
                             resolved_offer_id = int(offer_bound.id)
                             resolved_offer_email_id = None
                         else:
-                            resolved_offer_id, resolved_offer_email_id = await _resolve_offer_for_incoming(
-                                session,
-                                user_id=user_id,
-                                from_email=from_email_clean,
-                                subject=subj,
-                                from_name=from_name or "",
-                                body_text=body_clean or "",
-                            )
+                            resolved_offer_id = None
+                            resolved_offer_email_id = None
                             listing_url = ""
-                            if resolved_offer_id:
-                                from services.incoming_lead_resolve import _snapshot_from_offer
-                                from services.mailing_send_log import offer_allowed_for_incoming_contact
-                                from services.offer_matching import _load_offer
-                                from services.offer_storage import offer_effective_link
-
-                                off_fb = await _load_offer(
-                                    session,
-                                    user_id=int(user_id),
-                                    offer_id=int(resolved_offer_id),
-                                )
-                                if off_fb and await offer_allowed_for_incoming_contact(
-                                    session,
-                                    int(user_id),
-                                    int(off_fb.id),
-                                    from_email_clean,
-                                    from_name=from_name or "",
-                                ):
-                                    if not subject_is_informative(subj) or incoming_subject_binds_offer(
-                                        subj, off_fb
-                                    ):
-                                        lead_snap = _snapshot_from_offer(
-                                            subj,
-                                            off_fb,
-                                            mailing_bound=bool(lead_snap.get("mailing_bound")),
-                                        )
-                                        listing_url = (offer_effective_link(off_fb) or "").strip()
 
                         existing.resolved_offer_id = resolved_offer_id
                         existing.resolved_offer_email_id = resolved_offer_email_id

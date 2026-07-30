@@ -16,6 +16,7 @@ from services.offer_matching import (
     incoming_subject_binds_offer,
     is_seller_reply_subject,
     offer_display_title,
+    product_title_from_subject,
     resolve_listing_for_incoming_mail,
     subject_is_informative,
     subject_title_agrees,
@@ -186,6 +187,22 @@ async def resolve_offer_for_incoming_lead(
         snap = _snapshot_from_offer(subj, off_em, mailing_bound=True)
         snap["mailing_bound"] = True
         return off_em, link_em, how_em, snap
+
+    if subject_is_informative(subj):
+        from services.offer_storage import find_offer_by_product_title_in_subject
+
+        off_needle = await find_offer_by_product_title_in_subject(
+            session,
+            user_id=int(user_id),
+            subject=subj,
+            contact_email=contact_email,
+        )
+        if off_needle and incoming_subject_binds_offer(subj, off_needle):
+            link = (offer_effective_link(off_needle) or "").strip()
+            if link:
+                snap = _snapshot_from_offer(subj, off_needle, mailing_bound=True)
+                snap["mailing_bound"] = True
+                return off_needle, link, "title_needle_subject", snap
 
     off, how = await find_offer_from_mailing_log(
         session, int(user_id), contact_email, subject
@@ -372,21 +389,29 @@ def _snapshot_from_offer(subject: str, offer: Offer, *, mailing_bound: bool) -> 
     link = (offer_effective_link(offer) or "").strip()
     price = (offer_effective_price(offer, default="") or "").strip()
     photo = (offer_effective_photo(offer) or "").strip()
-    from services.offer_storage import offer_effective_title
+    subj = (subject or "").strip()
+    informative = subject_is_informative(subj)
+    agrees = (not informative) or subject_title_agrees(subj, offer)
+    binds = (not informative) or incoming_subject_binds_offer(subj, offer)
 
-    bound = mailing_bound
-    if bound:
-        db_title = (offer_effective_title(offer) or "").strip()
-        product_title = db_title or offer_display_title(subject, offer, mailing_bound=True)
-    else:
-        if subject_is_informative(subject) and not subject_title_agrees(subject, offer):
-            if not incoming_subject_binds_offer(subject, offer):
-                bound = False
-        product_title = offer_display_title(subject, offer, mailing_bound=bound)
+    if informative and not agrees and not binds:
+        subj_t = product_title_from_subject(subj)
+        return {
+            "product_title": subj_t or subj,
+            "offer_price": "",
+            "photo_url": "",
+            "service_label": _service_label_from_link(link) or "",
+            "mailing_bound": False,
+        }
+
+    product_title = offer_display_title(subj, offer, mailing_bound=mailing_bound)
+    if informative and not agrees:
+        price = ""
+        photo = ""
     return {
         "product_title": product_title,
         "offer_price": price,
         "photo_url": photo,
         "service_label": _service_label_from_link(link) or "",
-        "mailing_bound": bool(mailing_bound),
+        "mailing_bound": bool(mailing_bound and agrees),
     }

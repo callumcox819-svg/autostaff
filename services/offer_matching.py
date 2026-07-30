@@ -147,8 +147,8 @@ def subject_title_agrees(subject: str, offer: Offer) -> bool:
         return True
     if len(title) >= 8 and title in needle:
         return True
-    mt = _meaningful_subject_tokens(needle)
-    tt = _meaningful_subject_tokens(title)
+    mt = _distinctive_listing_tokens(needle)
+    tt = _distinctive_listing_tokens(title)
     if mt and tt:
         overlap = sum(1 for t in mt if t in tt)
         if overlap >= 2:
@@ -271,6 +271,54 @@ _SUBJECT_STOP = frozenset(
     }
 )
 
+# Общие слова объявлений — не считаем «совпадением лота» (guter Zustand и т.п.).
+_GENERIC_LISTING_TOKENS = frozenset(
+    {
+        "guter",
+        "gute",
+        "gut",
+        "zustand",
+        "sehr",
+        "noch",
+        "neu",
+        "neuwertig",
+        "gebraucht",
+        "original",
+        "ovp",
+        "inkl",
+        "inklusive",
+        "beige",
+        "beiges",
+        "schwarz",
+        "weiss",
+        "weis",
+        "grau",
+        "rot",
+        "blau",
+        "grün",
+        "gruen",
+        "gross",
+        "groß",
+        "klein",
+        "set",
+        "top",
+        "super",
+        "wenig",
+        "kaum",
+        "absolut",
+        "inklusive",
+        "verkauf",
+        "verkauft",
+        "verfügbar",
+        "verfugbar",
+        "aktuell",
+        "da",
+        "haben",
+        "habe",
+        "nochmals",
+    }
+)
+
 _YEAR_TOKEN_RE = re.compile(r"^20\d{2}$")
 
 
@@ -282,6 +330,15 @@ def _subject_tokens(subj: str) -> list[str]:
 def _meaningful_subject_tokens(subj: str) -> list[str]:
     """Токены темы без Re:/годов — чтобы «2026» не склеивал разные лоты."""
     return [t for t in _subject_tokens(subj) if not _YEAR_TOKEN_RE.match(t)]
+
+
+def _distinctive_listing_tokens(subj: str) -> list[str]:
+    """Токены названия товара без «guter Zustand» и цветов."""
+    return [
+        t
+        for t in _meaningful_subject_tokens(subj)
+        if t not in _GENERIC_LISTING_TOKENS and len(t) >= 3
+    ]
 
 
 def score_offer(
@@ -568,7 +625,7 @@ def subject_match_score(subject: str, off: Offer) -> float:
     subj_l = subj.lower()
     title_l = title.lower()
     tok_hits = 0
-    for tok in _meaningful_subject_tokens(subj):
+    for tok in _distinctive_listing_tokens(subj):
         if tok in title_l:
             tok_hits += 1
             score += 24.0

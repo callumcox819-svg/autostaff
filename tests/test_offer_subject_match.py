@@ -161,6 +161,18 @@ class OfferSubjectMatchTests(unittest.TestCase):
         self.assertFalse(incoming_subject_binds_offer(subj, book))
         self.assertTrue(incoming_subject_binds_offer(subj, desk))
 
+    def test_subject_does_not_match_sofa_when_re_is_armchair(self):
+        sofa = SimpleNamespace(title="Beiges Leder-Sofa sehr guter Zustand", raw_json=None)
+        chair = SimpleNamespace(
+            title="Armlehnstuhl Taormina wood dunkel guter Zustand",
+            raw_json=None,
+        )
+        subj = "Re: Armlehnstuhl Taormina wood dunkel guter Zustand - noch im Verkauf?"
+        self.assertFalse(subject_title_agrees(subj, sofa))
+        self.assertFalse(incoming_subject_binds_offer(subj, sofa))
+        self.assertTrue(subject_title_agrees(subj, chair))
+        self.assertTrue(incoming_subject_binds_offer(subj, chair))
+
     def test_gag_link_title_uses_subject_when_offer_mismatch(self):
         book = SimpleNamespace(title="Tödlicher Rheinfall", raw_json=None)
         subj = "AW: Kaufinteresse: Zeichentisch höhenverstellbar"

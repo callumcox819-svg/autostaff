@@ -469,6 +469,16 @@ async def strip_validated_email_from_other_offers(
                 off.raw_json = json.dumps(raw, ensure_ascii=False)
 
 
+def normalize_incoming_seller_email(raw: str) -> str:
+    """from_email IMAP → канон для поиска validated_emails / журнала рассылки."""
+    from services.email_address import extract_email_address
+    from services.offer_matching import canon_seller_email
+
+    extracted = extract_email_address(raw)
+    base = extracted or (raw or "").strip().lower()
+    return canon_seller_email(base)
+
+
 async def list_offers_for_validated_contact_email(
     session,
     *,
@@ -476,10 +486,11 @@ async def list_offers_for_validated_contact_email(
     contact_email: str,
     limit: int = 80,
 ) -> list[Offer]:
-    """Лоты по OfferEmail и validated_emails (без «случайных» @ из raw_json)."""
+    """Лоты по OfferEmail, validated_emails и журналу рассылки на этот email."""
+    from services.mailing_send_log import list_offers_from_mailing_log
     from services.offer_matching import canon_seller_email
 
-    want = canon_seller_email(contact_email)
+    want = normalize_incoming_seller_email(contact_email)
     if not want:
         return []
 
@@ -528,6 +539,19 @@ async def list_offers_for_validated_contact_email(
                 seen.add(oid)
                 out.append(off)
                 break
+        if len(out) >= int(limit):
+            break
+
+    for off in await list_offers_from_mailing_log(
+        session, int(user_id), contact_email, limit=max(40, int(limit))
+    ):
+        oid = int(off.id)
+        if oid in seen:
+            continue
+        if not offer_effective_link(off):
+            continue
+        seen.add(oid)
+        out.append(off)
         if len(out) >= int(limit):
             break
     return out

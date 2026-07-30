@@ -679,6 +679,9 @@ def _imap_fetch_new_sync_raw(
             name, addr = parseaddr(from_raw)
             from_email = (addr or "").strip().lower()
             from_name = (name or "").strip()
+            from services.offer_storage import normalize_incoming_seller_email
+
+            from_email = normalize_incoming_seller_email(from_email) or from_email
 
             body = _extract_text_from_msg(msg)
 
@@ -1434,12 +1437,14 @@ async def _process_mails_for_account_impl(
                     mailing_bound_flag = False
                     try:
                         from services.incoming_lead_resolve import resolve_offer_for_incoming_lead
+                        from services.offer_storage import normalize_incoming_seller_email
 
+                        contact_email = normalize_incoming_seller_email(from_email_clean)
                         offer_bound, listing_url, _match_how, lead_snap = (
                             await resolve_offer_for_incoming_lead(
                                 session,
                                 user_id=int(user_id),
-                                contact_email=from_email_clean,
+                                contact_email=contact_email or from_email_clean,
                                 subject=subj,
                                 from_name=from_name or "",
                                 body_text=body_clean or "",
@@ -1700,18 +1705,18 @@ async def _process_mails_for_account_impl(
 
             photo_to_send: str | None = None
             photo_caption: str | None = None
-            if photo_url and mail_db_id:
+            if photo_url and mail_db_id and resolved_offer_id:
                 try:
                     async with _imap_db_session() as _s2:
-                        prior = (
-                            await _s2.execute(
-                                sa_select(func.count(IncomingMail.id))
-                                .where(IncomingMail.user_id == int(user_id))
-                                .where(IncomingMail.account_id == int(acc_id))
-                                .where(IncomingMail.from_email == str(from_email_clean).strip())
-                                .where(IncomingMail.id < int(mail_db_id))
-                            )
-                        ).scalar() or 0
+                        q = (
+                            sa_select(func.count(IncomingMail.id))
+                            .where(IncomingMail.user_id == int(user_id))
+                            .where(IncomingMail.account_id == int(acc_id))
+                            .where(IncomingMail.from_email == str(from_email_clean).strip())
+                            .where(IncomingMail.resolved_offer_id == int(resolved_offer_id))
+                            .where(IncomingMail.id < int(mail_db_id))
+                        )
+                        prior = (await _s2.execute(q)).scalar() or 0
                     if int(prior) == 0:
                         photo_to_send = photo_url
                         photo_caption = format_first_incoming_photo_caption(

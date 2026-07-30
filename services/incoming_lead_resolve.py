@@ -11,6 +11,7 @@ from services.mailing_send_log import (
 from services.offer_matching import offer_display_title
 from services.offer_storage import (
     list_offers_for_validated_contact_email,
+    normalize_incoming_seller_email,
     offer_effective_link,
     offer_effective_photo,
     offer_effective_price,
@@ -92,6 +93,9 @@ async def resolve_offer_for_incoming_lead(
     }
 
     subj = (subject or "").strip()
+    contact_email = normalize_incoming_seller_email(contact_email)
+    if not contact_email:
+        return None, "", "", snap
 
     if mailing_bound and resolved_offer_id:
         from services.offer_matching import _load_offer
@@ -119,9 +123,7 @@ async def resolve_offer_for_incoming_lead(
     )
     if off_log:
         link = (offer_effective_link(off_log) or "").strip()
-        if link and await offer_allowed_for_incoming_contact(
-            session, int(user_id), int(off_log.id), contact_email, from_name=from_name
-        ):
+        if link:
             snap = _snapshot_from_offer(subj, off_log, bind_by_seller_email=True)
             return off_log, link, "mailing_log_email", snap
 

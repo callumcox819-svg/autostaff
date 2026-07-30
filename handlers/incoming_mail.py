@@ -1722,6 +1722,9 @@ async def _create_aqua_link_from_db_work(callback: CallbackQuery, mail_id: int) 
         acc_id = int(mail.account_id)
         inbox_email = _canon_email(mail.account_email or "")
         contact_email = _canon_email(mail.from_email or "")
+        from services.offer_storage import normalize_incoming_seller_email
+
+        contact_email = normalize_incoming_seller_email(contact_email) or contact_email
 
         subj_mail = (getattr(mail, "subject", "") or "").strip()
         body_mail = (getattr(mail, "body", "") or "").strip()
@@ -1903,6 +1906,9 @@ async def cb_create_goo_link(callback: CallbackQuery):
 async def _create_aqua_link_work(callback: CallbackQuery, acc_id: int, uid: str, meta: dict) -> None:
     inbox_email = _canon_email((meta.get("account_email") or ""))
     contact_email = _canon_email((meta.get("from_email") or ""))
+    from services.offer_storage import normalize_incoming_seller_email
+
+    contact_email = normalize_incoming_seller_email(contact_email) or contact_email
 
     async with Session() as session:
         owner_user_id = await _get_acc_owner_user_id(session, acc_id)

@@ -117,6 +117,24 @@ async def list_offers_from_mailing_log(
     return out
 
 
+async def find_latest_mailed_offer_for_recipient(
+    session,
+    user_id: int,
+    contact_email: str,
+    *,
+    offer_ids: set[int] | None = None,
+) -> Offer | None:
+    """Последний лот из журнала рассылки на этот email (без матча по теме Re:)."""
+    rows = await _mailing_log_rows_for_recipient(session, int(user_id), contact_email, limit=400)
+    for _log, off in rows:
+        oid = int(off.id)
+        if offer_ids is not None and oid not in offer_ids:
+            continue
+        if (offer_effective_link(off) or "").strip():
+            return off
+    return None
+
+
 async def offer_was_mailed_to(
     session,
     user_id: int,

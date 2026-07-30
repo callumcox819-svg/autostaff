@@ -74,15 +74,9 @@ async def _resolve_from_validated_email_offers(
     if not pool:
         return None, "", ""
 
-    if len(pool) == 1:
-        only = pool[0]
-        link = (offer_effective_link(only) or "").strip()
-        if link:
-            return only, link, "validated_email"
-
     if subject_is_informative(subj):
         hit = _pick_offer_by_subject_in_list(pool, subj)
-        if hit:
+        if hit and incoming_subject_binds_offer(subj, hit):
             link = (offer_effective_link(hit) or "").strip()
             if link:
                 return hit, link, "validated_email_subject"
@@ -91,6 +85,13 @@ async def _resolve_from_validated_email_offers(
                 link = (offer_effective_link(cand) or "").strip()
                 if link:
                     return cand, link, "validated_email_subject"
+        return None, "", ""
+
+    if len(pool) == 1:
+        only = pool[0]
+        link = (offer_effective_link(only) or "").strip()
+        if link:
+            return only, link, "validated_email"
 
     return None, "", ""
 
@@ -126,8 +127,11 @@ async def _resolve_from_allowed_offers(
     if len(allowed) == 1:
         only = allowed[0]
         link = (offer_effective_link(only) or "").strip()
-        if link and (not subject_is_informative(subj) or incoming_subject_binds_offer(subj, only)):
-            return only, link, "validated_single"
+        if not link:
+            return None, "", ""
+        if subject_is_informative(subj) and not incoming_subject_binds_offer(subj, only):
+            return None, "", ""
+        return only, link, "validated_single"
 
     return None, "", ""
 

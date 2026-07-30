@@ -1738,12 +1738,30 @@ async def _process_mails_for_account_impl(
 
             photo_to_send: str | None = None
             photo_caption: str | None = None
-            if photo_url:
-                photo_to_send = photo_url
-                photo_caption = format_first_incoming_photo_caption(
-                    product_title=product_title,
-                    offer_price=offer_price,
-                )
+            if photo_url and mail_db_id:
+                try:
+                    async with _imap_db_session() as _s2:
+                        prior = (
+                            await _s2.execute(
+                                sa_select(func.count(IncomingMail.id))
+                                .where(IncomingMail.user_id == int(user_id))
+                                .where(IncomingMail.account_id == int(acc_id))
+                                .where(IncomingMail.from_email == str(from_email_clean).strip())
+                                .where(IncomingMail.id < int(mail_db_id))
+                            )
+                        ).scalar() or 0
+                    if int(prior) == 0:
+                        photo_to_send = photo_url
+                        photo_caption = format_first_incoming_photo_caption(
+                            product_title=product_title,
+                            offer_price=offer_price,
+                        )
+                except Exception:
+                    logger.exception(
+                        "first-incoming photo check failed from=%s mail_id=%s",
+                        from_email_clean,
+                        mail_db_id,
+                    )
 
             chunks = render_mail_text_chunks(
                 account_email=account_email,

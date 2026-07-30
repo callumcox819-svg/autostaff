@@ -806,13 +806,17 @@ async def find_offer_from_incoming_dialog(
         if not bool(getattr(mail, "mailing_bound", False)):
             continue
         prev_subj = _norm_subject(getattr(mail, "subject", "") or "").lower()
-        if norm_subj and prev_subj and norm_subj != prev_subj:
-            # другая тема — только если совпадает база (Re: …) или та же нить
+        needle_now = product_title_from_subject(subject or "").lower()
+        prev_needle = product_title_from_subject(getattr(mail, "subject", "") or "").lower()
+        if needle_now and prev_needle and len(needle_now) >= 5 and len(prev_needle) >= 5:
+            if needle_now != prev_needle and needle_now not in prev_needle and prev_needle not in needle_now:
+                continue
+        elif norm_subj and prev_subj and norm_subj != prev_subj:
             if not (norm_subj in prev_subj or prev_subj in norm_subj):
                 continue
         off = await _load_offer(session, user_id=int(user_id), offer_id=int(oid))
         if off and offer_effective_link(off):
-            if subject_is_informative(subject) and not subject_title_agrees(subject, off):
+            if subject_is_informative(subject) and not incoming_subject_binds_offer(subject, off):
                 continue
             return off, "incoming_dialog"
 

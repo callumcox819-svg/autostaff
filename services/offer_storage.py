@@ -329,6 +329,7 @@ async def find_offer_by_product_title_in_subject(
     *,
     user_id: int,
     subject: str,
+    contact_email: str = "",
 ) -> Offer | None:
     """
     Aw:/Re: + название в теме → лот по title в БД (без email/log).
@@ -351,14 +352,34 @@ async def find_offer_by_product_title_in_subject(
     if len(needle) < 5:
         return None
 
-    rows = (
-        await session.execute(
-            sa_select(Offer)
-            .where(Offer.user_id == int(user_id))
-            .order_by(Offer.id.desc())
-            .limit(8000)
+    scope: list[Offer] | None = None
+    if (contact_email or "").strip():
+        scope = await list_offers_for_validated_contact_email(
+            session,
+            user_id=int(user_id),
+            contact_email=contact_email,
+            limit=80,
         )
-    ).scalars().all()
+        if not scope:
+            scope = await list_offers_for_seller_contact_hints(
+                session,
+                user_id=int(user_id),
+                contact_email=contact_email,
+                from_name="",
+                limit=80,
+            )
+
+    if scope:
+        rows = scope
+    else:
+        rows = (
+            await session.execute(
+                sa_select(Offer)
+                .where(Offer.user_id == int(user_id))
+                .order_by(Offer.id.desc())
+                .limit(8000)
+            )
+        ).scalars().all()
 
     hits: list[Offer] = []
     for off in rows:
@@ -412,7 +433,7 @@ async def list_offers_for_validated_contact_email(
             sa_select(Offer)
             .where(Offer.user_id == int(user_id))
             .order_by(Offer.id.desc())
-            .limit(3000)
+            .limit(8000)
         )
     ).scalars().all()
 

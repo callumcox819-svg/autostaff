@@ -35,7 +35,7 @@ def _reply_bound(*, how: str, subject: str, mailed: bool = False, has_conv_ancho
         return True
     if has_conv_anchor and is_seller_reply_subject(subject):
         return True
-    if how in ("listing", "subject_only", "conversation", "validated", "legacy_subject", "catalog_subject", "title_needle") and is_seller_reply_subject(subject):
+    if how in ("listing", "subject_only", "conversation", "validated", "validated_email", "legacy_subject", "catalog_subject", "title_needle") and is_seller_reply_subject(subject):
         return True
     return False
 
@@ -55,6 +55,44 @@ def _mailing_log_match_ok(subject: str, off: Offer, how: str) -> bool:
     if not subject_is_informative(subject):
         return True
     return incoming_subject_binds_offer(subject, off)
+
+
+async def _resolve_from_validated_email_offers(
+    session,
+    *,
+    user_id: int,
+    contact_email: str,
+    subject: str,
+) -> tuple[Offer | None, str, str]:
+    """Лот по validated_emails в raw_json (источник правды после VOID + ValidEmail)."""
+    from services.offer_storage import list_offers_for_validated_contact_email
+
+    subj = (subject or "").strip()
+    pool = await list_offers_for_validated_contact_email(
+        session, user_id=int(user_id), contact_email=contact_email, limit=80
+    )
+    if not pool:
+        return None, "", ""
+
+    if len(pool) == 1:
+        only = pool[0]
+        link = (offer_effective_link(only) or "").strip()
+        if link:
+            return only, link, "validated_email"
+
+    if subject_is_informative(subj):
+        hit = _pick_offer_by_subject_in_list(pool, subj)
+        if hit:
+            link = (offer_effective_link(hit) or "").strip()
+            if link:
+                return hit, link, "validated_email_subject"
+        for cand in pool:
+            if incoming_subject_binds_offer(subj, cand):
+                link = (offer_effective_link(cand) or "").strip()
+                if link:
+                    return cand, link, "validated_email_subject"
+
+    return None, "", ""
 
 
 async def _resolve_from_allowed_offers(
@@ -121,29 +159,6 @@ async def resolve_offer_for_incoming_lead(
 
     subj = (subject or "").strip()
 
-    if subject_is_informative(subj) and is_seller_reply_subject(subj):
-        from services.offer_storage import find_offer_by_product_title_in_subject
-
-        off_needle = await find_offer_by_product_title_in_subject(
-            session, user_id=int(user_id), subject=subj
-        )
-        if off_needle:
-            link = (offer_effective_link(off_needle) or "").strip()
-            if link:
-                mailed = await offer_was_mailed_to(
-                    session, int(user_id), int(off_needle.id), contact_email
-                )
-                snap = _snapshot_from_offer(
-                    subj,
-                    off_needle,
-                    mailing_bound=_reply_bound(
-                        how="title_needle",
-                        subject=subj,
-                        mailed=mailed,
-                    ),
-                )
-                return off_needle, link, "title_needle", snap
-
     if mailing_bound and resolved_offer_id:
         from services.offer_matching import _load_offer
 
@@ -168,6 +183,18 @@ async def resolve_offer_for_incoming_lead(
         ):
             snap = _snapshot_from_offer(subject, off, mailing_bound=True)
             return off, link, how, snap
+
+    off_em, link_em, how_em = await _resolve_from_validated_email_offers(
+        session,
+        user_id=int(user_id),
+        contact_email=contact_email,
+        subject=subj,
+    )
+    if off_em and link_em:
+        mailed = await offer_was_mailed_to(session, int(user_id), int(off_em.id), contact_email)
+        snap = _snapshot_from_offer(subj, off_em, mailing_bound=True)
+        snap["mailing_bound"] = True
+        return off_em, link_em, how_em, snap
 
     off_v, link_v, how_v = await _resolve_from_allowed_offers(
         session,
@@ -311,6 +338,21 @@ async def resolve_offer_for_incoming_lead(
                 )
                 return off_cat, link, "catalog_subject", snap
 
+        from services.offer_storage import find_offer_by_product_title_in_subject
+
+        off_needle = await find_offer_by_product_title_in_subject(
+            session,
+            user_id=int(user_id),
+            subject=subj,
+            contact_email=contact_email,
+        )
+        if off_needle:
+            link = (offer_effective_link(off_needle) or "").strip()
+            if link:
+                snap = _snapshot_from_offer(subj, off_needle, mailing_bound=True)
+                snap["mailing_bound"] = True
+                return off_needle, link, "title_needle", snap
+
     return None, "", "", snap
 
 
@@ -318,14 +360,21 @@ def _snapshot_from_offer(subject: str, offer: Offer, *, mailing_bound: bool) -> 
     link = (offer_effective_link(offer) or "").strip()
     price = (offer_effective_price(offer, default="") or "").strip()
     photo = (offer_effective_photo(offer) or "").strip()
+    from services.offer_storage import offer_effective_title
+
     bound = mailing_bound
-    if subject_is_informative(subject) and not subject_title_agrees(subject, offer):
-        if not incoming_subject_binds_offer(subject, offer):
-            bound = False
+    if bound:
+        db_title = (offer_effective_title(offer) or "").strip()
+        product_title = db_title or offer_display_title(subject, offer, mailing_bound=True)
+    else:
+        if subject_is_informative(subject) and not subject_title_agrees(subject, offer):
+            if not incoming_subject_binds_offer(subject, offer):
+                bound = False
+        product_title = offer_display_title(subject, offer, mailing_bound=bound)
     return {
-        "product_title": offer_display_title(subject, offer, mailing_bound=bound),
+        "product_title": product_title,
         "offer_price": price,
         "photo_url": photo,
         "service_label": _service_label_from_link(link) or "",
-        "mailing_bound": bound,
+        "mailing_bound": bool(mailing_bound),
     }

@@ -1000,6 +1000,8 @@ def render_mail_text_chunks(
     lid = (link_id or "").strip()
     if lid:
         extra += f"<b>ID:</b> <code>{_e(lid)}</code>\n"
+    if offer_id:
+        extra += f"<b>Лот:</b> <code>{int(offer_id)}</code>\n"
     if service_label:
         extra += f"<b>Сервис:</b> {_service_html(service_label)}\n"
     if product_title:
@@ -1157,17 +1159,19 @@ async def mail_card_offer_meta(
     stored_offer_price: str | None = None,
     stored_photo_url: str | None = None,
     stored_service_label: str | None = None,
+    stored_outgoing_subject: str | None = None,
     mailing_bound: bool = False,
-) -> tuple[int | None, str | None, str | None, str | None, str | None]:
-    """Return offer_id, service_label, product_title, photo_url, offer_price."""
+) -> tuple[int | None, str | None, str | None, str | None, str | None, str | None]:
+    """Return offer_id, service_label, product_title, photo_url, offer_price, outgoing_subject."""
+    from services.incoming_lead_resolve import resolve_offer_for_incoming_lead
     from services.offer_storage import offer_effective_link, offer_effective_price, offer_effective_photo
 
-    offer_id = resolved_offer_id if mailing_bound else None
-    service_label = product_title = photo_url = offer_price = None
+    offer_id = int(resolved_offer_id) if resolved_offer_id else None
+    service_label = product_title = photo_url = offer_price = outgoing_subject = None
+    bound = bool(mailing_bound)
 
-    if not mailing_bound or not resolved_offer_id:
-        return None, None, None, None, None
-
+    if (stored_outgoing_subject or "").strip():
+        outgoing_subject = (stored_outgoing_subject or "").strip()
     if (stored_product_title or "").strip():
         product_title = (stored_product_title or "").strip()
     if (stored_offer_price or "").strip():
@@ -1178,19 +1182,47 @@ async def mail_card_offer_meta(
         service_label = (stored_service_label or "").strip()
 
     try:
-        off = await resolve_offer_for_mail_card(
-            session,
-            user_id=int(user_id),
-            from_email=from_email,
-            resolved_offer_id=resolved_offer_id,
-            ad_url=ad_url,
-            inbox_email=inbox_email,
-            subject=subject,
-            from_name=from_name,
-            body_text=body_text,
-            mailing_bound=True,
-        )
-        if off:
+        off = None
+        if bound and offer_id:
+            off = await resolve_offer_for_mail_card(
+                session,
+                user_id=int(user_id),
+                from_email=from_email,
+                resolved_offer_id=offer_id,
+                ad_url=ad_url,
+                inbox_email=inbox_email,
+                subject=subject,
+                from_name=from_name,
+                body_text=body_text,
+                mailing_bound=True,
+            )
+        if not off:
+            off, _url, _how, snap = await resolve_offer_for_incoming_lead(
+                session,
+                user_id=int(user_id),
+                contact_email=from_email,
+                subject=subject,
+                from_name=from_name,
+                body_text=body_text,
+                resolved_offer_id=resolved_offer_id,
+                mail_ad_url=ad_url,
+                inbox_email=inbox_email,
+                mailing_bound=mailing_bound,
+            )
+            if off and snap.get("mailing_bound"):
+                bound = True
+                offer_id = int(off.id)
+                if not product_title:
+                    product_title = (snap.get("product_title") or "").strip() or None
+                if not offer_price:
+                    offer_price = (snap.get("offer_price") or "").strip() or None
+                if not photo_url:
+                    photo_url = (snap.get("photo_url") or "").strip() or None
+                if not service_label:
+                    service_label = (snap.get("service_label") or "").strip() or None
+                if not outgoing_subject:
+                    outgoing_subject = (snap.get("outgoing_mail_subject") or "").strip() or None
+        if off and bound:
             offer_id = int(off.id)
             from services.offer_storage import offer_effective_title
 
@@ -1202,12 +1234,18 @@ async def mail_card_offer_meta(
                 photo_url = (offer_effective_photo(off) or "").strip() or None
             if not offer_price:
                 offer_price = (offer_effective_price(off, default="") or "").strip() or None
+            if not outgoing_subject:
+                from services.subject_offer import pick_mailing_subject
+
+                ot = (offer_effective_title(off) or "").strip()
+                if ot:
+                    outgoing_subject = pick_mailing_subject(ot)
     except Exception:
         logger.exception("mail_card_offer_meta failed")
 
-    if not offer_id:
-        return None, None, None, None, None
-    return offer_id, service_label, product_title, photo_url, offer_price
+    if not bound or not offer_id:
+        return None, None, None, None, None, None
+    return offer_id, service_label, product_title, photo_url, offer_price, outgoing_subject
 
 
 async def is_first_inbound_mail_for_seller_offer(
@@ -1252,7 +1290,7 @@ async def build_mail_card_from_mail(
         except Exception:
             inbox_label = None
 
-    oid, service_label, product_title, _photo, offer_price = await mail_card_offer_meta(
+    oid, service_label, product_title, _photo, offer_price, outgoing_subj = await mail_card_offer_meta(
         session,
         user_id=int(mail.user_id),
         from_email=str(getattr(mail, "from_email", "") or ""),
@@ -1266,6 +1304,7 @@ async def build_mail_card_from_mail(
         stored_offer_price=(getattr(mail, "offer_price", None) or "").strip() or None,
         stored_photo_url=(getattr(mail, "photo_url", None) or "").strip() or None,
         stored_service_label=(getattr(mail, "service_label", None) or "").strip() or None,
+        stored_outgoing_subject=(getattr(mail, "outgoing_mail_subject", None) or "").strip() or None,
         mailing_bound=bool(getattr(mail, "mailing_bound", False)),
     )
 
@@ -1280,28 +1319,28 @@ async def build_mail_card_from_mail(
     link_id = link_id_from_generated_url(generated_link)
     body_full = (getattr(mail, "body", None) or "").strip()
 
-    show_offer_block = bool(getattr(mail, "mailing_bound", False)) and bool(
-        getattr(mail, "resolved_offer_id", None)
-    )
+    show_offer_block = bool(oid)
     if show_offer_block:
         show_offer_block = await is_first_inbound_mail_for_seller_offer(
             session,
             user_id=int(mail.user_id),
             account_id=int(getattr(mail, "account_id", 0) or 0),
             from_email=str(getattr(mail, "from_email", "") or ""),
-            resolved_offer_id=int(mail.resolved_offer_id),
+            resolved_offer_id=int(oid),
             mail_id=int(mail.id),
         )
 
+    card_subject = (
+        (outgoing_subj or "").strip()
+        or (getattr(mail, "outgoing_mail_subject", "") or "").strip()
+        or str(getattr(mail, "subject", "") or "")
+    )
     chunks = render_mail_text_chunks(
         account_email=str(getattr(mail, "account_email", "") or ""),
         inbox_label=inbox_label,
         from_name=str(getattr(mail, "from_name", "") or ""),
         from_email=str(getattr(mail, "from_email", "") or ""),
-        subject=(
-            (getattr(mail, "outgoing_mail_subject", "") or "").strip()
-            or str(getattr(mail, "subject", "") or "")
-        ),
+        subject=card_subject,
         body=body_full,
         offer_id=oid or getattr(mail, "resolved_offer_id", None),
         link_id=link_id,
@@ -1819,9 +1858,17 @@ async def _process_mails_for_account_impl(
             product_title = None
             photo_url = None
             offer_price: str | None = None
+            card_outgoing_subject = ""
             try:
                 async with _imap_db_session() as _s:
-                    offer_id, service_label, product_title, photo_url, offer_price = await mail_card_offer_meta(
+                    (
+                        offer_id,
+                        service_label,
+                        product_title,
+                        photo_url,
+                        offer_price,
+                        card_outgoing_subject,
+                    ) = await mail_card_offer_meta(
                         _s,
                         user_id=int(user_id),
                         from_email=from_email_clean,
@@ -1835,15 +1882,19 @@ async def _process_mails_for_account_impl(
                         stored_offer_price=saved_offer_price or None,
                         stored_photo_url=saved_photo_url or None,
                         stored_service_label=saved_service_label or None,
+                        stored_outgoing_subject=saved_outgoing_mail_subject or None,
                         mailing_bound=mailing_bound_flag,
                     )
+                if offer_id and service_label:
+                    mailing_bound_flag = True
+                    resolved_offer_id = int(offer_id)
             except Exception:
                 logger.exception("Failed to load Offer meta for incoming mail: from=%s", from_email_clean)
 
             photo_to_send: str | None = None
             photo_caption: str | None = None
             show_offer_on_card = False
-            if mail_db_id and resolved_offer_id and mailing_bound_flag:
+            if mail_db_id and offer_id:
                 try:
                     async with _imap_db_session() as _s2:
                         show_offer_on_card = await is_first_inbound_mail_for_seller_offer(
@@ -1851,7 +1902,7 @@ async def _process_mails_for_account_impl(
                             user_id=int(user_id),
                             account_id=int(acc_id),
                             from_email=str(from_email_clean).strip(),
-                            resolved_offer_id=int(resolved_offer_id),
+                            resolved_offer_id=int(offer_id),
                             mail_id=int(mail_db_id),
                         )
                     if show_offer_on_card and photo_url:
@@ -1867,7 +1918,9 @@ async def _process_mails_for_account_impl(
                         mail_db_id,
                     )
 
-            card_subject = (saved_outgoing_mail_subject or subject or "").strip()
+            card_subject = (
+                (card_outgoing_subject or saved_outgoing_mail_subject or subject or "").strip()
+            )
             chunks = render_mail_text_chunks(
                 account_email=account_email,
                 inbox_label=inbox_label,

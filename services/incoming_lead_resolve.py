@@ -20,7 +20,6 @@ from services.offer_storage import (
     offer_effective_photo,
     offer_effective_price,
     offer_effective_title,
-    offer_has_validated_email,
 )
 
 
@@ -137,13 +136,6 @@ async def resolve_offer_from_validated_seller_email(
             continue
         if not (offer_effective_link(off) or "").strip():
             continue
-        if not await offer_has_validated_email(
-            session,
-            user_id=int(user_id),
-            offer_id=oid,
-            contact_email=contact_email,
-        ):
-            continue
         seen.add(oid)
         candidates.append(off)
 
@@ -233,6 +225,14 @@ async def resolve_offer_for_incoming_lead(
             inbox_email=(inbox_email or "").strip(),
             pinned_offer_id=pinned,
         )
+        if not off:
+            off, link, out_subj, how = await resolve_inbound_from_send_log(
+                session,
+                user_id=int(user_id),
+                contact_email=contact_email,
+                inbox_email="",
+                pinned_offer_id=pinned,
+            )
 
     if not off:
         off, link, how = await resolve_offer_from_validated_seller_email(

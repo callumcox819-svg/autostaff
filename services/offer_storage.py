@@ -652,40 +652,106 @@ async def list_offers_for_validated_contact_email(
     return out
 
 
+async def _offers_from_offer_email_rows(
+    session,
+    *,
+    user_id: int,
+    contact_email: str,
+) -> list[Offer]:
+    """Лоты с строкой OfferEmail (как после валидации) — без скана 25k."""
+    want = normalize_incoming_seller_email(contact_email)
+    if not want:
+        return []
+    raw_in = (contact_email or "").strip().lower()
+    email_conds = [func.lower(OfferEmail.email) == want]
+    if raw_in and raw_in != want:
+        email_conds.append(func.lower(OfferEmail.email) == raw_in)
+    local_want = want.split("@", 1)[0] if "@" in want else ""
+    domain_want = want.split("@", 1)[1] if "@" in want else ""
+    if domain_want in ("gmail.com", "googlemail.com") and local_want:
+        email_conds.append(
+            func.replace(func.lower(OfferEmail.email), ".", "") == want.replace(".", "")
+        )
+
+    rows = (
+        await session.execute(
+            sa_select(Offer)
+            .join(OfferEmail, OfferEmail.offer_id == Offer.id)
+            .where(Offer.user_id == int(user_id))
+            .where(or_(*email_conds))
+            .order_by(Offer.id.desc())
+        )
+    ).scalars().all()
+    seen: set[int] = set()
+    out: list[Offer] = []
+    for off in rows:
+        oid = int(off.id)
+        if oid in seen:
+            continue
+        seen.add(oid)
+        out.append(off)
+    return out
+
+
 async def find_single_offer_for_seller_contact_email(
     session,
     *,
     user_id: int,
     contact_email: str,
 ) -> Offer | None:
-    """Один лот на validated email продавца (для IMAP / кнопок)."""
+    """Один лот на validated email продавца (OfferEmail → send log, без min(id))."""
+    from services.mailing_send_log import offer_was_mailed_to, resolve_inbound_from_send_log
+
+    table_hits = await _offers_from_offer_email_rows(
+        session, user_id=int(user_id), contact_email=contact_email
+    )
+    if len(table_hits) == 1:
+        return table_hits[0]
+
     hits = await list_offers_for_validated_contact_email(
         session,
         user_id=int(user_id),
         contact_email=contact_email,
         limit=12,
     )
-    if not hits:
-        return None
+    pool = table_hits if table_hits else hits
+    if not pool:
+        off, _, _, _ = await resolve_inbound_from_send_log(
+            session, user_id=int(user_id), contact_email=contact_email
+        )
+        return off
 
     def _prefer_linked(cands: list[Offer]) -> list[Offer]:
         linked = [o for o in cands if (offer_effective_link(o) or "").strip()]
         return linked or cands
 
-    hits = _prefer_linked(hits)
-    if len(hits) == 1:
-        return hits[0]
-    want = normalize_incoming_seller_email(contact_email)
-    from services.mailing_send_log import offer_was_mailed_to
+    pool = _prefer_linked(pool)
+    if len(pool) == 1:
+        return pool[0]
 
+    want = normalize_incoming_seller_email(contact_email)
     mailed = [
         off
-        for off in hits
+        for off in pool
         if await offer_was_mailed_to(session, int(user_id), int(off.id), want or contact_email)
     ]
     if len(mailed) == 1:
         return mailed[0]
-    return min(hits, key=lambda o: int(o.id))
+
+    off, _, _, _ = await resolve_inbound_from_send_log(
+        session, user_id=int(user_id), contact_email=contact_email
+    )
+    if off:
+        pool_ids = {int(o.id) for o in pool}
+        if int(off.id) in pool_ids:
+            return off
+        return off
+
+    if len(table_hits) == 1:
+        return table_hits[0]
+    if len(mailed) == 1:
+        return mailed[0]
+    return None
 
 
 async def offer_has_validated_email(

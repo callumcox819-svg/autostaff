@@ -1210,6 +1210,31 @@ async def mail_card_offer_meta(
     return offer_id, service_label, product_title, photo_url, offer_price
 
 
+async def is_first_inbound_mail_for_seller_offer(
+    session,
+    *,
+    user_id: int,
+    account_id: int,
+    from_email: str,
+    resolved_offer_id: int,
+    mail_id: int,
+) -> bool:
+    """Первое входящее от продавца по этому закреплённому лоту (фото/товар/цена только тогда)."""
+    if not int(resolved_offer_id or 0) or not int(mail_id or 0):
+        return False
+    prior = (
+        await session.execute(
+            sa_select(func.count(IncomingMail.id))
+            .where(IncomingMail.user_id == int(user_id))
+            .where(IncomingMail.account_id == int(account_id))
+            .where(IncomingMail.from_email == str(from_email or "").strip())
+            .where(IncomingMail.resolved_offer_id == int(resolved_offer_id))
+            .where(IncomingMail.id < int(mail_id))
+        )
+    ).scalar() or 0
+    return int(prior) == 0
+
+
 async def build_mail_card_from_mail(
     session,
     mail: IncomingMail,
@@ -1255,6 +1280,19 @@ async def build_mail_card_from_mail(
     link_id = link_id_from_generated_url(generated_link)
     body_full = (getattr(mail, "body", None) or "").strip()
 
+    show_offer_block = bool(getattr(mail, "mailing_bound", False)) and bool(
+        getattr(mail, "resolved_offer_id", None)
+    )
+    if show_offer_block:
+        show_offer_block = await is_first_inbound_mail_for_seller_offer(
+            session,
+            user_id=int(mail.user_id),
+            account_id=int(getattr(mail, "account_id", 0) or 0),
+            from_email=str(getattr(mail, "from_email", "") or ""),
+            resolved_offer_id=int(mail.resolved_offer_id),
+            mail_id=int(mail.id),
+        )
+
     chunks = render_mail_text_chunks(
         account_email=str(getattr(mail, "account_email", "") or ""),
         inbox_label=inbox_label,
@@ -1268,8 +1306,8 @@ async def build_mail_card_from_mail(
         offer_id=oid or getattr(mail, "resolved_offer_id", None),
         link_id=link_id,
         service_label=service_label,
-        product_title=product_title,
-        offer_price=offer_price,
+        product_title=product_title if show_offer_block else None,
+        offer_price=offer_price if show_offer_block else None,
         translation=translation,
     )
     text = (chunks[0] if chunks else "—")[:4096]
@@ -1777,19 +1815,19 @@ async def _process_mails_for_account_impl(
 
             photo_to_send: str | None = None
             photo_caption: str | None = None
-            if photo_url and mail_db_id and resolved_offer_id and mailing_bound_flag:
+            show_offer_on_card = False
+            if mail_db_id and resolved_offer_id and mailing_bound_flag:
                 try:
                     async with _imap_db_session() as _s2:
-                        q = (
-                            sa_select(func.count(IncomingMail.id))
-                            .where(IncomingMail.user_id == int(user_id))
-                            .where(IncomingMail.account_id == int(acc_id))
-                            .where(IncomingMail.from_email == str(from_email_clean).strip())
-                            .where(IncomingMail.resolved_offer_id == int(resolved_offer_id))
-                            .where(IncomingMail.id < int(mail_db_id))
+                        show_offer_on_card = await is_first_inbound_mail_for_seller_offer(
+                            _s2,
+                            user_id=int(user_id),
+                            account_id=int(acc_id),
+                            from_email=str(from_email_clean).strip(),
+                            resolved_offer_id=int(resolved_offer_id),
+                            mail_id=int(mail_db_id),
                         )
-                        prior = (await _s2.execute(q)).scalar() or 0
-                    if int(prior) == 0:
+                    if show_offer_on_card and photo_url:
                         photo_to_send = photo_url
                         photo_caption = format_first_incoming_photo_caption(
                             product_title=product_title,
@@ -1813,8 +1851,8 @@ async def _process_mails_for_account_impl(
                 offer_id=offer_id,
                 link_id=link_id,
                 service_label=service_label,
-                product_title=product_title,
-                offer_price=offer_price,
+                product_title=product_title if show_offer_on_card else None,
+                offer_price=offer_price if show_offer_on_card else None,
             )
             if smtp_block_bounce and chunks:
                 from services.smtp_block_control import smtp_removed_from_mailing_notice_html

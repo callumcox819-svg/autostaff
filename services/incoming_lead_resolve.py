@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from models import Offer
 from services.mailing_send_log import (
+    find_offer_from_mailing_log,
     has_mailing_send_for_contact,
     resolve_inbound_from_send_log,
 )
@@ -11,6 +12,8 @@ from services.offer_matching import (
     _load_conversation_link,
     _load_offer,
     find_offer_from_incoming_dialog,
+    incoming_subject_binds_offer,
+    subject_is_informative,
 )
 from services.offer_storage import (
     find_single_offer_for_seller_contact_email,
@@ -111,17 +114,22 @@ async def resolve_offer_from_validated_seller_email(
     *,
     user_id: int,
     contact_email: str,
+    subject: str = "",
     pinned_offer_id: int | None = None,
 ) -> tuple[Offer | None, str, str]:
-    """Лот по validated_emails / OfferEmail — приоритет над темой Re:."""
+    """Лот по OfferEmail / validated_emails (+ полная тема OFFER при нескольких)."""
+    from services.offer_matching import incoming_subject_binds_offer, subject_is_informative
+
     contact_email = normalize_incoming_seller_email(contact_email)
     if not contact_email:
         return None, "", ""
 
+    subj = (subject or "").strip()
+    subj_strong = subject_is_informative(subj)
     pid = int(pinned_offer_id) if pinned_offer_id else None
-    if pid:
+    if pid and subj_strong:
         pinned_off = await _offer_from_id(session, user_id=int(user_id), offer_id=pid)
-        if pinned_off:
+        if pinned_off and incoming_subject_binds_offer(subj, pinned_off):
             return (
                 pinned_off,
                 (offer_effective_link(pinned_off) or "").strip(),
@@ -132,6 +140,7 @@ async def resolve_offer_from_validated_seller_email(
         session,
         user_id=int(user_id),
         contact_email=contact_email,
+        subject=subj,
     )
     if not off:
         return None, "", ""
@@ -165,6 +174,7 @@ async def resolve_offer_for_incoming_lead(
         return None, "", "", empty_snap
 
     pinned: int | None = int(resolved_offer_id) if resolved_offer_id else None
+    conv_pin: int | None = None
     pinned_subj = ""
     if (inbox_email or "").strip() and contact_email:
         conv = await _load_conversation_link(
@@ -175,11 +185,26 @@ async def resolve_offer_for_incoming_lead(
         )
         if conv:
             if getattr(conv, "pinned_offer_id", None):
-                pinned = int(conv.pinned_offer_id)
+                conv_pin = int(conv.pinned_offer_id)
             pinned_subj = (getattr(conv, "pinned_outgoing_subject", None) or "").strip()
 
+    subj_strong = subject_is_informative(subject or "")
+
+    async def _offer_if_pin_ok(offer_id: int | None) -> Offer | None:
+        if not offer_id:
+            return None
+        o = await _offer_from_id(session, user_id=int(user_id), offer_id=int(offer_id))
+        if not o:
+            return None
+        if subj_strong and not incoming_subject_binds_offer(subject or "", o):
+            return None
+        return o
+
     validated_hit = await find_single_offer_for_seller_contact_email(
-        session, user_id=int(user_id), contact_email=contact_email
+        session,
+        user_id=int(user_id),
+        contact_email=contact_email,
+        subject=subject or "",
     )
     has_send = await has_mailing_send_for_contact(session, int(user_id), contact_email)
 
@@ -187,19 +212,24 @@ async def resolve_offer_for_incoming_lead(
     link = ""
     how = ""
 
-    if pinned:
-        off = await _offer_from_id(session, user_id=int(user_id), offer_id=int(pinned))
+    off, link, how = await resolve_offer_from_validated_seller_email(
+        session,
+        user_id=int(user_id),
+        contact_email=contact_email,
+        subject=subject or "",
+        pinned_offer_id=pinned,
+    )
+
+    if not off and has_send and (subject or "").strip():
+        off, how = await find_offer_from_mailing_log(
+            session,
+            int(user_id),
+            contact_email,
+            subject or "",
+        )
         if off:
             link = (offer_effective_link(off) or "").strip()
-            how = "pinned_offer_id"
-
-    if not off:
-        off, link, how = await resolve_offer_from_validated_seller_email(
-            session,
-            user_id=int(user_id),
-            contact_email=contact_email,
-            pinned_offer_id=pinned,
-        )
+            how = how or "mailing_subject"
 
     if not off and has_send:
         off, link, _out_subj, how = await resolve_inbound_from_send_log(
@@ -208,6 +238,7 @@ async def resolve_offer_for_incoming_lead(
             contact_email=contact_email,
             inbox_email=(inbox_email or "").strip(),
             pinned_offer_id=pinned,
+            subject=subject or "",
         )
         if not off:
             off, link, _out_subj, how = await resolve_inbound_from_send_log(
@@ -216,6 +247,7 @@ async def resolve_offer_for_incoming_lead(
                 contact_email=contact_email,
                 inbox_email="",
                 pinned_offer_id=pinned,
+                subject=subject or "",
             )
 
     if not off:
@@ -230,11 +262,47 @@ async def resolve_offer_for_incoming_lead(
             link = (offer_effective_link(off) or "").strip()
             how = how or "incoming_dialog"
 
+    if not off:
+        for pin_id in (pinned, conv_pin):
+            o = await _offer_if_pin_ok(pin_id)
+            if o:
+                off = o
+                link = (offer_effective_link(o) or "").strip()
+                how = "pinned_offer_id"
+                break
+        if not off and not subj_strong:
+            for pin_id in (pinned, conv_pin):
+                o = await _offer_from_id(session, user_id=int(user_id), offer_id=int(pin_id or 0))
+                if o:
+                    off = o
+                    link = (offer_effective_link(o) or "").strip()
+                    how = "pinned_offer_id"
+                    break
+
     if not off and not validated_hit and not has_send:
         return None, "", "", empty_snap
 
     if off and not link:
         link = (offer_effective_link(off) or "").strip()
+
+    if (not off or not link) and (has_send or validated_hit) and (subject or "").strip():
+        from services.offer_matching import resolve_listing_for_incoming_mail
+
+        off2, link2 = await resolve_listing_for_incoming_mail(
+            session,
+            user_id=int(user_id),
+            from_email=contact_email,
+            subject=subject or "",
+            from_name=from_name or "",
+            body_text=body_text or "",
+            resolved_offer_id=pinned or (int(off.id) if off else None),
+            mail_ad_url=mail_ad_url,
+            inbox_email=(inbox_email or "").strip(),
+            mailed_only=True,
+        )
+        if off2 and link2:
+            off, link = off2, link2
+            how = how or "listing_mailed_only"
 
     if off:
         out_subj = await _resolve_outgoing_subject(

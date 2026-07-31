@@ -698,15 +698,39 @@ async def find_single_offer_for_seller_contact_email(
     *,
     user_id: int,
     contact_email: str,
+    subject: str = "",
 ) -> Offer | None:
-    """Один лот на validated email продавца (OfferEmail → send log, без min(id))."""
+    """Один лот на validated email; при нескольких — только по полной теме OFFER."""
     from services.mailing_send_log import offer_was_mailed_to, resolve_inbound_from_send_log
+    from services.offer_matching import (
+        _pick_offer_by_subject_in_list,
+        incoming_subject_binds_offer,
+        subject_is_informative,
+    )
+
+    subj = (subject or "").strip()
+    subj_strong = subject_is_informative(subj)
 
     table_hits = await _offers_from_offer_email_rows(
         session, user_id=int(user_id), contact_email=contact_email
     )
     if len(table_hits) == 1:
-        return table_hits[0]
+        only = table_hits[0]
+        if subj_strong and not incoming_subject_binds_offer(subj, only):
+            pick = _pick_offer_by_subject_in_list(table_hits, subj)
+            if pick:
+                return pick
+            hits = await list_offers_for_validated_contact_email(
+                session,
+                user_id=int(user_id),
+                contact_email=contact_email,
+                limit=20,
+            )
+            pick2 = _pick_offer_by_subject_in_list(hits, subj)
+            if pick2:
+                return pick2
+            return None
+        return only
 
     hits = await list_offers_for_validated_contact_email(
         session,
@@ -717,7 +741,10 @@ async def find_single_offer_for_seller_contact_email(
     pool = table_hits if table_hits else hits
     if not pool:
         off, _, _, _ = await resolve_inbound_from_send_log(
-            session, user_id=int(user_id), contact_email=contact_email
+            session,
+            user_id=int(user_id),
+            contact_email=contact_email,
+            subject=subj,
         )
         return off
 
@@ -726,6 +753,13 @@ async def find_single_offer_for_seller_contact_email(
         return linked or cands
 
     pool = _prefer_linked(pool)
+    if subj_strong:
+        pick = _pick_offer_by_subject_in_list(pool, subj)
+        if pick:
+            return pick
+        if len(table_hits) > 1:
+            return None
+
     if len(pool) == 1:
         return pool[0]
 
@@ -737,20 +771,23 @@ async def find_single_offer_for_seller_contact_email(
     ]
     if len(mailed) == 1:
         return mailed[0]
+    if subj_strong and len(mailed) > 1:
+        pick = _pick_offer_by_subject_in_list(mailed, subj)
+        if pick:
+            return pick
 
     off, _, _, _ = await resolve_inbound_from_send_log(
-        session, user_id=int(user_id), contact_email=contact_email
+        session, user_id=int(user_id), contact_email=contact_email, subject=subj
     )
     if off:
         pool_ids = {int(o.id) for o in pool}
         if int(off.id) in pool_ids:
             return off
-        return off
+        if subj_strong and incoming_subject_binds_offer(subj, off):
+            return off
 
     if len(table_hits) == 1:
         return table_hits[0]
-    if len(mailed) == 1:
-        return mailed[0]
     return None
 
 

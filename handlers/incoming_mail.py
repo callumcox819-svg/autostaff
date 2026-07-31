@@ -902,10 +902,19 @@ async def _aqua_last_chance_offer_url(
     inbox_email: str,
     contact_email: str,
     resolved_id: int | None,
+    subject: str = "",
 ) -> tuple[Offer | None, str]:
-    """OfferEmail / pin диалога / resolved_offer_id — перед «не нашёл объявление»."""
-    from services.offer_matching import _load_conversation_link, _load_offer
+    """OfferEmail / pin (если тема = OFFER) — перед «не нашёл объявление»."""
+    from services.offer_matching import (
+        _load_conversation_link,
+        _load_offer,
+        incoming_subject_binds_offer,
+        subject_is_informative,
+    )
     from services.offer_storage import find_single_offer_for_seller_contact_email, offer_effective_link
+
+    subj = (subject or "").strip()
+    subj_strong = subject_is_informative(subj)
 
     conv = await _load_conversation_link(
         session,
@@ -917,7 +926,7 @@ async def _aqua_last_chance_offer_url(
         off = await _load_offer(
             session, user_id=int(user_id), offer_id=int(conv.pinned_offer_id)
         )
-        if off:
+        if off and (not subj_strong or incoming_subject_binds_offer(subj, off)):
             url = (offer_effective_link(off) or "").strip() or (
                 getattr(conv, "ad_url", "") or ""
             ).strip()
@@ -925,7 +934,10 @@ async def _aqua_last_chance_offer_url(
                 return off, url
 
     off = await find_single_offer_for_seller_contact_email(
-        session, user_id=int(user_id), contact_email=contact_email
+        session,
+        user_id=int(user_id),
+        contact_email=contact_email,
+        subject=subj,
     )
     if off:
         url = (offer_effective_link(off) or "").strip()
@@ -954,13 +966,14 @@ async def _aqua_resolve_pins_for_mail(
     inbox_email: str = "",
     contact_email: str = "",
 ) -> tuple[int | None, bool]:
-    """Не сбрасываем лот по теме Aw:/Re: — продавец закреплён рассылкой и диалогом."""
-    from services.offer_matching import _load_conversation_link
+    """Не сбрасываем лот по теме Aw:/Re: — pin только если тема = OFFER или короткий ответ."""
+    from services.offer_matching import _load_conversation_link, _load_offer, incoming_subject_binds_offer, subject_is_informative
 
     oid = int(resolved_offer_id) if resolved_offer_id else None
     bound = bool(mailing_bound)
     inbox = (inbox_email or "").strip().lower()
     contact = (contact_email or "").strip().lower()
+    subj_strong = subject_is_informative((subject or "").strip())
     if inbox and contact:
         conv = await _load_conversation_link(
             session,
@@ -969,8 +982,13 @@ async def _aqua_resolve_pins_for_mail(
             contact_email=contact,
         )
         if conv and getattr(conv, "pinned_offer_id", None):
-            oid = int(conv.pinned_offer_id)
-            bound = True
+            pin_oid = int(conv.pinned_offer_id)
+            off_pin = await _load_offer(session, user_id=int(user_id), offer_id=pin_oid)
+            if off_pin and (
+                not subj_strong or incoming_subject_binds_offer(subject or "", off_pin)
+            ):
+                oid = pin_oid
+                bound = True
     return oid, bound
 
 
@@ -1892,6 +1910,7 @@ async def _create_aqua_link_from_db_work(callback: CallbackQuery, mail_id: int) 
                 inbox_email=inbox_email,
                 contact_email=contact_email,
                 resolved_id=int(resolved_id) if resolved_id else None,
+                subject=subj_mail,
             )
             if url_lc:
                 offer = offer_lc or offer
@@ -2146,6 +2165,7 @@ async def _create_aqua_link_work(callback: CallbackQuery, acc_id: int, uid: str,
                 inbox_email=inbox_email,
                 contact_email=contact_email,
                 resolved_id=int(resolved_id) if resolved_id else None,
+                subject=subj_pre,
             )
             if url_lc:
                 offer = offer_lc or offer

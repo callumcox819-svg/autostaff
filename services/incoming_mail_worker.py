@@ -1205,6 +1205,7 @@ async def mail_card_offer_meta(
             session,
             user_id=int(user_id),
             contact_email=contact,
+            subject=subject or "",
         )
         if single:
             off = single
@@ -1375,7 +1376,7 @@ async def build_mail_card_from_mail(
         offer_id=oid_for_card,
         link_id=link_id,
         service_label=service_label,
-        product_title=product_title if show_product_details else None,
+        product_title=product_title or None,
         offer_price=offer_price if show_product_details else None,
         translation=translation,
     )
@@ -1608,6 +1609,10 @@ async def _process_mails_for_account_impl(
                             offer_effective_title,
                         )
                         from services.subject_offer import pick_mailing_subject
+                        from services.offer_matching import (
+                            subject_is_informative,
+                            subject_title_agrees,
+                        )
 
                         contact_email = normalize_incoming_seller_email(from_email_clean)
                         offer_bound = None
@@ -1619,17 +1624,26 @@ async def _process_mails_for_account_impl(
                             session,
                             user_id=int(user_id),
                             contact_email=contact_email or from_email_clean,
+                            subject=subj or "",
                         )
                         if fb_pre:
-                            offer_bound = fb_pre
-                            listing_url = (offer_effective_link(fb_pre) or "").strip()
-                            out_subj = pick_mailing_subject(
-                                (offer_effective_title(fb_pre) or "").strip()
+                            subj_ok = (not subject_is_informative(subj)) or subject_title_agrees(
+                                subj, fb_pre
                             )
-                            lead_snap = _snapshot_from_mailed_offer(
-                                fb_pre, outgoing_mail_subject=out_subj
-                            )
-                        else:
+                            pre_link = (offer_effective_link(fb_pre) or "").strip()
+                            if subj_ok and pre_link:
+                                offer_bound = fb_pre
+                                listing_url = pre_link
+                                out_subj = pick_mailing_subject(
+                                    (offer_effective_title(fb_pre) or "").strip()
+                                )
+                                lead_snap = _snapshot_from_mailed_offer(
+                                    fb_pre, outgoing_mail_subject=out_subj
+                                )
+                            else:
+                                fb_pre = None
+
+                        if not offer_bound:
                             offer_bound, listing_url, _match_how, lead_snap = (
                                 await resolve_offer_for_incoming_lead(
                                     session,
@@ -1644,6 +1658,8 @@ async def _process_mails_for_account_impl(
                                     mailing_bound=bool(getattr(existing, "mailing_bound", False)),
                                 )
                             )
+                        if not listing_url and offer_bound:
+                            listing_url = (offer_effective_link(offer_bound) or "").strip()
 
                         if not offer_bound and getattr(existing, "resolved_offer_id", None) and getattr(
                             existing, "mailing_bound", False
@@ -1988,7 +2004,7 @@ async def _process_mails_for_account_impl(
                 offer_id=offer_id,
                 link_id=link_id,
                 service_label=service_label,
-                product_title=product_title if show_offer_on_card else None,
+                product_title=product_title,
                 offer_price=offer_price if show_offer_on_card else None,
             )
             if smtp_block_bounce and chunks:

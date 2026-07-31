@@ -39,7 +39,12 @@ def _norm_subject(subject: str) -> str:
     s = _strip_subject_edges((subject or "").strip())
     if not s:
         return ""
-    return re.sub(r"^(re|aw|fw|fwd)\s*:\s*", "", s, flags=re.I).strip()
+    for _ in range(5):
+        n = re.sub(r"^(re|aw|fw|fwd|wg)\s*:\s*", "", s, flags=re.I).strip()
+        if n == s:
+            break
+        s = n
+    return s
 
 
 def product_title_from_subject(subject: str) -> str:
@@ -147,14 +152,19 @@ def subject_title_agrees(subject: str, offer: Offer) -> bool:
         return True
     if len(title) >= 8 and title in needle:
         return True
+    if len(needle) >= 8 and needle in title:
+        return True
     mt = _distinctive_listing_tokens(needle)
     tt = _distinctive_listing_tokens(title)
     if mt and tt:
         overlap = sum(1 for t in mt if t in tt)
         if overlap >= 2:
             return True
-        if overlap == 1 and len(mt) == 1 and len(tt) == 1:
-            return True
+        if overlap >= 1 and len(mt) >= 2 and len(tt) >= 2:
+            if _ratio(needle, title) >= 0.52:
+                return True
+    if _ratio(needle, title) >= 0.78:
+        return True
     return False
 
 
@@ -191,7 +201,7 @@ def offer_display_title(
 # Минимум совпадения темы с лотом из conversation_links (старый диалог)
 _CONV_AD_URL_MIN_SUBJECT_SCORE = 40.0
 # Тема Re: и email продавца — лот только при явном совпадении названия
-_SUBJECT_EMAIL_AGREE_MIN_SCORE = 40.0
+_SUBJECT_EMAIL_AGREE_MIN_SCORE = 52.0
 
 
 def incoming_subject_binds_offer(subject: str, offer: Offer | None) -> bool:
@@ -633,8 +643,14 @@ def subject_match_score(subject: str, off: Offer) -> float:
         score += 25.0 + tok_hits * 12.0
     if tok_hits >= 3:
         score += 40.0
+    if tok_hits == 1:
+        score = min(score, 38.0)
     if tok_hits == 0:
         score = min(score, 35.0)
+
+    needle = product_title_from_subject(subject).lower()
+    if len(needle) >= 8 and (needle in title or title in needle):
+        score = max(score, 72.0)
 
     wants_set = any(w in subj_l for w in ("komplette", "complet", "complete", "set "))
     if wants_set:
@@ -1252,7 +1268,7 @@ async def resolve_offer_for_aqua_link(
 
     if not off:
         off = await find_single_offer_for_seller_contact_email(
-            session, user_id=int(user_id), contact_email=from_email
+            session, user_id=int(user_id), contact_email=from_email, subject=subject or ""
         )
         if off:
             url = (offer_effective_link(off) or "").strip()

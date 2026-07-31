@@ -56,7 +56,9 @@ async def _mailing_log_rows_for_recipient(
     *,
     limit: int = 400,
 ) -> list[tuple[MailingSendLog, Offer]]:
-    """Строки журнала рассылки на этот email (канонизация gmail/+alias)."""
+    """Строки журнала рассылки на этот email (лот подгружается по offer_id, без INNER JOIN)."""
+    from services.offer_matching import _load_offer
+
     email = _canon_recipient(contact_email)
     if not email:
         return []
@@ -66,33 +68,55 @@ async def _mailing_log_rows_for_recipient(
     if raw and raw != email:
         conds.append(func.lower(MailingSendLog.recipient_email) == raw)
 
-    rows = (
+    async def _pair_logs(logs: list[MailingSendLog]) -> list[tuple[MailingSendLog, Offer]]:
+        out: list[tuple[MailingSendLog, Offer]] = []
+        seen: set[int] = set()
+        for log in logs:
+            lid = int(log.id)
+            if lid in seen:
+                continue
+            seen.add(lid)
+            off = await _load_offer(
+                session, user_id=int(user_id), offer_id=int(log.offer_id)
+            )
+            if off:
+                out.append((log, off))
+        return out
+
+    logs = (
         await session.execute(
-            select(MailingSendLog, Offer)
-            .join(Offer, Offer.id == MailingSendLog.offer_id)
+            select(MailingSendLog)
             .where(MailingSendLog.user_id == int(user_id))
             .where(or_(*conds))
             .order_by(MailingSendLog.sent_at.desc(), MailingSendLog.id.desc())
             .limit(int(limit))
         )
-    ).all()
+    ).scalars().all()
+    paired = await _pair_logs(list(logs))
+    if paired:
+        return paired
 
-    if rows:
-        return list(rows)
-
-    # Старые записи могли сохраниться без канонизации — добираем из недавних отправок.
-    broad = (
+    broad_logs = (
         await session.execute(
-            select(MailingSendLog, Offer)
-            .join(Offer, Offer.id == MailingSendLog.offer_id)
+            select(MailingSendLog)
             .where(MailingSendLog.user_id == int(user_id))
             .order_by(MailingSendLog.sent_at.desc(), MailingSendLog.id.desc())
             .limit(int(limit))
         )
-    ).all()
+    ).scalars().all()
     out: list[tuple[MailingSendLog, Offer]] = []
-    for log, off in broad:
-        if _canon_recipient(log.recipient_email or "") == email:
+    seen_log: set[int] = set()
+    for log in broad_logs:
+        if _canon_recipient(log.recipient_email or "") != email:
+            continue
+        lid = int(log.id)
+        if lid in seen_log:
+            continue
+        seen_log.add(lid)
+        off = await _load_offer(
+            session, user_id=int(user_id), offer_id=int(log.offer_id)
+        )
+        if off:
             out.append((log, off))
     return out
 
@@ -126,11 +150,31 @@ async def resolve_inbound_from_send_log(
     contact_email: str,
     inbox_email: str = "",
     pinned_offer_id: int | None = None,
+    subject: str = "",
 ) -> tuple[Offer | None, str, str, str]:
     """
-    Входящее → лот и тема исходящего письма (/send), без разбора Re:.
+    Входящее → лот и тема исходящего письма (/send).
+    При нескольких лотах на один email сначала матч по теме Re:/Aw:.
     Returns: (offer, listing_url, outgoing_mail_subject, matched_by)
     """
+    subj = (subject or "").strip()
+    if subj and subject_is_informative(subj):
+        off_subj, how_subj = await find_offer_from_mailing_log(
+            session, int(user_id), contact_email, subj
+        )
+        if off_subj:
+            link = (offer_effective_link(off_subj) or "").strip()
+            out_subj = ""
+            rows_subj = await _mailing_log_rows_for_recipient(
+                session, int(user_id), contact_email, limit=400
+            )
+            oid = int(off_subj.id)
+            for log, o in rows_subj:
+                if int(o.id) == oid and (log.mail_subject or "").strip():
+                    out_subj = (log.mail_subject or "").strip()
+                    break
+            return off_subj, link, out_subj, how_subj or "mailing_send_log"
+
     rows = await _mailing_log_rows_for_recipient(session, int(user_id), contact_email, limit=400)
     inbox = (inbox_email or "").strip().lower()
 
@@ -171,8 +215,7 @@ async def resolve_inbound_from_send_log(
         off = await _load_offer(session, user_id=int(user_id), offer_id=pid)
         if off:
             link = (offer_effective_link(off) or "").strip()
-            if link:
-                return off, link, "", "mailing_send_log_pinned"
+            return off, link, "", "mailing_send_log_pinned"
 
     if inbox:
         inbox_rows: list[tuple[MailingSendLog, Offer]] = []
@@ -202,8 +245,32 @@ async def has_mailing_send_for_contact(
     contact_email: str,
 ) -> bool:
     """Был ли /send на этот email продавца (иначе не лид)."""
-    rows = await _mailing_log_rows_for_recipient(session, int(user_id), contact_email, limit=3)
-    return bool(rows)
+    email = _canon_recipient(contact_email)
+    if not email:
+        return False
+    raw = (contact_email or "").strip().lower()
+    conds = [func.lower(MailingSendLog.recipient_email) == email]
+    if raw and raw != email:
+        conds.append(func.lower(MailingSendLog.recipient_email) == raw)
+    hit = (
+        await session.execute(
+            select(MailingSendLog.id)
+            .where(MailingSendLog.user_id == int(user_id))
+            .where(or_(*conds))
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if hit is not None:
+        return True
+    broad = (
+        await session.execute(
+            select(MailingSendLog.recipient_email)
+            .where(MailingSendLog.user_id == int(user_id))
+            .order_by(MailingSendLog.sent_at.desc())
+            .limit(200)
+        )
+    ).scalars().all()
+    return any(_canon_recipient(r or "") == email for r in broad)
 
 
 async def find_latest_mailed_offer_for_recipient(

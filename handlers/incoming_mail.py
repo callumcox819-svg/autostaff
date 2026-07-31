@@ -894,6 +894,56 @@ async def _resolve_and_bind_incoming_mail_offer(
     return off, url
 
 
+async def _aqua_last_chance_offer_url(
+    session,
+    *,
+    user_id: int,
+    mail: IncomingMail | None,
+    inbox_email: str,
+    contact_email: str,
+    resolved_id: int | None,
+) -> tuple[Offer | None, str]:
+    """OfferEmail / pin диалога / resolved_offer_id — перед «не нашёл объявление»."""
+    from services.offer_matching import _load_conversation_link, _load_offer
+    from services.offer_storage import find_single_offer_for_seller_contact_email, offer_effective_link
+
+    conv = await _load_conversation_link(
+        session,
+        user_id=int(user_id),
+        inbox_email=(inbox_email or "").strip(),
+        contact_email=(contact_email or "").strip(),
+    )
+    if conv and getattr(conv, "pinned_offer_id", None):
+        off = await _load_offer(
+            session, user_id=int(user_id), offer_id=int(conv.pinned_offer_id)
+        )
+        if off:
+            url = (offer_effective_link(off) or "").strip() or (
+                getattr(conv, "ad_url", "") or ""
+            ).strip()
+            if url:
+                return off, url
+
+    off = await find_single_offer_for_seller_contact_email(
+        session, user_id=int(user_id), contact_email=contact_email
+    )
+    if off:
+        url = (offer_effective_link(off) or "").strip()
+        if url:
+            return off, url
+
+    oid = resolved_id or (int(mail.resolved_offer_id) if mail and mail.resolved_offer_id else None)
+    if oid:
+        off = await _load_offer(session, user_id=int(user_id), offer_id=int(oid))
+        if off:
+            url = (offer_effective_link(off) or "").strip()
+            if not url and mail:
+                url = (getattr(mail, "ad_url", "") or "").strip()
+            if url:
+                return off, url
+    return None, ""
+
+
 async def _aqua_resolve_pins_for_mail(
     session,
     *,
@@ -1835,6 +1885,19 @@ async def _create_aqua_link_from_db_work(callback: CallbackQuery, mail_id: int) 
                     url = url_fb
 
         if not url:
+            offer_lc, url_lc = await _aqua_last_chance_offer_url(
+                session,
+                user_id=int(tg_user.id),
+                mail=mail,
+                inbox_email=inbox_email,
+                contact_email=contact_email,
+                resolved_id=int(resolved_id) if resolved_id else None,
+            )
+            if url_lc:
+                offer = offer_lc or offer
+                url = url_lc
+
+        if not url:
             subj_hint = product_title_from_subject(subj_mail) if subject_is_informative(subj_mail) else subj_mail
             await callback.message.answer(
                 f"{html_emoji('fail')} <b>Не нашёл объявление для этого письма</b>\n\n"
@@ -2074,6 +2137,19 @@ async def _create_aqua_link_work(callback: CallbackQuery, acc_id: int, uid: str,
                 if url_fb:
                     offer = off_fb
                     url = url_fb
+
+        if not url:
+            offer_lc, url_lc = await _aqua_last_chance_offer_url(
+                session,
+                user_id=int(owner_user_id),
+                mail=mail_pre,
+                inbox_email=inbox_email,
+                contact_email=contact_email,
+                resolved_id=int(resolved_id) if resolved_id else None,
+            )
+            if url_lc:
+                offer = offer_lc or offer
+                url = url_lc
 
         if not url:
             subj_hint = product_title_from_subject(subj_pre) if subject_is_informative(subj_pre) else subj_pre

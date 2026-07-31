@@ -1067,10 +1067,9 @@ async def resolve_listing_for_incoming_mail(
     def _ret(off: Offer | None) -> tuple[Offer | None, str]:
         if not off:
             return None, ""
-        link = offer_effective_link(off)
-        if not link:
-            return None, ""
-        ensure_offer_link_column(off, link)
+        link = (offer_effective_link(off) or "").strip()
+        if link:
+            ensure_offer_link_column(off, link)
         return off, link
 
     if subj_strong and fe:
@@ -1229,8 +1228,9 @@ async def resolve_offer_for_aqua_link(
     inbox_email: str | None = None,
     mailing_bound: bool = False,
 ) -> tuple[Offer | None, str]:
-    """Кнопка «Создать ссылку» — лот из журнала рассылки или темы (poputka88)."""
+    """Кнопка «Создать ссылку» — validated email, журнал /send, тема Re:/Aw:."""
     from services.incoming_lead_resolve import resolve_offer_for_incoming_lead
+    from services.offer_storage import find_single_offer_for_seller_contact_email, offer_effective_link
 
     off, url, _how, _snap = await resolve_offer_for_incoming_lead(
         session,
@@ -1244,7 +1244,40 @@ async def resolve_offer_for_aqua_link(
         inbox_email=inbox_email,
         mailing_bound=mailing_bound,
     )
-    return off, url
+    url = (url or "").strip()
+    if off and not url:
+        url = (offer_effective_link(off) or "").strip()
+    if off and url:
+        return off, url
+
+    if not off:
+        off = await find_single_offer_for_seller_contact_email(
+            session, user_id=int(user_id), contact_email=from_email
+        )
+        if off:
+            url = (offer_effective_link(off) or "").strip()
+            if url:
+                return off, url
+
+    for mailed_only in (True, False):
+        off2, url2 = await resolve_listing_for_incoming_mail(
+            session,
+            user_id=int(user_id),
+            from_email=from_email,
+            subject=subject,
+            from_name=from_name,
+            body_text=body_text,
+            resolved_offer_id=resolved_offer_id,
+            mail_ad_url=mail_ad_url,
+            inbox_email=inbox_email,
+            mailed_only=mailed_only,
+        )
+        url2 = (url2 or "").strip()
+        if off2 and not url2:
+            url2 = (offer_effective_link(off2) or "").strip()
+        if off2 and url2:
+            return off2, url2
+    return off, url or ""
 
 
 async def list_offers_for_seller_email(

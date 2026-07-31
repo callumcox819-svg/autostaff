@@ -162,6 +162,48 @@ def _is_transient_ssl_eof(e: Exception) -> bool:
 
 
 def _looks_like_spam(from_email: str, from_name: str, subject: str, body: str) -> bool:
+    f = (from_email or "").strip().lower()
+    name = (from_name or "").strip().lower()
+    subj = (subject or "").strip().lower()
+    body_l = (body or "").strip().lower()
+    if not f or "@" not in f:
+        return False
+    local, domain = f.split("@", 1)
+    domain = domain.strip().lower()
+    if local.startswith("enews") or local.startswith("newsletter"):
+        return True
+    if domain.startswith("em.") and "linkedin" in domain:
+        return True
+    if "uniqlo" in domain or "uniqlo" in name:
+        return True
+    if "skillsture" in domain or "skillsture" in name:
+        return True
+    if "linkedin" in domain and "premium" in name:
+        return True
+    marketing_domains = (
+        ".my.uniqlo.com",
+        "skillsture.io",
+        "peoplelogy",
+        "tally.so",
+    )
+    if any(x in domain or x in f for x in marketing_domains):
+        return True
+    if "list-unsubscribe" in body_l or "utm_campaign=" in body_l:
+        if "ricardo.ch" not in body_l and "tutti.ch" not in body_l:
+            return True
+    if subj and any(
+        p in subj
+        for p in (
+            "unsubscribe",
+            "newsletter",
+            "limited offer",
+            "shop your favourite",
+            "valued member",
+            "burnout",
+        )
+    ):
+        if not subj.startswith("re:") and not subj.startswith("aw:"):
+            return True
     return False
 
 
@@ -1110,14 +1152,16 @@ async def mail_card_offer_meta(
     mailing_bound: bool = False,
 ) -> tuple[int | None, str | None, str | None, str | None, str | None]:
     """Return offer_id, service_label, product_title, photo_url, offer_price."""
-    from services.offer_matching import offer_display_title
     from services.offer_storage import offer_effective_link, offer_effective_price, offer_effective_photo
 
-    offer_id = resolved_offer_id
+    offer_id = resolved_offer_id if mailing_bound else None
     service_label = product_title = photo_url = offer_price = None
-    snap = (stored_product_title or "").strip()
-    if snap:
-        product_title = snap
+
+    if not mailing_bound or not resolved_offer_id:
+        return None, None, None, None, None
+
+    if (stored_product_title or "").strip():
+        product_title = (stored_product_title or "").strip()
     if (stored_offer_price or "").strip():
         offer_price = (stored_offer_price or "").strip()
     if (stored_photo_url or "").strip():
@@ -1136,29 +1180,25 @@ async def mail_card_offer_meta(
             subject=subject,
             from_name=from_name,
             body_text=body_text,
-            mailing_bound=mailing_bound,
+            mailing_bound=True,
         )
         if off:
             offer_id = int(off.id)
-            if not snap:
-                product_title = (
-                    offer_display_title(subject, off, mailing_bound=True) or None
-                )
+            from services.offer_storage import offer_effective_title
+
+            if not product_title:
+                product_title = (offer_effective_title(off) or "").strip() or None
             if not service_label:
                 service_label = _service_label_from_link(offer_effective_link(off))
             if not photo_url:
-                ph = offer_effective_photo(off)
-                photo_url = ph or None
+                photo_url = (offer_effective_photo(off) or "").strip() or None
             if not offer_price:
-                p = offer_effective_price(off, default="")
-                offer_price = p or None
+                offer_price = (offer_effective_price(off, default="") or "").strip() or None
     except Exception:
         logger.exception("mail_card_offer_meta failed")
 
-    if not (product_title or "").strip():
-        from services.offer_matching import offer_display_title
-
-        product_title = offer_display_title(subject, None) or None
+    if not offer_id:
+        return None, None, None, None, None
     return offer_id, service_label, product_title, photo_url, offer_price
 
 
@@ -1598,11 +1638,17 @@ async def _process_mails_for_account_impl(
                 except Exception:
                     logger.exception("Failed to load offer link for resolved_offer_id=%s", resolved_offer_id)
 
-            if (not ad_url) and mail_db_id:
+            if (not ad_url) and mail_db_id and mailing_bound_flag:
                 try:
-                    from services.offer_matching import resolve_listing_for_incoming_mail
+                    from services.mailing_send_log import has_mailing_send_for_contact
 
                     async with _imap_db_session() as session:
+                        if not await has_mailing_send_for_contact(
+                            session, int(user_id), from_email_clean
+                        ):
+                            raise RuntimeError("skip_resolve_non_lead")
+                        from services.offer_matching import resolve_listing_for_incoming_mail
+
                         offer2, url2 = await resolve_listing_for_incoming_mail(
                             session,
                             user_id=int(user_id),
@@ -1629,19 +1675,21 @@ async def _process_mails_for_account_impl(
                                 if resolved_offer_id:
                                     mr.resolved_offer_id = int(resolved_offer_id)
                                 await _db_commit_retry(session)
+                except RuntimeError:
+                    pass
                 except Exception:
                     logger.exception("Failed re-resolve listing for incoming mail")
 
             if ad_url:
                 FULL_META[(acc_id, uid_key)]["ad_url"] = ad_url
 
-            # ✅ тред + ad_url диалога (чтобы AQUA не брал «последнее» объявление продавца)
+            pin_offer = int(resolved_offer_id) if (mailing_bound_flag and resolved_offer_id) else None
             await _upsert_convlink(
                 user_id=user_id,
                 inbox_email=_canon_email(inbox_email_clean),
                 contact_email=_canon_email(from_email_clean),
                 ad_url=(ad_url or None),
-                pinned_offer_id=int(resolved_offer_id) if resolved_offer_id else None,
+                pinned_offer_id=pin_offer,
             )
 
             conv = await _load_convlink(
@@ -1714,7 +1762,7 @@ async def _process_mails_for_account_impl(
 
             photo_to_send: str | None = None
             photo_caption: str | None = None
-            if photo_url and mail_db_id and resolved_offer_id:
+            if photo_url and mail_db_id and resolved_offer_id and mailing_bound_flag:
                 try:
                     async with _imap_db_session() as _s2:
                         q = (

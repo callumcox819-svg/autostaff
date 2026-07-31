@@ -178,6 +178,16 @@ async def resolve_inbound_from_send_log(
     return None, "", "", ""
 
 
+async def has_mailing_send_for_contact(
+    session,
+    user_id: int,
+    contact_email: str,
+) -> bool:
+    """Был ли /send на этот email продавца (иначе не лид)."""
+    rows = await _mailing_log_rows_for_recipient(session, int(user_id), contact_email, limit=3)
+    return bool(rows)
+
+
 async def find_latest_mailed_offer_for_recipient(
     session,
     user_id: int,

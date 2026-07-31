@@ -1,12 +1,14 @@
-"""Привязка входящего: журнал /send (email → offer + тема OFFER), не Re: продавца."""
+"""Привязка входящего только если на этот email был /send (mailing_send_log)."""
 
 from __future__ import annotations
 
 from models import Offer
-from services.mailing_send_log import resolve_inbound_from_send_log
+from services.mailing_send_log import (
+    has_mailing_send_for_contact,
+    resolve_inbound_from_send_log,
+)
 from services.offer_matching import _load_conversation_link
 from services.offer_storage import (
-    list_offers_for_validated_contact_email,
     normalize_incoming_seller_email,
     offer_effective_link,
     offer_effective_photo,
@@ -53,7 +55,7 @@ async def resolve_offer_for_incoming_lead(
     inbox_email: str | None = None,
     mailing_bound: bool = False,
 ) -> tuple[Offer | None, str, str, dict]:
-    snap: dict = {
+    empty_snap: dict = {
         "product_title": "",
         "offer_price": "",
         "photo_url": "",
@@ -64,7 +66,10 @@ async def resolve_offer_for_incoming_lead(
 
     contact_email = normalize_incoming_seller_email(contact_email)
     if not contact_email:
-        return None, "", "", snap
+        return None, "", "", empty_snap
+
+    if not await has_mailing_send_for_contact(session, int(user_id), contact_email):
+        return None, "", "", empty_snap
 
     pinned: int | None = int(resolved_offer_id) if resolved_offer_id else None
     if (inbox_email or "").strip() and contact_email:
@@ -88,17 +93,7 @@ async def resolve_offer_for_incoming_lead(
         snap = _snapshot_from_mailed_offer(off, outgoing_mail_subject=out_subj)
         return off, link, how, snap
 
-    pool = await list_offers_for_validated_contact_email(
-        session, user_id=int(user_id), contact_email=contact_email, limit=80
-    )
-    if len(pool) == 1:
-        only = pool[0]
-        link = (offer_effective_link(only) or "").strip()
-        if link:
-            snap = _snapshot_from_mailed_offer(only, outgoing_mail_subject="")
-            return only, link, "validated_email", snap
-
-    return None, "", "", snap
+    return None, "", "", empty_snap
 
 
 def _snapshot_from_offer(
@@ -109,7 +104,6 @@ def _snapshot_from_offer(
     bind_by_seller_email: bool = False,
     outgoing_mail_subject: str = "",
 ) -> dict:
-    """Совместимость со старыми вызовами."""
     snap = _snapshot_from_mailed_offer(
         offer,
         outgoing_mail_subject=outgoing_mail_subject or (subject or "").strip(),

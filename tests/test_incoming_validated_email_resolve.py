@@ -1,4 +1,4 @@
-"""Входящие: приоритет mailing_send_log."""
+"""Входящие: только mailing_send_log."""
 from __future__ import annotations
 
 import unittest
@@ -9,7 +9,22 @@ from services.incoming_lead_resolve import resolve_offer_for_incoming_lead
 
 
 class MailingSendLogResolveTests(unittest.IsolatedAsyncioTestCase):
-    async def test_resolves_from_send_log_first(self):
+    async def test_spam_email_without_send_log_gets_no_offer(self):
+        session = AsyncMock()
+        with patch(
+            "services.incoming_lead_resolve.has_mailing_send_for_contact",
+            new=AsyncMock(return_value=False),
+        ):
+            off, link, how, snap = await resolve_offer_for_incoming_lead(
+                session,
+                user_id=1,
+                contact_email="enews@my.uniqlo.com",
+                subject="Take a Sneak Peek",
+            )
+        self.assertIsNone(off)
+        self.assertFalse(snap.get("mailing_bound"))
+
+    async def test_resolves_from_send_log_when_mailed(self):
         shoes = SimpleNamespace(
             id=10,
             title="Herren Gucci Schuhe",
@@ -20,6 +35,9 @@ class MailingSendLogResolveTests(unittest.IsolatedAsyncioTestCase):
         )
         session = AsyncMock()
         with patch(
+            "services.incoming_lead_resolve.has_mailing_send_for_contact",
+            new=AsyncMock(return_value=True),
+        ), patch(
             "services.incoming_lead_resolve.resolve_inbound_from_send_log",
             new=AsyncMock(
                 return_value=(
@@ -42,8 +60,7 @@ class MailingSendLogResolveTests(unittest.IsolatedAsyncioTestCase):
             )
         self.assertIs(off, shoes)
         self.assertEqual(snap.get("product_title"), "Herren Gucci Schuhe")
-        self.assertEqual(snap.get("outgoing_mail_subject"), "Interesse an Herren Gucci Schuhe")
-        self.assertEqual(how, "mailing_send_log")
+        self.assertTrue(snap.get("mailing_bound"))
 
 
 if __name__ == "__main__":

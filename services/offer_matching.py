@@ -656,33 +656,36 @@ async def finalize_aqua_listing_context(
     offer: Offer | None,
     subject: str = "",
 ) -> tuple[Offer | None, str, str, str | None, str | None]:
-    """url + title + price + photo из одного Offer; иначе тема письма."""
+    """url + title + price + photo из Offer (raw_json VOID), без подмены лота по теме."""
     from services.offer_storage import (
         find_offer_by_link,
+        offer_effective_link,
         offer_effective_photo,
         offer_effective_price,
+        offer_effective_title,
     )
-
-    url = (listing_url or "").strip()
-    off_url = (
-        await find_offer_by_link(session, user_id=int(user_id), ad_url=url) if url else None
-    )
-    if off_url and offer and subject_is_informative(subject):
-        if subject_match_score(subject, off_url) >= _CONV_AD_URL_MIN_SUBJECT_SCORE:
-            offer = off_url
-    elif off_url and offer is None:
-        offer = off_url
-    elif off_url and not subject_is_informative(subject):
-        offer = off_url
-
-    title = gag_link_title_from_mail(subject, offer)
-    price = image = None
 
     if offer:
-        price = offer_effective_price(offer) or None
+        url = (offer_effective_link(offer) or (listing_url or "").strip()).strip()
+        title = (offer_effective_title(offer) or "").strip()
+        if not title:
+            title = gag_link_title_from_mail(subject, offer)
+        price = offer_effective_price(offer, default="") or None
         image = offer_effective_photo(offer) or None
+        return offer, url, title.strip(), price, image
 
-    return offer, url, title.strip(), price, image
+    url = (listing_url or "").strip()
+    off = await find_offer_by_link(session, user_id=int(user_id), ad_url=url) if url else None
+    if off:
+        offer = off
+        url = (offer_effective_link(offer) or url).strip()
+        title = (offer_effective_title(offer) or gag_link_title_from_mail(subject, offer)).strip()
+        price = offer_effective_price(offer, default="") or None
+        image = offer_effective_photo(offer) or None
+        return offer, url, title, price, image
+
+    title = gag_link_title_from_mail(subject, None)
+    return None, url, title.strip(), None, None
 
 
 _AQUA_SUBJECT_MIN_SCORE = 28.0

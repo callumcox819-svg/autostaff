@@ -1850,6 +1850,11 @@ async def _create_aqua_link_from_db_work(callback: CallbackQuery, mail_id: int) 
         prof_display = (
             await get_user_aqua_profile_display(session, tg_user) or ""
         ).strip() or "—"
+        from services.offer_storage import marketplace_service_label_from_offer
+
+        display_service = marketplace_service_label_from_offer(offer) or _service_label_for_card(
+            service
+        )
 
         await _send_generated_link_card(
             callback=callback,
@@ -1857,7 +1862,7 @@ async def _create_aqua_link_from_db_work(callback: CallbackQuery, mail_id: int) 
             offer_price=price,
             photo_url=offer_image,
             profile_display=prof_display,
-            service_code=service,
+            service_code=display_service,
             link=aqua_url,
             offer_id=offer_id,
             anchor_message_id=anchor,
@@ -2031,6 +2036,11 @@ async def _create_aqua_link_work(callback: CallbackQuery, acc_id: int, uid: str,
         prof_display = (
             await get_user_aqua_profile_display(session, user) or ""
         ).strip() or "—"
+        from services.offer_storage import marketplace_service_label_from_offer
+
+        display_service = marketplace_service_label_from_offer(offer) or _service_label_for_card(
+            service
+        )
 
         try:
             aqua_url = await _aqua_generate_link(
@@ -2073,7 +2083,7 @@ async def _create_aqua_link_work(callback: CallbackQuery, acc_id: int, uid: str,
             offer_price=price,
             photo_url=offer_image,
             profile_display=prof_display,
-            service_code=service,
+            service_code=display_service,
             link=aqua_url,
             offer_id=offer_id,
             anchor_message_id=anchor,

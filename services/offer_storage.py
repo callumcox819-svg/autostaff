@@ -146,29 +146,29 @@ def _first_raw_str(raw: dict[str, Any], keys: tuple[str, ...]) -> str:
 
 
 def offer_effective_price(offer: Offer | None, *, default: str = "0") -> str:
-    """Цена для AQUA/карточки: колонка Offer.price, иначе item_price/price из raw_json, иначе default."""
+    """Цена: item_price из raw_json (VOID), иначе колонка Offer.price."""
     if not offer:
         return default
-    p = str(getattr(offer, "price", None) or "").strip()
-    if p:
-        return p
     raw = parse_offer_raw(getattr(offer, "raw_json", None))
     v = _first_raw_str(raw, ("item_price", "price"))
-    return v or default
+    if v:
+        return v
+    p = str(getattr(offer, "price", None) or "").strip()
+    return p or default
 
 
 def offer_effective_title(offer: Offer | None) -> str:
-    """Название: Offer.title, иначе item_title/title из raw_json (VOID / валид. данные)."""
+    """Название: item_title из raw_json (VOID / validated), иначе Offer.title."""
     if not offer:
         return ""
-    t = str(getattr(offer, "title", None) or "").strip()
-    if t:
-        return t
     raw = parse_offer_raw(getattr(offer, "raw_json", None))
     t = _first_raw_str(
         raw,
         ("item_title", "title", "product_title", "ad_title", "offer_title", "name_title"),
     )
+    if t:
+        return t
+    t = str(getattr(offer, "title", None) or "").strip()
     if t:
         return t
     void = raw.get("void")
@@ -685,14 +685,27 @@ async def offer_for_mailing_target(session, tgt: OfferEmail) -> Offer | None:
 
 
 def offer_effective_link(offer: Offer | None) -> str:
-    """Ссылка ricardo.ch/tutti.ch: Offer.link, иначе item_link/link из raw_json."""
+    """Ссылка: item_link из raw_json, иначе Offer.link."""
     if not offer:
         return ""
-    link = str(getattr(offer, "link", None) or "").strip()
-    if link:
-        return link
     raw = parse_offer_raw(getattr(offer, "raw_json", None))
-    return _first_raw_str(raw, ("item_link", "link", "url", "ad_url"))
+    from_raw = _first_raw_str(raw, ("item_link", "link", "url", "ad_url"))
+    if from_raw:
+        return from_raw
+    return str(getattr(offer, "link", None) or "").strip()
+
+
+def marketplace_service_label_from_link(link: str) -> str:
+    u = (link or "").lower()
+    if "ricardo.ch" in u:
+        return "ricardo.ch"
+    if "tutti.ch" in u:
+        return "tutti.ch"
+    return ""
+
+
+def marketplace_service_label_from_offer(offer: Offer | None) -> str:
+    return marketplace_service_label_from_link(offer_effective_link(offer))
 
 
 async def find_offer_by_link(session, *, user_id: int, ad_url: str) -> Offer | None:
@@ -724,14 +737,14 @@ def ensure_offer_link_column(offer: Offer | None, listing_url: str) -> None:
 
 
 def offer_effective_photo(offer: Offer | None) -> str:
-    """Фото: Offer.photo, иначе item_photo/photo/image/img из raw_json."""
+    """Фото: item_photo из raw_json (VOID), иначе Offer.photo."""
     if not offer:
         return ""
-    p = str(getattr(offer, "photo", None) or "").strip()
-    if p:
-        return p
     raw = parse_offer_raw(getattr(offer, "raw_json", None))
-    return _first_raw_str(raw, ("item_photo", "photo", "image", "img"))
+    from_raw = _first_raw_str(raw, ("item_photo", "photo", "image", "img"))
+    if from_raw:
+        return from_raw
+    return str(getattr(offer, "photo", None) or "").strip()
 
 
 def index_validated_rows(validated: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:

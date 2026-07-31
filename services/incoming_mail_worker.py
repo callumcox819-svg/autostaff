@@ -1715,10 +1715,10 @@ async def _process_mails_for_account_impl(
 
             if (not ad_url) and mail_db_id and mailing_bound_flag:
                 try:
-                    from services.mailing_send_log import has_mailing_send_for_contact
+                    from services.incoming_lead_resolve import is_incoming_seller_lead
 
                     async with _imap_db_session() as session:
-                        if not await has_mailing_send_for_contact(
+                        if not await is_incoming_seller_lead(
                             session, int(user_id), from_email_clean
                         ):
                             raise RuntimeError("skip_resolve_non_lead")

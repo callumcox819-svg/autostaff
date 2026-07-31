@@ -851,18 +851,26 @@ async def _aqua_resolve_pins_for_mail(
     subject: str,
     resolved_offer_id: int | None,
     mailing_bound: bool,
+    inbox_email: str = "",
+    contact_email: str = "",
 ) -> tuple[int | None, bool]:
-    """Сброс старой привязки (другой лот / рассылка до деплоя), если тема не совпадает."""
-    from services.offer_matching import _load_offer, incoming_subject_binds_offer
+    """Не сбрасываем лот по теме Aw:/Re: — продавец закреплён рассылкой и диалогом."""
+    from services.offer_matching import _load_conversation_link
 
-    subj = (subject or "").strip()
     oid = int(resolved_offer_id) if resolved_offer_id else None
     bound = bool(mailing_bound)
-    if not oid or not bound or not subject_is_informative(subj):
-        return oid, bound
-    stale = await _load_offer(session, user_id=int(user_id), offer_id=oid)
-    if stale and not incoming_subject_binds_offer(subj, stale):
-        return None, False
+    inbox = (inbox_email or "").strip().lower()
+    contact = (contact_email or "").strip().lower()
+    if inbox and contact:
+        conv = await _load_conversation_link(
+            session,
+            user_id=int(user_id),
+            inbox_email=inbox,
+            contact_email=contact,
+        )
+        if conv and getattr(conv, "pinned_offer_id", None):
+            oid = int(conv.pinned_offer_id)
+            bound = True
     return oid, bound
 
 
@@ -1734,6 +1742,8 @@ async def _create_aqua_link_from_db_work(callback: CallbackQuery, mail_id: int) 
             subject=subj_mail,
             resolved_offer_id=getattr(mail, "resolved_offer_id", None),
             mailing_bound=bool(getattr(mail, "mailing_bound", False)),
+            inbox_email=inbox_email,
+            contact_email=contact_email,
         )
         offer, url = await resolve_offer_for_aqua_link(
             session,
@@ -1747,6 +1757,22 @@ async def _create_aqua_link_from_db_work(callback: CallbackQuery, mail_id: int) 
             inbox_email=inbox_email,
             mailing_bound=mailing_bound,
         )
+
+        if not url:
+            from services.offer_matching import _load_offer
+            from services.offer_storage import offer_effective_link
+
+            fallback_oid = getattr(mail, "resolved_offer_id", None) or resolved_id
+            if fallback_oid:
+                off_fb = await _load_offer(
+                    session, user_id=int(tg_user.id), offer_id=int(fallback_oid)
+                )
+                url_fb = (offer_effective_link(off_fb) or "").strip() if off_fb else ""
+                if not url_fb:
+                    url_fb = (getattr(mail, "ad_url", "") or "").strip()
+                if url_fb:
+                    offer = off_fb
+                    url = url_fb
 
         if not url:
             subj_hint = product_title_from_subject(subj_mail) if subject_is_informative(subj_mail) else subj_mail
@@ -1933,6 +1959,8 @@ async def _create_aqua_link_work(callback: CallbackQuery, acc_id: int, uid: str,
             subject=subj_pre,
             resolved_offer_id=getattr(mail_pre, "resolved_offer_id", None) if mail_pre else None,
             mailing_bound=bool(getattr(mail_pre, "mailing_bound", False)) if mail_pre else False,
+            inbox_email=inbox_email,
+            contact_email=contact_email,
         )
         offer, url = await resolve_offer_for_aqua_link(
             session,
@@ -1946,6 +1974,26 @@ async def _create_aqua_link_work(callback: CallbackQuery, acc_id: int, uid: str,
             inbox_email=inbox_email,
             mailing_bound=mailing_bound,
         )
+
+        if not url:
+            from services.offer_matching import _load_offer
+            from services.offer_storage import offer_effective_link
+
+            fallback_oid = None
+            if mail_pre and getattr(mail_pre, "resolved_offer_id", None):
+                fallback_oid = int(mail_pre.resolved_offer_id)
+            elif resolved_id:
+                fallback_oid = int(resolved_id)
+            if fallback_oid:
+                off_fb = await _load_offer(
+                    session, user_id=int(owner_user_id), offer_id=fallback_oid
+                )
+                url_fb = (offer_effective_link(off_fb) or "").strip() if off_fb else ""
+                if not url_fb and mail_pre:
+                    url_fb = (getattr(mail_pre, "ad_url", "") or "").strip()
+                if url_fb:
+                    offer = off_fb
+                    url = url_fb
 
         if not url:
             subj_hint = product_title_from_subject(subj_pre) if subject_is_informative(subj_pre) else subj_pre

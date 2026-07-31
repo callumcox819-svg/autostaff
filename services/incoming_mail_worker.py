@@ -1549,6 +1549,33 @@ async def _process_mails_for_account_impl(
                         if offer_bound:
                             resolved_offer_id = int(offer_bound.id)
                             resolved_offer_email_id = None
+                        elif getattr(existing, "resolved_offer_id", None) and getattr(
+                            existing, "mailing_bound", False
+                        ):
+                            from services.offer_matching import _load_offer
+                            from services.offer_storage import offer_effective_link
+
+                            resolved_offer_id = int(existing.resolved_offer_id)
+                            offer_bound = await _load_offer(
+                                session,
+                                user_id=int(user_id),
+                                offer_id=resolved_offer_id,
+                            )
+                            if offer_bound:
+                                listing_url = (offer_effective_link(offer_bound) or "").strip()
+                                lead_snap = {
+                                    "product_title": (existing.product_title or "").strip(),
+                                    "offer_price": (existing.offer_price or "").strip(),
+                                    "photo_url": (existing.photo_url or "").strip(),
+                                    "service_label": (existing.service_label or "").strip(),
+                                    "outgoing_mail_subject": (
+                                        getattr(existing, "outgoing_mail_subject", "") or ""
+                                    ).strip(),
+                                    "mailing_bound": True,
+                                }
+                            else:
+                                resolved_offer_id = None
+                                listing_url = ""
                         else:
                             resolved_offer_id = None
                             resolved_offer_email_id = None

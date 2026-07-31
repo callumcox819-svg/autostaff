@@ -876,9 +876,14 @@ async def find_offer_from_incoming_dialog(
             continue
         if not bool(getattr(mail, "mailing_bound", False)):
             continue
-        prev_subj = _norm_subject(getattr(mail, "subject", "") or "").lower()
+        subj_mail = (getattr(mail, "subject", "") or "").strip()
+        if is_seller_reply_subject(subject or "") or is_seller_reply_subject(subj_mail):
+            off = await _load_offer(session, user_id=int(user_id), offer_id=int(oid))
+            if off and offer_effective_link(off):
+                return off, "incoming_dialog"
+        prev_subj = _norm_subject(subj_mail).lower()
         needle_now = product_title_from_subject(subject or "").lower()
-        prev_needle = product_title_from_subject(getattr(mail, "subject", "") or "").lower()
+        prev_needle = product_title_from_subject(subj_mail).lower()
         if needle_now and prev_needle and len(needle_now) >= 5 and len(prev_needle) >= 5:
             if needle_now != prev_needle and needle_now not in prev_needle and prev_needle not in needle_now:
                 continue

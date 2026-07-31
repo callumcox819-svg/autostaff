@@ -12,8 +12,14 @@ class MailingSendLogResolveTests(unittest.IsolatedAsyncioTestCase):
     async def test_spam_email_without_send_log_gets_no_offer(self):
         session = AsyncMock()
         with patch(
-            "services.incoming_lead_resolve.is_incoming_seller_lead",
+            "services.incoming_lead_resolve.find_single_offer_for_seller_contact_email",
+            new=AsyncMock(return_value=None),
+        ), patch(
+            "services.incoming_lead_resolve.has_mailing_send_for_contact",
             new=AsyncMock(return_value=False),
+        ), patch(
+            "services.incoming_lead_resolve.find_offer_from_incoming_dialog",
+            new=AsyncMock(return_value=(None, "")),
         ):
             off, link, how, snap = await resolve_offer_for_incoming_lead(
                 session,
@@ -35,14 +41,11 @@ class MailingSendLogResolveTests(unittest.IsolatedAsyncioTestCase):
         )
         session = AsyncMock()
         with patch(
-            "services.incoming_lead_resolve.is_incoming_seller_lead",
-            new=AsyncMock(return_value=True),
+            "services.incoming_lead_resolve.find_single_offer_for_seller_contact_email",
+            new=AsyncMock(return_value=flyer),
         ), patch(
             "services.incoming_lead_resolve.has_mailing_send_for_contact",
             new=AsyncMock(return_value=False),
-        ), patch(
-            "services.incoming_lead_resolve.resolve_inbound_from_send_log",
-            new=AsyncMock(return_value=(None, "", "", "")),
         ), patch(
             "services.incoming_lead_resolve.resolve_offer_from_validated_seller_email",
             new=AsyncMock(
@@ -77,11 +80,14 @@ class MailingSendLogResolveTests(unittest.IsolatedAsyncioTestCase):
         )
         session = AsyncMock()
         with patch(
-            "services.incoming_lead_resolve.is_incoming_seller_lead",
-            new=AsyncMock(return_value=True),
+            "services.incoming_lead_resolve.find_single_offer_for_seller_contact_email",
+            new=AsyncMock(return_value=None),
         ), patch(
             "services.incoming_lead_resolve.has_mailing_send_for_contact",
             new=AsyncMock(return_value=True),
+        ), patch(
+            "services.incoming_lead_resolve.resolve_offer_from_validated_seller_email",
+            new=AsyncMock(return_value=(None, "", "")),
         ), patch(
             "services.incoming_lead_resolve.resolve_inbound_from_send_log",
             new=AsyncMock(
@@ -118,17 +124,17 @@ class MailingSendLogResolveTests(unittest.IsolatedAsyncioTestCase):
         )
         session = AsyncMock()
         with patch(
-            "services.incoming_lead_resolve.is_incoming_seller_lead",
-            new=AsyncMock(return_value=True),
+            "services.incoming_lead_resolve.find_single_offer_for_seller_contact_email",
+            new=AsyncMock(return_value=None),
         ), patch(
             "services.incoming_lead_resolve.has_mailing_send_for_contact",
             new=AsyncMock(return_value=True),
         ), patch(
-            "services.incoming_lead_resolve.resolve_inbound_from_send_log",
-            new=AsyncMock(return_value=(None, "", "", "")),
-        ), patch(
             "services.incoming_lead_resolve.resolve_offer_from_validated_seller_email",
             new=AsyncMock(return_value=(None, "", "")),
+        ), patch(
+            "services.incoming_lead_resolve.resolve_inbound_from_send_log",
+            new=AsyncMock(return_value=(None, "", "", "")),
         ), patch(
             "services.incoming_lead_resolve._load_conversation_link",
             new=AsyncMock(return_value=None),

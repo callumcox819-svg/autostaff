@@ -585,16 +585,16 @@ async def list_offers_for_validated_contact_email(
             return out
 
     try:
-        bind = session.get_bind()
-        if bind is not None and bind.dialect.name == "postgresql":
-            needle = want.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-            pat = f"%{needle}%"
+        from database import engine
+
+        if engine.dialect.name == "postgresql":
+            pat = f"%{want}%"
             id_rows = (
                 await session.execute(
                     sa_select(Offer.id)
                     .where(Offer.user_id == int(user_id))
                     .where(Offer.raw_json.isnot(None))
-                    .where(Offer.raw_json.ilike(pat, escape="\\"))
+                    .where(Offer.raw_json.ilike(pat))
                     .order_by(Offer.id.desc())
                     .limit(max(int(limit) * 3, 60))
                 )
@@ -605,8 +605,6 @@ async def list_offers_for_validated_contact_email(
                     continue
                 off = await session.get(Offer, oid)
                 if not off or int(off.user_id) != int(user_id):
-                    continue
-                if not offer_effective_link(off):
                     continue
                 if not any(
                     canon_seller_email(em) == want for em in offer_contact_emails(off)

@@ -1164,7 +1164,14 @@ async def mail_card_offer_meta(
 ) -> tuple[int | None, str | None, str | None, str | None, str | None, str | None]:
     """Return offer_id, service_label, product_title, photo_url, offer_price, outgoing_subject."""
     from services.incoming_lead_resolve import resolve_offer_for_incoming_lead
-    from services.offer_storage import offer_effective_link, offer_effective_price, offer_effective_photo
+    from services.offer_storage import (
+        find_single_offer_for_seller_contact_email,
+        normalize_incoming_seller_email,
+        offer_effective_link,
+        offer_effective_photo,
+        offer_effective_price,
+        offer_effective_title,
+    )
 
     offer_id = int(resolved_offer_id) if resolved_offer_id else None
     service_label = product_title = photo_url = offer_price = outgoing_subject = None
@@ -1183,7 +1190,17 @@ async def mail_card_offer_meta(
 
     try:
         off = None
-        if bound and offer_id:
+        contact = normalize_incoming_seller_email(from_email) or (from_email or "").strip().lower()
+        single = await find_single_offer_for_seller_contact_email(
+            session,
+            user_id=int(user_id),
+            contact_email=contact,
+        )
+        if single:
+            off = single
+            bound = True
+            offer_id = int(single.id)
+        if bound and offer_id and not off:
             off = await resolve_offer_for_mail_card(
                 session,
                 user_id=int(user_id),
@@ -1209,8 +1226,8 @@ async def mail_card_offer_meta(
                 inbox_email=inbox_email,
                 mailing_bound=mailing_bound,
             )
-            if off and snap.get("mailing_bound"):
-                bound = True
+            if off:
+                bound = bool(snap.get("mailing_bound")) or True
                 offer_id = int(off.id)
                 if not product_title:
                     product_title = (snap.get("product_title") or "").strip() or None
@@ -1222,10 +1239,9 @@ async def mail_card_offer_meta(
                     service_label = (snap.get("service_label") or "").strip() or None
                 if not outgoing_subject:
                     outgoing_subject = (snap.get("outgoing_mail_subject") or "").strip() or None
-        if off and bound:
+        if off:
+            bound = True
             offer_id = int(off.id)
-            from services.offer_storage import offer_effective_title
-
             if not product_title:
                 product_title = (offer_effective_title(off) or "").strip() or None
             if not service_label:
@@ -1567,32 +1583,58 @@ async def _process_mails_for_account_impl(
                     saved_outgoing_mail_subject = ""
                     mailing_bound_flag = False
                     try:
-                        from services.incoming_lead_resolve import resolve_offer_for_incoming_lead
-                        from services.offer_storage import normalize_incoming_seller_email
+                        from services.incoming_lead_resolve import (
+                            _snapshot_from_mailed_offer,
+                            resolve_offer_for_incoming_lead,
+                        )
+                        from services.offer_storage import (
+                            find_single_offer_for_seller_contact_email,
+                            normalize_incoming_seller_email,
+                            offer_effective_link,
+                            offer_effective_title,
+                        )
+                        from services.subject_offer import pick_mailing_subject
 
                         contact_email = normalize_incoming_seller_email(from_email_clean)
-                        offer_bound, listing_url, _match_how, lead_snap = (
-                            await resolve_offer_for_incoming_lead(
-                                session,
-                                user_id=int(user_id),
-                                contact_email=contact_email or from_email_clean,
-                                subject=subj,
-                                from_name=from_name or "",
-                                body_text=body_clean or "",
-                                resolved_offer_id=getattr(existing, "resolved_offer_id", None),
-                                mail_ad_url=(getattr(existing, "ad_url", "") or "").strip() or None,
-                                inbox_email=inbox_email_clean,
-                                mailing_bound=bool(getattr(existing, "mailing_bound", False)),
-                            )
+                        offer_bound = None
+                        listing_url = ""
+                        lead_snap: dict = {"mailing_bound": False}
+                        resolved_offer_email_id = None
+
+                        fb_pre = await find_single_offer_for_seller_contact_email(
+                            session,
+                            user_id=int(user_id),
+                            contact_email=contact_email or from_email_clean,
                         )
-                        if offer_bound:
-                            resolved_offer_id = int(offer_bound.id)
-                            resolved_offer_email_id = None
-                        elif getattr(existing, "resolved_offer_id", None) and getattr(
+                        if fb_pre:
+                            offer_bound = fb_pre
+                            listing_url = (offer_effective_link(fb_pre) or "").strip()
+                            out_subj = pick_mailing_subject(
+                                (offer_effective_title(fb_pre) or "").strip()
+                            )
+                            lead_snap = _snapshot_from_mailed_offer(
+                                fb_pre, outgoing_mail_subject=out_subj
+                            )
+                        else:
+                            offer_bound, listing_url, _match_how, lead_snap = (
+                                await resolve_offer_for_incoming_lead(
+                                    session,
+                                    user_id=int(user_id),
+                                    contact_email=contact_email or from_email_clean,
+                                    subject=subj,
+                                    from_name=from_name or "",
+                                    body_text=body_clean or "",
+                                    resolved_offer_id=getattr(existing, "resolved_offer_id", None),
+                                    mail_ad_url=(getattr(existing, "ad_url", "") or "").strip() or None,
+                                    inbox_email=inbox_email_clean,
+                                    mailing_bound=bool(getattr(existing, "mailing_bound", False)),
+                                )
+                            )
+
+                        if not offer_bound and getattr(existing, "resolved_offer_id", None) and getattr(
                             existing, "mailing_bound", False
                         ):
                             from services.offer_matching import _load_offer
-                            from services.offer_storage import offer_effective_link
 
                             resolved_offer_id = int(existing.resolved_offer_id)
                             offer_bound = await _load_offer(
@@ -1615,34 +1657,11 @@ async def _process_mails_for_account_impl(
                             else:
                                 resolved_offer_id = None
                                 listing_url = ""
+                        elif offer_bound and hasattr(offer_bound, "id"):
+                            resolved_offer_id = int(offer_bound.id)
                         else:
-                            from services.incoming_lead_resolve import _snapshot_from_mailed_offer
-                            from services.offer_storage import (
-                                find_single_offer_for_seller_contact_email,
-                                offer_effective_link,
-                                offer_effective_title,
-                            )
-                            from services.subject_offer import pick_mailing_subject
-
-                            fb = await find_single_offer_for_seller_contact_email(
-                                session,
-                                user_id=int(user_id),
-                                contact_email=contact_email or from_email_clean,
-                            )
-                            if fb:
-                                offer_bound = fb
-                                resolved_offer_id = int(fb.id)
-                                listing_url = (offer_effective_link(fb) or "").strip()
-                                out_subj = pick_mailing_subject(
-                                    (offer_effective_title(fb) or "").strip()
-                                )
-                                lead_snap = _snapshot_from_mailed_offer(
-                                    fb, outgoing_mail_subject=out_subj
-                                )
-                            else:
-                                resolved_offer_id = None
-                                resolved_offer_email_id = None
-                                listing_url = ""
+                            resolved_offer_id = None
+                            listing_url = ""
 
                         existing.resolved_offer_id = resolved_offer_id
                         existing.resolved_offer_email_id = resolved_offer_email_id

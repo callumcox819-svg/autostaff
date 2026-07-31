@@ -141,12 +141,31 @@ async def resolve_inbound_from_send_log(
         out_subj = (log.mail_subject or "").strip()
         return off, link, out_subj, "mailing_send_log"
 
+    def _oldest_hit(
+        pairs: list[tuple[MailingSendLog, Offer]],
+    ) -> tuple[Offer | None, str, str, str]:
+        """Первая рассылка в треде (не последняя), чтобы 2–5 ответ не прыгали на другой лот."""
+        for log, off in reversed(pairs):
+            hit = _pick(log, off)
+            if hit[0]:
+                return hit
+        return None, "", "", ""
+
     if pinned_offer_id and int(pinned_offer_id or 0):
         pid = int(pinned_offer_id)
+        matched: list[tuple[MailingSendLog, Offer]] = []
         for log, off in rows:
             if int(off.id) != pid:
                 continue
+            if inbox:
+                sent_from = (log.from_account_email or "").strip().lower()
+                if sent_from and sent_from != inbox:
+                    continue
             hit = _pick(log, off)
+            if hit[0]:
+                matched.append((log, off))
+        if matched:
+            hit = _oldest_hit(matched)
             if hit[0]:
                 return hit[0], hit[1], hit[2], "mailing_send_log_pinned"
         from services.offer_matching import _load_offer
@@ -155,23 +174,24 @@ async def resolve_inbound_from_send_log(
         if off:
             link = (offer_effective_link(off) or "").strip()
             if link:
-                for log, off2 in rows:
-                    if int(off2.id) == pid:
-                        return off, link, (log.mail_subject or "").strip(), "mailing_send_log_pinned"
                 return off, link, "", "mailing_send_log_pinned"
 
     if inbox:
+        inbox_rows: list[tuple[MailingSendLog, Offer]] = []
         for log, off in rows:
             sent_from = (log.from_account_email or "").strip().lower()
             if sent_from and sent_from != inbox:
                 continue
             hit = _pick(log, off)
             if hit[0]:
+                inbox_rows.append((log, off))
+        if inbox_rows:
+            hit = _oldest_hit(inbox_rows)
+            if hit[0]:
                 return hit[0], hit[1], hit[2], hit[3]
 
     if rows:
-        log, off = rows[0]
-        hit = _pick(log, off)
+        hit = _oldest_hit(rows)
         if hit[0]:
             return hit[0], hit[1], hit[2], hit[3]
 

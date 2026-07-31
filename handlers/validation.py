@@ -27,7 +27,7 @@ from services.validemail_validator import (
     merge_validation_domains,
     validate_offers,
 )
-from services.offer_storage import save_all_offers_from_import
+from services.offer_storage import save_all_offers_from_import, format_validated_export_document
 from services.seller_name import (
     MIN_SELLER_LETTERS,
     seller_name_eligible_for_validation,
@@ -779,7 +779,12 @@ async def _run_validation_pipeline_inner(
     )
 
     with open(out_path, "w", encoding="utf-8") as f:
-        json.dump(output, f, ensure_ascii=False, separators=(",", ":"))
+        json.dump(
+            format_validated_export_document(output),
+            f,
+            ensure_ascii=False,
+            indent=2,
+        )
 
     live_stats["sellers_with_email"] = offers_with_email
     live_stats["offers_eligible"] = eligible

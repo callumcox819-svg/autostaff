@@ -482,6 +482,7 @@ async def _upsert_convlink(
     generated_link: str | None = None,
     tg_message_id: int | None = None,
     pinned_offer_id: int | None = None,
+    pinned_outgoing_subject: str | None = None,
 ) -> None:
     inbox = (inbox_email or "").strip().lower()
     contact = (contact_email or "").strip().lower()
@@ -507,6 +508,9 @@ async def _upsert_convlink(
                     generated_link=(generated_link or None),
                     tg_message_id=int(tg_message_id) if tg_message_id is not None else None,
                     pinned_offer_id=int(pinned_offer_id) if pinned_offer_id else None,
+                    pinned_outgoing_subject=(
+                        (pinned_outgoing_subject or "").strip()[:500] or None
+                    ),
                 )
                 session.add(row)
             else:
@@ -515,7 +519,11 @@ async def _upsert_convlink(
                 if generated_link:
                     row.generated_link = generated_link
                 if pinned_offer_id:
-                    row.pinned_offer_id = int(pinned_offer_id)
+                    if not row.pinned_offer_id:
+                        row.pinned_offer_id = int(pinned_offer_id)
+                ps = (pinned_outgoing_subject or "").strip()[:500]
+                if ps and not (getattr(row, "pinned_outgoing_subject", None) or "").strip():
+                    row.pinned_outgoing_subject = ps
                 # Запоминаем anchor message_id только если его ещё нет, либо если явно передали.
                 if tg_message_id is not None:
                     row.tg_message_id = int(tg_message_id)
@@ -1423,6 +1431,8 @@ async def _process_mails_for_account_impl(
             resolved_offer_email_id: int | None = None
             mail_db_id: int | None = None
             account_already_smtp_blocked = False
+            saved_outgoing_mail_subject = ""
+            mailing_bound_flag = False
             try:
                 async with _imap_db_session() as session:
                     from services.offer_matching import resolve_listing_for_incoming_mail
@@ -1690,6 +1700,11 @@ async def _process_mails_for_account_impl(
                 contact_email=_canon_email(from_email_clean),
                 ad_url=(ad_url or None),
                 pinned_offer_id=pin_offer,
+                pinned_outgoing_subject=(
+                    (saved_outgoing_mail_subject or "").strip()[:500] or None
+                    if pin_offer
+                    else None
+                ),
             )
 
             conv = await _load_convlink(

@@ -300,6 +300,11 @@ async def _ensure_conversation_links_pinned_offer_id_column() -> None:
         await conn.execute(
             text("ALTER TABLE conversation_links ADD COLUMN IF NOT EXISTS pinned_offer_id INTEGER")
         )
+        await conn.execute(
+            text(
+                "ALTER TABLE conversation_links ADD COLUMN IF NOT EXISTS pinned_outgoing_subject VARCHAR(500)"
+            )
+        )
 
 
 async def _ensure_conversation_links_tg_message_id_column() -> None:

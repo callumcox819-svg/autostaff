@@ -331,6 +331,7 @@ class ConversationLink(Base):
     tg_message_id = Column(BigInteger, nullable=True)
     # Для продавцов из ЧС: закреплённое объявление по диалогу (не путать разные лоты).
     pinned_offer_id = Column(ForeignKey("offers.id", ondelete="SET NULL"), nullable=True, index=True)
+    pinned_outgoing_subject = Column(String(500), nullable=True)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     created_at = Column(DateTime, default=datetime.utcnow)
 

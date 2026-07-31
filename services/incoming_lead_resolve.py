@@ -72,6 +72,7 @@ async def resolve_offer_for_incoming_lead(
         return None, "", "", empty_snap
 
     pinned: int | None = int(resolved_offer_id) if resolved_offer_id else None
+    pinned_subj = ""
     if (inbox_email or "").strip() and contact_email:
         conv = await _load_conversation_link(
             session,
@@ -79,8 +80,10 @@ async def resolve_offer_for_incoming_lead(
             inbox_email=(inbox_email or "").strip(),
             contact_email=contact_email,
         )
-        if conv and getattr(conv, "pinned_offer_id", None):
-            pinned = int(conv.pinned_offer_id)
+        if conv:
+            if getattr(conv, "pinned_offer_id", None):
+                pinned = int(conv.pinned_offer_id)
+            pinned_subj = (getattr(conv, "pinned_outgoing_subject", None) or "").strip()
 
     off, link, out_subj, how = await resolve_inbound_from_send_log(
         session,
@@ -90,6 +93,8 @@ async def resolve_offer_for_incoming_lead(
         pinned_offer_id=pinned,
     )
     if off and link:
+        if pinned_subj:
+            out_subj = pinned_subj
         snap = _snapshot_from_mailed_offer(off, outgoing_mail_subject=out_subj)
         return off, link, how, snap
 

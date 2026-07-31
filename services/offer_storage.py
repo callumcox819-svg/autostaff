@@ -13,6 +13,61 @@ from models import Offer, OfferEmail
 _LINK_QS_RE = re.compile(r"\?.*$")
 _RAW_EMAIL_RE = re.compile(r"[\w.+-]+@[\w.-]+\.[a-z]{2,}", re.I)
 
+# Порядок полей как в VOID parser export
+_VOID_EXPORT_FIELD_ORDER: tuple[str, ...] = (
+    "item_title",
+    "item_photo",
+    "ads_number",
+    "parser_views",
+    "ads_number_bought",
+    "ads_number_sold",
+    "gender",
+    "email",
+    "person_reg_date",
+    "item_price",
+    "views",
+    "rating",
+    "created_date",
+    "created_real_date",
+    "phone",
+    "item_desc",
+    "location",
+    "item_link",
+    "person_link",
+    "item_person_name",
+)
+
+_VOID_EXPORT_DUP_KEYS = frozenset({"title", "link", "price", "name", "person_name"})
+
+
+def format_validated_export_item(item: dict[str, Any]) -> dict[str, Any]:
+    """Один лот для validated_*.json — как VOID, без дублей title/link/price."""
+    if not isinstance(item, dict):
+        return {}
+    out: dict[str, Any] = {}
+    for key in _VOID_EXPORT_FIELD_ORDER:
+        if key in item and item[key] is not None:
+            out[key] = item[key]
+    for key, val in item.items():
+        if key in out or key in _VOID_EXPORT_DUP_KEYS:
+            continue
+        if key in ("validated_emails", "offer_id"):
+            continue
+        if val is not None and val != "":
+            out[key] = val
+    if item.get("validated_emails"):
+        out["validated_emails"] = list(item["validated_emails"])
+    oid = item.get("offer_id")
+    if oid is not None:
+        out["offer_id"] = int(oid)
+    return out
+
+
+def format_validated_export_document(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """{"items": [...]} с отступами как void-parser-result."""
+    items = [format_validated_export_item(r) for r in (rows or []) if isinstance(r, dict)]
+    return {"items": items}
+
 
 def link_key(url: str) -> str:
     u = (url or "").strip().lower().rstrip("/")

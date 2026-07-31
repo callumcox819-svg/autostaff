@@ -844,6 +844,55 @@ def _canon_email(email: str) -> str:
     return f"{local}@{domain}"
 
 
+async def _resolve_and_bind_incoming_mail_offer(
+    session,
+    *,
+    mail: IncomingMail,
+    inbox_email: str,
+) -> tuple[Offer | None, str]:
+    """Найти лот по validated email / send log и записать в IncomingMail."""
+    from services.incoming_lead_resolve import resolve_offer_for_incoming_lead
+    from services.offer_storage import normalize_incoming_seller_email
+
+    contact = normalize_incoming_seller_email(getattr(mail, "from_email", "") or "")
+    if not contact:
+        return None, ""
+    off, url, _how, snap = await resolve_offer_for_incoming_lead(
+        session,
+        user_id=int(mail.user_id),
+        contact_email=contact,
+        subject=(getattr(mail, "subject", "") or "").strip(),
+        from_name=(getattr(mail, "from_name", "") or "").strip(),
+        body_text=(getattr(mail, "body", "") or "").strip(),
+        resolved_offer_id=getattr(mail, "resolved_offer_id", None),
+        mail_ad_url=(getattr(mail, "ad_url", "") or "").strip() or None,
+        inbox_email=(inbox_email or "").strip(),
+        mailing_bound=bool(getattr(mail, "mailing_bound", False)),
+    )
+    if not off or not (url or "").strip():
+        return None, ""
+    url = url.strip()
+    mail.resolved_offer_id = int(off.id)
+    mail.mailing_bound = True
+    mail.ad_url = url
+    pt = (snap.get("product_title") or "").strip()
+    if pt:
+        mail.product_title = pt[:500]
+    pr = (snap.get("offer_price") or "").strip()
+    if pr:
+        mail.offer_price = pr[:64]
+    ph = (snap.get("photo_url") or "").strip()
+    if ph:
+        mail.photo_url = ph[:2000]
+    sl = (snap.get("service_label") or "").strip()
+    if sl:
+        mail.service_label = sl[:64]
+    os_ = (snap.get("outgoing_mail_subject") or "").strip()
+    if os_:
+        mail.outgoing_mail_subject = os_[:500]
+    return off, url
+
+
 async def _aqua_resolve_pins_for_mail(
     session,
     *,
@@ -1736,27 +1785,37 @@ async def _create_aqua_link_from_db_work(callback: CallbackQuery, mail_id: int) 
 
         subj_mail = (getattr(mail, "subject", "") or "").strip()
         body_mail = (getattr(mail, "body", "") or "").strip()
-        resolved_id, mailing_bound = await _aqua_resolve_pins_for_mail(
+
+        offer, url = await _resolve_and_bind_incoming_mail_offer(
             session,
-            user_id=int(tg_user.id),
-            subject=subj_mail,
-            resolved_offer_id=getattr(mail, "resolved_offer_id", None),
-            mailing_bound=bool(getattr(mail, "mailing_bound", False)),
+            mail=mail,
             inbox_email=inbox_email,
-            contact_email=contact_email,
         )
-        offer, url = await resolve_offer_for_aqua_link(
-            session,
-            user_id=int(tg_user.id),
-            from_email=contact_email,
-            subject=subj_mail,
-            from_name=(getattr(mail, "from_name", "") or ""),
-            body_text=body_mail,
-            resolved_offer_id=resolved_id,
-            mail_ad_url=(getattr(mail, "ad_url", "") or "").strip() or None,
-            inbox_email=inbox_email,
-            mailing_bound=mailing_bound,
-        )
+        resolved_id = int(offer.id) if offer else getattr(mail, "resolved_offer_id", None)
+        mailing_bound = bool(getattr(mail, "mailing_bound", False))
+
+        if not url:
+            resolved_id, mailing_bound = await _aqua_resolve_pins_for_mail(
+                session,
+                user_id=int(tg_user.id),
+                subject=subj_mail,
+                resolved_offer_id=resolved_id,
+                mailing_bound=mailing_bound,
+                inbox_email=inbox_email,
+                contact_email=contact_email,
+            )
+            offer, url = await resolve_offer_for_aqua_link(
+                session,
+                user_id=int(tg_user.id),
+                from_email=contact_email,
+                subject=subj_mail,
+                from_name=(getattr(mail, "from_name", "") or ""),
+                body_text=body_mail,
+                resolved_offer_id=resolved_id,
+                mail_ad_url=(getattr(mail, "ad_url", "") or "").strip() or None,
+                inbox_email=inbox_email,
+                mailing_bound=mailing_bound,
+            )
 
         if not url:
             from services.offer_matching import _load_offer
@@ -1958,27 +2017,42 @@ async def _create_aqua_link_work(callback: CallbackQuery, acc_id: int, uid: str,
 
         subj_pre = (getattr(mail_pre, "subject", "") or meta.get("subject") or "").strip()
         body_pre = (getattr(mail_pre, "body", "") or "").strip() if mail_pre else ""
-        resolved_id, mailing_bound = await _aqua_resolve_pins_for_mail(
-            session,
-            user_id=int(owner_user_id),
-            subject=subj_pre,
-            resolved_offer_id=getattr(mail_pre, "resolved_offer_id", None) if mail_pre else None,
-            mailing_bound=bool(getattr(mail_pre, "mailing_bound", False)) if mail_pre else False,
-            inbox_email=inbox_email,
-            contact_email=contact_email,
+
+        offer = None
+        url = ""
+        if mail_pre:
+            offer, url = await _resolve_and_bind_incoming_mail_offer(
+                session,
+                mail=mail_pre,
+                inbox_email=inbox_email,
+            )
+        resolved_id = int(offer.id) if offer else (
+            getattr(mail_pre, "resolved_offer_id", None) if mail_pre else None
         )
-        offer, url = await resolve_offer_for_aqua_link(
-            session,
-            user_id=int(owner_user_id),
-            from_email=contact_email,
-            subject=subj_pre,
-            from_name=(getattr(mail_pre, "from_name", "") or meta.get("from_name") or "").strip(),
-            body_text=body_pre,
-            resolved_offer_id=resolved_id,
-            mail_ad_url=(getattr(mail_pre, "ad_url", "") or "").strip() if mail_pre else None,
-            inbox_email=inbox_email,
-            mailing_bound=mailing_bound,
-        )
+        mailing_bound = bool(getattr(mail_pre, "mailing_bound", False)) if mail_pre else False
+
+        if not url:
+            resolved_id, mailing_bound = await _aqua_resolve_pins_for_mail(
+                session,
+                user_id=int(owner_user_id),
+                subject=subj_pre,
+                resolved_offer_id=resolved_id,
+                mailing_bound=mailing_bound,
+                inbox_email=inbox_email,
+                contact_email=contact_email,
+            )
+            offer, url = await resolve_offer_for_aqua_link(
+                session,
+                user_id=int(owner_user_id),
+                from_email=contact_email,
+                subject=subj_pre,
+                from_name=(getattr(mail_pre, "from_name", "") or meta.get("from_name") or "").strip(),
+                body_text=body_pre,
+                resolved_offer_id=resolved_id,
+                mail_ad_url=(getattr(mail_pre, "ad_url", "") or "").strip() if mail_pre else None,
+                inbox_email=inbox_email,
+                mailing_bound=mailing_bound,
+            )
 
         if not url:
             from services.offer_matching import _load_offer

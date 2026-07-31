@@ -589,11 +589,19 @@ async def list_offers_for_validated_contact_email(
             continue
         if not offer_effective_link(off):
             continue
-        for em in offer_validated_emails(off):
+        matched = False
+        for em in offer_contact_emails(off):
             if canon_seller_email(em) == want:
-                seen.add(oid)
-                out.append(off)
+                matched = True
                 break
+        if not matched:
+            for em in offer_validated_emails(off):
+                if canon_seller_email(em) == want:
+                    matched = True
+                    break
+        if matched:
+            seen.add(oid)
+            out.append(off)
         if len(out) >= int(limit):
             break
 

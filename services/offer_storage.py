@@ -6,7 +6,7 @@ import json
 import re
 from typing import Any
 
-from sqlalchemy import select as sa_select
+from sqlalchemy import func, or_, select as sa_select
 
 from models import Offer, OfferEmail
 
@@ -541,7 +541,7 @@ async def list_offers_for_validated_contact_email(
     contact_email: str,
     limit: int = 80,
 ) -> list[Offer]:
-    """Лоты по OfferEmail, validated_emails и журналу рассылки на этот email."""
+    """Лоты по OfferEmail (прямой поиск), validated_emails в raw_json, журнал рассылки."""
     from services.mailing_send_log import list_offers_from_mailing_log
     from services.offer_matching import canon_seller_email
 
@@ -552,34 +552,79 @@ async def list_offers_for_validated_contact_email(
     seen: set[int] = set()
     out: list[Offer] = []
 
-    oe_pairs = (
+    raw_in = (contact_email or "").strip().lower()
+    email_conds = [func.lower(OfferEmail.email) == want]
+    if raw_in and raw_in != want:
+        email_conds.append(func.lower(OfferEmail.email) == raw_in)
+    local_want = want.split("@", 1)[0] if "@" in want else ""
+    domain_want = want.split("@", 1)[1] if "@" in want else ""
+    if domain_want in ("gmail.com", "googlemail.com") and local_want:
+        email_conds.append(
+            func.replace(func.lower(OfferEmail.email), ".", "") == want.replace(".", "")
+        )
+
+    direct_rows = (
         await session.execute(
-            sa_select(Offer, OfferEmail)
+            sa_select(Offer)
             .join(OfferEmail, OfferEmail.offer_id == Offer.id)
             .where(Offer.user_id == int(user_id))
+            .where(or_(*email_conds))
             .order_by(Offer.id.desc())
-            .limit(2000)
+            .limit(max(int(limit), 40))
         )
-    ).all()
-    for off, oe in oe_pairs:
+    ).scalars().all()
+    for off in direct_rows:
         oid = int(off.id)
         if oid in seen:
             continue
         if not offer_effective_link(off):
-            continue
-        if not _seller_email_matches(oe.email or "", contact_email):
             continue
         seen.add(oid)
         out.append(off)
         if len(out) >= int(limit):
             return out
 
+    try:
+        bind = session.get_bind()
+        if bind is not None and bind.dialect.name == "postgresql":
+            needle = want.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+            pat = f"%{needle}%"
+            id_rows = (
+                await session.execute(
+                    sa_select(Offer.id)
+                    .where(Offer.user_id == int(user_id))
+                    .where(Offer.raw_json.isnot(None))
+                    .where(Offer.raw_json.ilike(pat, escape="\\"))
+                    .order_by(Offer.id.desc())
+                    .limit(max(int(limit) * 3, 60))
+                )
+            ).scalars().all()
+            for oid in id_rows:
+                oid = int(oid)
+                if oid in seen:
+                    continue
+                off = await session.get(Offer, oid)
+                if not off or int(off.user_id) != int(user_id):
+                    continue
+                if not offer_effective_link(off):
+                    continue
+                if not any(
+                    canon_seller_email(em) == want for em in offer_contact_emails(off)
+                ):
+                    continue
+                seen.add(oid)
+                out.append(off)
+                if len(out) >= int(limit):
+                    return out
+    except Exception:
+        pass
+
     rows = (
         await session.execute(
             sa_select(Offer)
             .where(Offer.user_id == int(user_id))
             .order_by(Offer.id.desc())
-            .limit(8000)
+            .limit(25000)
         )
     ).scalars().all()
 
@@ -594,11 +639,6 @@ async def list_offers_for_validated_contact_email(
             if canon_seller_email(em) == want:
                 matched = True
                 break
-        if not matched:
-            for em in offer_validated_emails(off):
-                if canon_seller_email(em) == want:
-                    matched = True
-                    break
         if matched:
             seen.add(oid)
             out.append(off)
@@ -618,6 +658,36 @@ async def list_offers_for_validated_contact_email(
         if len(out) >= int(limit):
             break
     return out
+
+
+async def find_single_offer_for_seller_contact_email(
+    session,
+    *,
+    user_id: int,
+    contact_email: str,
+) -> Offer | None:
+    """Один лот на validated email продавца (для IMAP / кнопок)."""
+    hits = await list_offers_for_validated_contact_email(
+        session,
+        user_id=int(user_id),
+        contact_email=contact_email,
+        limit=12,
+    )
+    if not hits:
+        return None
+    if len(hits) == 1:
+        return hits[0]
+    want = normalize_incoming_seller_email(contact_email)
+    from services.mailing_send_log import offer_was_mailed_to
+
+    mailed = [
+        off
+        for off in hits
+        if await offer_was_mailed_to(session, int(user_id), int(off.id), want or contact_email)
+    ]
+    if len(mailed) == 1:
+        return mailed[0]
+    return min(hits, key=lambda o: int(o.id))
 
 
 async def offer_has_validated_email(

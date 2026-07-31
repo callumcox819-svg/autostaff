@@ -14,6 +14,7 @@ from services.offer_matching import (
     find_offer_from_incoming_dialog,
 )
 from services.offer_storage import (
+    find_single_offer_for_seller_contact_email,
     list_offers_for_validated_contact_email,
     normalize_incoming_seller_email,
     offer_effective_link,
@@ -59,13 +60,12 @@ async def is_incoming_seller_lead(
         return False
     if await has_mailing_send_for_contact(session, int(user_id), contact_email):
         return True
-    rows = await list_offers_for_validated_contact_email(
+    single = await find_single_offer_for_seller_contact_email(
         session,
         user_id=int(user_id),
         contact_email=contact_email,
-        limit=5,
     )
-    return bool(rows)
+    return single is not None
 
 
 async def _offer_from_id(

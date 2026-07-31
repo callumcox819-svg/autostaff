@@ -1616,9 +1616,33 @@ async def _process_mails_for_account_impl(
                                 resolved_offer_id = None
                                 listing_url = ""
                         else:
-                            resolved_offer_id = None
-                            resolved_offer_email_id = None
-                            listing_url = ""
+                            from services.incoming_lead_resolve import _snapshot_from_mailed_offer
+                            from services.offer_storage import (
+                                find_single_offer_for_seller_contact_email,
+                                offer_effective_link,
+                                offer_effective_title,
+                            )
+                            from services.subject_offer import pick_mailing_subject
+
+                            fb = await find_single_offer_for_seller_contact_email(
+                                session,
+                                user_id=int(user_id),
+                                contact_email=contact_email or from_email_clean,
+                            )
+                            if fb:
+                                offer_bound = fb
+                                resolved_offer_id = int(fb.id)
+                                listing_url = (offer_effective_link(fb) or "").strip()
+                                out_subj = pick_mailing_subject(
+                                    (offer_effective_title(fb) or "").strip()
+                                )
+                                lead_snap = _snapshot_from_mailed_offer(
+                                    fb, outgoing_mail_subject=out_subj
+                                )
+                            else:
+                                resolved_offer_id = None
+                                resolved_offer_email_id = None
+                                listing_url = ""
 
                         existing.resolved_offer_id = resolved_offer_id
                         existing.resolved_offer_email_id = resolved_offer_email_id

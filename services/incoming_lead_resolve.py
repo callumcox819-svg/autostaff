@@ -122,9 +122,11 @@ async def resolve_offer_from_validated_seller_email(
     if pid:
         pinned_off = await _offer_from_id(session, user_id=int(user_id), offer_id=pid)
         if pinned_off:
-            link = (offer_effective_link(pinned_off) or "").strip()
-            if link:
-                return pinned_off, link, "validated_seller_email_pinned"
+            return (
+                pinned_off,
+                (offer_effective_link(pinned_off) or "").strip(),
+                "validated_seller_email_pinned",
+            )
 
     off = await find_single_offer_for_seller_contact_email(
         session,
@@ -133,10 +135,7 @@ async def resolve_offer_from_validated_seller_email(
     )
     if not off:
         return None, "", ""
-    link = (offer_effective_link(off) or "").strip()
-    if not link:
-        return None, "", ""
-    return off, link, "validated_seller_email"
+    return off, (offer_effective_link(off) or "").strip(), "validated_seller_email"
 
 
 async def resolve_offer_for_incoming_lead(
@@ -192,8 +191,7 @@ async def resolve_offer_for_incoming_lead(
         off = await _offer_from_id(session, user_id=int(user_id), offer_id=int(pinned))
         if off:
             link = (offer_effective_link(off) or "").strip()
-            if link:
-                how = "pinned_offer_id"
+            how = "pinned_offer_id"
 
     if not off:
         off, link, how = await resolve_offer_from_validated_seller_email(
@@ -238,7 +236,7 @@ async def resolve_offer_for_incoming_lead(
     if off and not link:
         link = (offer_effective_link(off) or "").strip()
 
-    if off and link:
+    if off:
         out_subj = await _resolve_outgoing_subject(
             session,
             user_id=int(user_id),

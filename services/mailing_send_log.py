@@ -136,8 +136,6 @@ async def resolve_inbound_from_send_log(
 
     def _pick(log: MailingSendLog, off: Offer) -> tuple[Offer | None, str, str, str]:
         link = (offer_effective_link(off) or "").strip()
-        if not link:
-            return None, "", "", ""
         out_subj = (log.mail_subject or "").strip()
         return off, link, out_subj, "mailing_send_log"
 
@@ -221,8 +219,7 @@ async def find_latest_mailed_offer_for_recipient(
         oid = int(off.id)
         if offer_ids is not None and oid not in offer_ids:
             continue
-        if (offer_effective_link(off) or "").strip():
-            return off
+        return off
     return None
 
 

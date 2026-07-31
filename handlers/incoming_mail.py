@@ -852,7 +852,7 @@ async def _resolve_and_bind_incoming_mail_offer(
 ) -> tuple[Offer | None, str]:
     """Найти лот по validated email / send log и записать в IncomingMail."""
     from services.incoming_lead_resolve import resolve_offer_for_incoming_lead
-    from services.offer_storage import normalize_incoming_seller_email
+    from services.offer_storage import normalize_incoming_seller_email, offer_effective_link
 
     contact = normalize_incoming_seller_email(getattr(mail, "from_email", "") or "")
     if not contact:
@@ -869,12 +869,13 @@ async def _resolve_and_bind_incoming_mail_offer(
         inbox_email=(inbox_email or "").strip(),
         mailing_bound=bool(getattr(mail, "mailing_bound", False)),
     )
-    if not off or not (url or "").strip():
+    if not off:
         return None, ""
-    url = url.strip()
+    url = (url or "").strip() or (offer_effective_link(off) or "").strip()
     mail.resolved_offer_id = int(off.id)
     mail.mailing_bound = True
-    mail.ad_url = url
+    if url:
+        mail.ad_url = url
     pt = (snap.get("product_title") or "").strip()
     if pt:
         mail.product_title = pt[:500]

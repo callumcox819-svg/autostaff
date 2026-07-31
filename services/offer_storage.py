@@ -577,8 +577,6 @@ async def list_offers_for_validated_contact_email(
         oid = int(off.id)
         if oid in seen:
             continue
-        if not offer_effective_link(off):
-            continue
         seen.add(oid)
         out.append(off)
         if len(out) >= int(limit):
@@ -630,8 +628,6 @@ async def list_offers_for_validated_contact_email(
         oid = int(off.id)
         if oid in seen:
             continue
-        if not offer_effective_link(off):
-            continue
         matched = False
         for em in offer_contact_emails(off):
             if canon_seller_email(em) == want:
@@ -648,8 +644,6 @@ async def list_offers_for_validated_contact_email(
     ):
         oid = int(off.id)
         if oid in seen:
-            continue
-        if not offer_effective_link(off):
             continue
         seen.add(oid)
         out.append(off)
@@ -673,6 +667,12 @@ async def find_single_offer_for_seller_contact_email(
     )
     if not hits:
         return None
+
+    def _prefer_linked(cands: list[Offer]) -> list[Offer]:
+        linked = [o for o in cands if (offer_effective_link(o) or "").strip()]
+        return linked or cands
+
+    hits = _prefer_linked(hits)
     if len(hits) == 1:
         return hits[0]
     want = normalize_incoming_seller_email(contact_email)

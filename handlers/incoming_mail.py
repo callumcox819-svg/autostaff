@@ -1281,14 +1281,6 @@ async def _send_generated_link_card_to_chat(
 
     if reply_to:
         try:
-            await bot.send_message(
-                chat_id,
-                f"{html_emoji('ok')} Ссылка создана",
-                reply_to_message_id=reply_to,
-            )
-        except Exception:
-            await bot.send_message(chat_id, f"{html_emoji('ok')} Ссылка создана")
-        try:
             await _try_pin(bot, chat_id, reply_to)
         except Exception:
             pass

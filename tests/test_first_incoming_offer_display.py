@@ -4,7 +4,20 @@ from __future__ import annotations
 import unittest
 from unittest.mock import AsyncMock, MagicMock
 
-from services.incoming_mail_worker import render_mail_text_chunks
+from services.incoming_mail_worker import _incoming_body_dedupe_key, render_mail_text_chunks
+
+
+class IncomingBodyDedupeTests(unittest.TestCase):
+    def test_same_body_different_whitespace_matches(self):
+        a = "Bitte ab sofort nur noch die neue Email Adresse n_romano@bluewin.ch verwenden.\n\nVielen Dank"
+        b = "Bitte ab sofort nur noch die neue Email Adresse n_romano@bluewin.ch verwenden.  Vielen Dank"
+        self.assertEqual(_incoming_body_dedupe_key(a), _incoming_body_dedupe_key(b))
+
+    def test_different_body_no_key_collision(self):
+        k1 = _incoming_body_dedupe_key("Erster langer Text vom Verkäufer mit genug Zeichen.")
+        k2 = _incoming_body_dedupe_key("Zweiter langer Text vom Verkäufer mit genug Zeichen.")
+        self.assertTrue(k1 and k2)
+        self.assertNotEqual(k1, k2)
 
 
 class FirstIncomingCardDisplayTests(unittest.TestCase):

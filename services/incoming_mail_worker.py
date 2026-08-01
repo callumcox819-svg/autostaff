@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import email
+import hashlib
 import html
 import html as html_module
 import imaplib
@@ -867,6 +868,18 @@ def _clean_mail_body_for_card(raw: str) -> str:
     return txt
 
 
+_INCOMING_BODY_DEDUPE_MINUTES = 45
+
+
+def _incoming_body_dedupe_key(body: str) -> str:
+    """Один ответ продавца — Ricardo иногда шлёт 2 письма с разной темой и тем же текстом."""
+    cleaned = _clean_mail_body_for_card((body or "").strip())
+    norm = re.sub(r"\s+", " ", cleaned).strip().lower()
+    if len(norm) < 16:
+        return ""
+    return hashlib.sha256(norm.encode("utf-8")).hexdigest()[:40]
+
+
 def _ensure_multiline_for_expandable(text: str) -> str:
     """Telegram показывает стрелку разворота только у многострочного expandable blockquote."""
     if not text:
@@ -987,6 +1000,101 @@ def _service_display_label(label: str | None) -> str:
     return s
 
 
+async def _find_duplicate_telegram_by_body(
+    session,
+    *,
+    mail_db_id: int,
+    user_id: int,
+    account_id: int,
+    from_email: str,
+    body: str,
+) -> int | None:
+    from datetime import datetime, timedelta
+
+    key = _incoming_body_dedupe_key(body)
+    from_e = (from_email or "").strip().lower()
+    if not key or not from_e:
+        return None
+    cutoff = datetime.utcnow() - timedelta(minutes=_INCOMING_BODY_DEDUPE_MINUTES)
+    rows = (
+        await session.execute(
+            sa_select(IncomingMail.id, IncomingMail.body, IncomingMail.telegram_message_id)
+            .where(IncomingMail.user_id == int(user_id))
+            .where(IncomingMail.account_id == int(account_id))
+            .where(func.lower(IncomingMail.from_email) == from_e)
+            .where(IncomingMail.created_at >= cutoff)
+            .where(IncomingMail.id != int(mail_db_id))
+            .order_by(IncomingMail.id.desc())
+            .limit(16)
+        )
+    ).all()
+    for _rid, b, tid in rows:
+        if tid is None or int(tid) <= 0:
+            continue
+        if _incoming_body_dedupe_key(b or "") == key:
+            return int(tid)
+    return None
+
+
+async def _incoming_body_notify_inflight(
+    session,
+    *,
+    mail_db_id: int,
+    user_id: int,
+    account_id: int,
+    from_email: str,
+    body: str,
+) -> bool:
+    from datetime import datetime, timedelta
+
+    key = _incoming_body_dedupe_key(body)
+    from_e = (from_email or "").strip().lower()
+    if not key or not from_e:
+        return False
+    cutoff = datetime.utcnow() - timedelta(minutes=_INCOMING_BODY_DEDUPE_MINUTES)
+    rows = (
+        await session.execute(
+            sa_select(IncomingMail.id, IncomingMail.body, IncomingMail.telegram_message_id)
+            .where(IncomingMail.user_id == int(user_id))
+            .where(IncomingMail.account_id == int(account_id))
+            .where(func.lower(IncomingMail.from_email) == from_e)
+            .where(IncomingMail.created_at >= cutoff)
+            .where(IncomingMail.id != int(mail_db_id))
+            .order_by(IncomingMail.id.desc())
+            .limit(16)
+        )
+    ).all()
+    for _rid, b, tid in rows:
+        if tid is None or int(tid) != -1:
+            continue
+        if _incoming_body_dedupe_key(b or "") == key:
+            return True
+    return False
+
+
+async def _acquire_incoming_notify_lock(
+    session,
+    *,
+    user_id: int,
+    account_id: int,
+    from_email: str,
+    body: str,
+) -> None:
+    key = _incoming_body_dedupe_key(body)
+    from_e = (from_email or "").strip().lower()
+    if not key or not from_e:
+        return
+    lock_id = hash(f"{user_id}:{account_id}:{from_e}:{key}") & 0x7FFFFFFFFFFFFFFF
+    try:
+        from sqlalchemy import text
+
+        bind = session.get_bind()
+        if bind.dialect.name == "postgresql":
+            await session.execute(text("SELECT pg_advisory_xact_lock(:k)"), {"k": lock_id})
+    except Exception:
+        pass
+
+
 async def _find_duplicate_telegram_message_id(
     session,
     *,
@@ -1029,7 +1137,75 @@ async def _find_duplicate_telegram_message_id(
     ).scalar_one_or_none()
     if dup is not None:
         return int(dup)
+
+    body_dup = await _find_duplicate_telegram_by_body(
+        session,
+        mail_db_id=int(mail_db_id),
+        user_id=int(user_id),
+        account_id=int(account_id),
+        from_email=from_email,
+        body=body,
+    )
+    if body_dup is not None:
+        return int(body_dup)
     return None
+
+
+async def _wait_duplicate_telegram_notify(
+    session,
+    *,
+    mail_db_id: int,
+    user_id: int,
+    account_id: int,
+    from_email: str,
+    subject: str,
+    body: str,
+) -> int | None:
+    """
+    >0 — карточка уже в TG; None — можно отправлять; -1 — другой воркер шлёт, пропуск.
+    """
+    from_e = (from_email or "").strip().lower()
+    subj = (subject or "").strip()
+    for _ in range(12):
+        dup = await _find_duplicate_telegram_message_id(
+            session,
+            mail_db_id=int(mail_db_id),
+            user_id=int(user_id),
+            account_id=int(account_id),
+            from_email=from_email,
+            subject=subject,
+            body=body,
+        )
+        if dup is not None and int(dup) > 0:
+            return int(dup)
+        if from_e and subj:
+            inflight = (
+                await session.execute(
+                    sa_select(IncomingMail.id)
+                    .where(IncomingMail.user_id == int(user_id))
+                    .where(IncomingMail.account_id == int(account_id))
+                    .where(IncomingMail.from_email == from_e)
+                    .where(IncomingMail.subject == subj)
+                    .where(IncomingMail.telegram_message_id == -1)
+                    .where(IncomingMail.id != int(mail_db_id))
+                    .limit(1)
+                )
+            ).scalar_one_or_none()
+            if inflight is not None:
+                await asyncio.sleep(0.35)
+                continue
+        if await _incoming_body_notify_inflight(
+            session,
+            mail_db_id=int(mail_db_id),
+            user_id=int(user_id),
+            account_id=int(account_id),
+            from_email=from_email,
+            body=body,
+        ):
+            await asyncio.sleep(0.35)
+            continue
+        return None
+    return -1
 
 
 async def _try_claim_telegram_notify(session, mail_db_id: int) -> bool:
@@ -1383,6 +1559,37 @@ async def is_first_inbound_mail_for_seller_offer(
         )
     ).scalar() or 0
     return int(prior) == 0
+
+
+async def seller_offer_photo_sent_recently(
+    session,
+    *,
+    user_id: int,
+    account_id: int,
+    from_email: str,
+    resolved_offer_id: int,
+    mail_id: int,
+) -> bool:
+    """Не слать второе фото, если тот же продавец/лот уже ушли в TG (две темы — одно тело)."""
+    from datetime import datetime, timedelta
+
+    if not int(resolved_offer_id or 0) or not int(mail_id or 0):
+        return False
+    cutoff = datetime.utcnow() - timedelta(minutes=_INCOMING_BODY_DEDUPE_MINUTES)
+    prior = (
+        await session.execute(
+            sa_select(func.count(IncomingMail.id))
+            .where(IncomingMail.user_id == int(user_id))
+            .where(IncomingMail.account_id == int(account_id))
+            .where(IncomingMail.from_email == str(from_email or "").strip())
+            .where(IncomingMail.resolved_offer_id == int(resolved_offer_id))
+            .where(IncomingMail.telegram_message_id.isnot(None))
+            .where(IncomingMail.telegram_message_id > 0)
+            .where(IncomingMail.id != int(mail_id))
+            .where(IncomingMail.created_at >= cutoff)
+        )
+    ).scalar() or 0
+    return int(prior) > 0
 
 
 async def build_mail_card_from_mail(
@@ -2072,6 +2279,64 @@ async def _process_mails_for_account_impl(
                             "mailing-log fallback bind failed from=%s",
                             from_email_clean,
                         )
+                if not offer_id and mail_db_id:
+                    from services.incoming_lead_resolve import resolve_offer_for_incoming_lead
+                    from services.offer_storage import (
+                        normalize_incoming_seller_email,
+                        offer_effective_link,
+                        offer_effective_photo,
+                        offer_effective_price,
+                        offer_effective_title,
+                    )
+
+                    try:
+                        async with _imap_db_session() as _s_lr:
+                            contact_lr = (
+                                normalize_incoming_seller_email(from_email_clean)
+                                or from_email_clean
+                            )
+                            off_lr, _u, _how, snap_lr = await resolve_offer_for_incoming_lead(
+                                _s_lr,
+                                user_id=int(user_id),
+                                contact_email=contact_lr,
+                                subject=subject or "",
+                                from_name=(from_name or "").strip(),
+                                body_text=body_clean or "",
+                                resolved_offer_id=resolved_offer_id,
+                                mail_ad_url=ad_url,
+                                inbox_email=inbox_email_clean,
+                                mailing_bound=mailing_bound_flag,
+                            )
+                            if off_lr:
+                                offer_id = int(off_lr.id)
+                                mailing_bound_flag = True
+                                resolved_offer_id = int(offer_id)
+                                product_title = (
+                                    snap_lr.get("product_title") or ""
+                                ).strip() or product_title or (
+                                    offer_effective_title(off_lr) or ""
+                                ).strip()
+                                offer_price = (
+                                    snap_lr.get("offer_price") or ""
+                                ).strip() or offer_price or (
+                                    offer_effective_price(off_lr, default="") or ""
+                                ).strip()
+                                photo_url = (
+                                    snap_lr.get("photo_url") or ""
+                                ).strip() or photo_url or (
+                                    offer_effective_photo(off_lr) or ""
+                                ).strip()
+                                if not service_label:
+                                    service_label = (
+                                        snap_lr.get("service_label") or ""
+                                    ).strip() or _service_label_from_link(
+                                        offer_effective_link(off_lr)
+                                    )
+                    except Exception:
+                        logger.exception(
+                            "resolve_offer_for_incoming_lead before card from=%s",
+                            from_email_clean,
+                        )
             except Exception:
                 logger.exception("Failed to load Offer meta for incoming mail: from=%s", from_email_clean)
 
@@ -2090,6 +2355,17 @@ async def _process_mails_for_account_impl(
                             mail_id=int(mail_db_id),
                         )
                     if show_offer_on_card and photo_url:
+                        async with _imap_db_session() as _s2:
+                            if await seller_offer_photo_sent_recently(
+                                _s2,
+                                user_id=int(user_id),
+                                account_id=int(acc_id),
+                                from_email=str(from_email_clean).strip(),
+                                resolved_offer_id=int(offer_id),
+                                mail_id=int(mail_db_id),
+                            ):
+                                show_offer_on_card = False
+                    if show_offer_on_card and photo_url:
                         photo_to_send = photo_url
                         photo_caption = format_first_incoming_photo_caption(
                             product_title=product_title,
@@ -2105,6 +2381,29 @@ async def _process_mails_for_account_impl(
             card_subject = (
                 (card_outgoing_subject or saved_outgoing_mail_subject or subject or "").strip()
             )
+
+            if mail_db_id and offer_id:
+                try:
+                    async with _imap_db_session() as session:
+                        await session.execute(
+                            update(IncomingMail)
+                            .where(IncomingMail.id == int(mail_db_id))
+                            .values(
+                                resolved_offer_id=int(offer_id),
+                                mailing_bound=True,
+                                product_title=(product_title or "")[:500] or None,
+                                offer_price=(offer_price or "")[:64] or None,
+                                photo_url=(photo_url or "")[:2000] or None,
+                                service_label=(service_label or "")[:64] or None,
+                                outgoing_mail_subject=(card_subject or "")[:500] or None,
+                            )
+                        )
+                        await _db_commit_retry(session)
+                except Exception:
+                    logger.exception(
+                        "persist offer snapshot before TG mail_id=%s", mail_db_id
+                    )
+
             chunks = render_mail_text_chunks(
                 account_email=account_email,
                 inbox_label=inbox_label,
@@ -2157,7 +2456,14 @@ async def _process_mails_for_account_impl(
                 if mail_db_id:
                     try:
                         async with _imap_db_session() as session:
-                            dup_tid = await _find_duplicate_telegram_message_id(
+                            await _acquire_incoming_notify_lock(
+                                session,
+                                user_id=int(user_id),
+                                account_id=int(acc_id),
+                                from_email=from_email_clean,
+                                body=body_clean or "",
+                            )
+                            dup_tid = await _wait_duplicate_telegram_notify(
                                 session,
                                 mail_db_id=int(mail_db_id),
                                 user_id=int(user_id),
@@ -2166,7 +2472,10 @@ async def _process_mails_for_account_impl(
                                 subject=subject or "",
                                 body=body_clean or "",
                             )
-                            if dup_tid:
+                            if dup_tid == -1:
+                                forwarded += 1
+                                continue
+                            if dup_tid and int(dup_tid) > 0:
                                 await session.execute(
                                     update(IncomingMail)
                                     .where(IncomingMail.id == int(mail_db_id))

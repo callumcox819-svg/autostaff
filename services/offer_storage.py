@@ -442,7 +442,7 @@ async def find_offer_by_product_title_in_subject(
 
     hits: list[Offer] = []
     for off in rows:
-        if not offer_effective_link(off):
+        if not offer_incoming_bindable(off):
             continue
         title = (offer_effective_title(off) or "").strip().lower()
         if not title or len(title) < 4:

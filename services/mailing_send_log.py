@@ -183,6 +183,10 @@ async def _mailing_log_rows_for_recipient(
         )
         if off:
             out.append((log, off))
+    if not out and email:
+        return await _recover_mailing_log_rows(
+            session, int(user_id), contact_email, limit=min(int(limit), 80)
+        )
     return out
 
 
@@ -496,6 +500,45 @@ async def offer_allowed_for_incoming_contact(
     )
 
 
+async def _recover_mailing_log_rows(
+    session,
+    user_id: int,
+    contact_email: str,
+    *,
+    limit: int = 80,
+) -> list[tuple[MailingSendLog, Offer]]:
+    """Журнал есть, но offer_id в строках мёртв — восстановить лот по теме / OfferEmail."""
+    email = _canon_recipient(contact_email)
+    if not email:
+        return []
+    raw = (contact_email or "").strip().lower()
+    conds = [func.lower(MailingSendLog.recipient_email) == email]
+    if raw and raw != email:
+        conds.append(func.lower(MailingSendLog.recipient_email) == raw)
+    logs = (
+        await session.execute(
+            select(MailingSendLog)
+            .where(MailingSendLog.user_id == int(user_id))
+            .where(or_(*conds))
+            .order_by(MailingSendLog.sent_at.desc(), MailingSendLog.id.desc())
+            .limit(int(limit))
+        )
+    ).scalars().all()
+    out: list[tuple[MailingSendLog, Offer]] = []
+    seen: set[int] = set()
+    for log in logs:
+        lid = int(log.id)
+        if lid in seen:
+            continue
+        seen.add(lid)
+        off = await _offer_for_mailing_log_row(
+            session, int(user_id), log, contact_email=email
+        )
+        if off:
+            out.append((log, off))
+    return out
+
+
 async def find_offer_from_mailing_log(
     session,
     user_id: int,
@@ -507,13 +550,30 @@ async def find_offer_from_mailing_log(
     Если несколько — уточняем по теме Re:.
     """
     rows = await _mailing_log_rows_for_recipient(session, user_id, contact_email, limit=400)
-
-    if not rows:
-        return None, ""
+    if not rows and (contact_email or "").strip():
+        rows = await _recover_mailing_log_rows(
+            session, int(user_id), contact_email, limit=80
+        )
 
     subj_needle = product_title_from_subject(subject)
     in_norm = _norm_subject(subject).lower()
     in_product = (subj_needle or "").strip().lower()
+
+    if in_product and rows:
+        pool: list[Offer] = []
+        seen_oid: set[int] = set()
+        for _log, off in rows:
+            oid = int(off.id)
+            if oid in seen_oid:
+                continue
+            seen_oid.add(oid)
+            pool.append(off)
+        pick = _pick_offer_by_subject_in_list(pool, subject)
+        if pick and _mailing_return_offer(pick):
+            return pick, "mailing_early_subject_pick"
+
+    if not rows:
+        return None, ""
 
     for log, off in rows:
         sent_norm = _norm_subject(log.mail_subject or "").lower()
@@ -565,9 +625,6 @@ async def find_offer_from_mailing_log(
     unique_ids = {int(off.id) for _log, off in rows}
     if len(unique_ids) == 1:
         _log, off = rows[0]
-        if subj_needle and subject_is_informative(subject) and not subject_title_agrees(subject, off):
-            if not incoming_subject_binds_offer(subject, off):
-                return None, ""
         if _mailing_return_offer(off):
             return off, "mailing_only_offer"
 

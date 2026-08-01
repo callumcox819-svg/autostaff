@@ -79,6 +79,18 @@ class OfferSubjectMatchTests(unittest.TestCase):
             "ProLight Design Hängeleuchte",
         )
 
+    def test_product_title_guten_tag_nochn_verfugbar_preset(self):
+        title = "CNF Belt Octopus SWISS MADE - Nuova - White"
+        subj = f"Re: Guten Tag, {title} noch verfügbar?"
+        self.assertEqual(product_title_from_subject(subj), title)
+
+    def test_inbound_subject_matches_rotated_send_subject(self):
+        from services.subject_offer import offer_title_from_inbound_subject, pick_mailing_subject
+
+        title = "Stardupp Ultra SUP Paddle"
+        sent = pick_mailing_subject(title)
+        self.assertEqual(offer_title_from_inbound_subject(f"Re: {sent}"), title)
+
     def test_product_title_ist_noch_zu_haben(self):
         self.assertEqual(
             product_title_from_subject("Re: Ist Nordica Dobermann SLR 165 noch zu haben?"),

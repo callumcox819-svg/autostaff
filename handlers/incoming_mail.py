@@ -1922,8 +1922,7 @@ async def _create_aqua_link_from_db_work(callback: CallbackQuery, mail_id: int) 
                 f"{html_emoji('fail')} <b>Не нашёл объявление для этого письма</b>\n\n"
                 f"<b>Тема:</b> <code>{_e(subj_hint or '—')}</code>\n"
                 f"<b>От:</b> <code>{_e(contact_email) or '—'}</code>\n\n"
-                "Загрузите JSON с этим лотом, провалидируйте email продавца "
-                "(поле <code>item_link</code> — ссылка ricardo.ch/tutti.ch), затем снова «Создать ссылку».",
+                "Загрузите JSON с этим лотом, провалидируйте email продавца, затем снова «Создать ссылку».",
                 parse_mode="HTML",
                 disable_web_page_preview=True,
             )

@@ -7,6 +7,10 @@ import re
 from config import config
 
 _OFFER_WORD_RE = re.compile(r"\bOFFER\b", re.IGNORECASE)
+_REPLY_PREFIX_RE = re.compile(
+    r"^(?:(?:re|aw|fw|fwd|wg)\s*:\s*)+",
+    re.IGNORECASE,
+)
 
 
 def sanitize_email_subject(text: str) -> str:
@@ -91,3 +95,112 @@ async def resolve_mailing_subject_template(session, user) -> str:
 async def mailing_subject_for_user(session, user, offer_title: str) -> str:
     del session, user
     return pick_mailing_subject(offer_title)
+
+
+def _mailing_subject_templates() -> tuple[str, ...]:
+    """Все шаблоны темы /send — OFFER = полное item_title из БД."""
+    from services.mailing_deliverability import CH_INBOX_SUBJECT_PRESETS
+
+    seen: set[str] = set()
+    out: list[str] = []
+    for tpl in (*CH_INBOX_SUBJECT_PRESETS, global_subject_template(), "Re: OFFER"):
+        t = sanitize_email_subject((tpl or "").strip())
+        if not t or t in seen:
+            continue
+        seen.add(t)
+        out.append(t)
+    for _, t in MAILING_SUBJECT_PRESETS:
+        t = sanitize_email_subject((t or "").strip())
+        if t and t not in seen:
+            seen.add(t)
+            out.append(t)
+    return tuple(out)
+
+
+def _regex_from_offer_template(template: str) -> re.Pattern[str] | None:
+    """Шаблон с OFFER → regex: из входящей Re: темы достать только OFFER (товар)."""
+    tpl = sanitize_email_subject(template)
+    if not tpl:
+        return None
+    if tpl.upper() == "OFFER":
+        return re.compile(r"^(?P<offer>.+?)\s*$", re.IGNORECASE | re.DOTALL)
+
+    if not _OFFER_WORD_RE.search(tpl):
+        return None
+
+    slot = "\uE000"
+    tmp = _OFFER_WORD_RE.sub(slot, tpl)
+    parts = tmp.split(slot)
+    if len(parts) < 2:
+        return None
+
+    regex = "^"
+    for i, part in enumerate(parts):
+        if part:
+            regex += re.escape(part)
+        if i < len(parts) - 1:
+            # Между фиксированными фразами пресета — только название товара (OFFER).
+            regex += "(?P<offer>.+?)"
+    regex += r"\s*$"
+    return re.compile(regex, re.IGNORECASE | re.DOTALL)
+
+
+def _compiled_inbound_offer_extractors() -> tuple[re.Pattern[str], ...]:
+    specific: list[re.Pattern[str]] = []
+    plain: list[re.Pattern[str]] = []
+    for tpl in _mailing_subject_templates():
+        rx = _regex_from_offer_template(tpl)
+        if rx is None:
+            continue
+        if sanitize_email_subject(tpl).upper() in ("OFFER", "RE: OFFER"):
+            plain.append(rx)
+        else:
+            specific.append(rx)
+    return tuple(specific + plain)
+
+
+_INBOUND_OFFER_EXTRACTORS: tuple[re.Pattern[str], ...] | None = None
+
+_MAILING_WRAPPER_RE = re.compile(
+    r"(?:"
+    r"kurze\s+frage|kurze\s+anfrage|interesse\s+an|kaufinteresse|"
+    r"noch\s+verf[uü]gbar|noch\s+verfugbar|guten\s+tag|haben\s+sie|"
+    r"noch\s+nicht\s+verkauft|anfrage\s*:|frage\s+zu|pretenda\s+per|"
+    r"noch\s+zu\s+haben|noch\s+da|noch\s+aktuell|noch\s+im\s+verkauf"
+    r")",
+    re.IGNORECASE,
+)
+
+
+def _inbound_offer_extractors() -> tuple[re.Pattern[str], ...]:
+    global _INBOUND_OFFER_EXTRACTORS
+    if _INBOUND_OFFER_EXTRACTORS is None:
+        _INBOUND_OFFER_EXTRACTORS = _compiled_inbound_offer_extractors()
+    return _INBOUND_OFFER_EXTRACTORS
+
+
+def offer_title_from_inbound_subject(subject: str) -> str:
+    """
+    Из Re:/Aw:/WG: темы ответа продавца — только OFFER (полное item_title),
+    без «Kurze Frage zu», «Guten Tag,», «noch verfügbar?» и т.д.
+    """
+    raw = sanitize_email_subject(subject)
+    if not raw:
+        return ""
+    subj = _REPLY_PREFIX_RE.sub("", raw).strip()
+    if not subj:
+        return ""
+
+    for rx in _inbound_offer_extractors():
+        m = rx.match(subj)
+        if not m:
+            continue
+        offer = sanitize_email_subject((m.group("offer") or "").strip())
+        if len(offer) >= 3 and offer.upper() not in ("OFFER", "ARTIKEL", "TEST"):
+            if offer == subj and _MAILING_WRAPPER_RE.search(subj):
+                continue
+            if len(offer) > 140:
+                offer = offer[:137].rstrip() + "…"
+            return offer
+
+    return ""

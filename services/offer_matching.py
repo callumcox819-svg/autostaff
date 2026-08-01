@@ -48,7 +48,13 @@ def _norm_subject(subject: str) -> str:
 
 
 def product_title_from_subject(subject: str) -> str:
-    """Название из темы (Re: … / Interesse an … / Ist … noch zu haben?)."""
+    """Название товара (OFFER) из темы — те же пресеты, что /send и тест-маил."""
+    from services.subject_offer import offer_title_from_inbound_subject
+
+    extracted = offer_title_from_inbound_subject(subject)
+    if extracted:
+        return extracted
+
     subj = _norm_subject(subject)
     subj = re.sub(
         r"^(?:"

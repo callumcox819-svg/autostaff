@@ -18,7 +18,7 @@ from typing import Optional, List, Tuple, Dict, Any
 from aiogram import Bot
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from utils.ui_emoji import html_emoji, inline_button, menu_path, toast, msg_fail, msg_ok, msg_wait, msg_warn
-from sqlalchemy import select as sa_select, or_ as sa_or, func
+from sqlalchemy import select as sa_select, or_ as sa_or, func, update
 from sqlalchemy.exc import OperationalError
 
 from database import Session
@@ -971,6 +971,84 @@ def _service_label_from_link(link: str) -> str:
     return ""
 
 
+def _service_display_label(label: str | None) -> str:
+    """Как FI WORKING: Facebook.com в карточке."""
+    s = (label or "").strip()
+    if not s:
+        return ""
+    low = s.lower()
+    if low == "facebook.com":
+        return "Facebook.com"
+    return s
+
+
+async def _find_duplicate_telegram_message_id(
+    session,
+    *,
+    mail_db_id: int,
+    user_id: int,
+    account_id: int,
+    from_email: str,
+    subject: str,
+    body: str,
+) -> int | None:
+    """Тот же продавец/тема/тело уже ушли в TG (другой imap_uid или второй poll)."""
+    row = (
+        await session.execute(
+            sa_select(IncomingMail.telegram_message_id).where(
+                IncomingMail.id == int(mail_db_id)
+            )
+        )
+    ).scalar_one_or_none()
+    if row is not None and int(row) > 0:
+        return int(row)
+
+    from_e = (from_email or "").strip().lower()
+    subj = (subject or "").strip()
+    if not from_e or not subj:
+        return None
+
+    dup = (
+        await session.execute(
+            sa_select(IncomingMail.telegram_message_id)
+            .where(IncomingMail.user_id == int(user_id))
+            .where(IncomingMail.account_id == int(account_id))
+            .where(IncomingMail.from_email == from_e)
+            .where(IncomingMail.subject == subj)
+            .where(IncomingMail.telegram_message_id.isnot(None))
+            .where(IncomingMail.telegram_message_id > 0)
+            .where(IncomingMail.id != int(mail_db_id))
+            .order_by(IncomingMail.id.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if dup is not None:
+        return int(dup)
+    return None
+
+
+async def _try_claim_telegram_notify(session, mail_db_id: int) -> bool:
+    """Один воркер на карточку (telegram_message_id=-1 — отправка в процессе)."""
+    res = await session.execute(
+        update(IncomingMail)
+        .where(IncomingMail.id == int(mail_db_id))
+        .where(IncomingMail.telegram_message_id.is_(None))
+        .values(telegram_message_id=-1)
+    )
+    await session.commit()
+    return bool(res.rowcount)
+
+
+async def _release_telegram_notify_claim(session, mail_db_id: int) -> None:
+    await session.execute(
+        update(IncomingMail)
+        .where(IncomingMail.id == int(mail_db_id))
+        .where(IncomingMail.telegram_message_id == -1)
+        .values(telegram_message_id=None)
+    )
+    await session.commit()
+
+
 def _service_html(label: str) -> str:
     """Как «Товар» — моноширинный текст для копирования, без кликабельной ссылки и превью."""
     s = (label or "").strip()
@@ -1003,7 +1081,7 @@ def render_mail_text_chunks(
     if offer_id:
         extra += f"<b>Лот:</b> <code>{int(offer_id)}</code>\n"
     if service_label:
-        extra += f"<b>Сервис:</b> {_service_html(service_label)}\n"
+        extra += f"<b>Сервис:</b> {_service_html(_service_display_label(service_label))}\n"
     if product_title:
         extra += f"<b>Товар:</b> <code>{_e(product_title)}</code>\n"
     price_s = (offer_price or "").strip()
@@ -2020,14 +2098,60 @@ async def _process_mails_for_account_impl(
                 reply_to_id = None
 
             if chunks:
-                m = await bot.send_message(
-                    chat_id=tg_id,
-                    text=chunks[0],
-                    reply_markup=kb,
-                    parse_mode="HTML",
-                    reply_to_message_id=reply_to_id,
-                    disable_web_page_preview=True,
-                )
+                claimed_notify = False
+                if mail_db_id:
+                    try:
+                        async with _imap_db_session() as session:
+                            dup_tid = await _find_duplicate_telegram_message_id(
+                                session,
+                                mail_db_id=int(mail_db_id),
+                                user_id=int(user_id),
+                                account_id=int(acc_id),
+                                from_email=from_email_clean,
+                                subject=subject or "",
+                                body=body_clean or "",
+                            )
+                            if dup_tid:
+                                await session.execute(
+                                    update(IncomingMail)
+                                    .where(IncomingMail.id == int(mail_db_id))
+                                    .values(telegram_message_id=int(dup_tid))
+                                )
+                                await _db_commit_retry(session)
+                                forwarded += 1
+                                continue
+                            claimed_notify = await _try_claim_telegram_notify(
+                                session, int(mail_db_id)
+                            )
+                            if not claimed_notify:
+                                forwarded += 1
+                                continue
+                    except Exception:
+                        logger.exception(
+                            "telegram notify claim failed mail_id=%s", mail_db_id
+                        )
+                        forwarded += 1
+                        continue
+
+                try:
+                    m = await bot.send_message(
+                        chat_id=tg_id,
+                        text=chunks[0],
+                        reply_markup=kb,
+                        parse_mode="HTML",
+                        reply_to_message_id=reply_to_id,
+                        disable_web_page_preview=True,
+                    )
+                except Exception:
+                    if mail_db_id and claimed_notify:
+                        try:
+                            async with _imap_db_session() as session:
+                                await _release_telegram_notify_claim(
+                                    session, int(mail_db_id)
+                                )
+                        except Exception:
+                            pass
+                    raise
             else:
                 m = await bot.send_message(
                     chat_id=tg_id,

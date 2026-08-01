@@ -693,23 +693,63 @@ async def _offers_from_offer_email_rows(
     return out
 
 
+async def inbound_seller_offer_pool(
+    session,
+    *,
+    user_id: int,
+    contact_email: str,
+    limit: int = 12,
+) -> list[Offer]:
+    """Лоты продавца: OfferEmail, иначе только то, что уходило на этот email в /send."""
+    table_hits = await _offers_from_offer_email_rows(
+        session, user_id=int(user_id), contact_email=contact_email
+    )
+    if table_hits:
+        return table_hits[: max(int(limit), 1)]
+    mailed = await list_offers_from_mailing_log(
+        session, int(user_id), contact_email, limit=max(int(limit), 40)
+    )
+    if mailed:
+        return mailed[: max(int(limit), 1)]
+    validated = await list_offers_for_validated_contact_email(
+        session,
+        user_id=int(user_id),
+        contact_email=contact_email,
+        limit=max(int(limit), 40),
+    )
+    return validated[: max(int(limit), 1)]
+
+
+def _pick_offer_from_inbound_subjects(
+    pool: list[Offer],
+    *,
+    subject: str,
+    body_text: str,
+) -> Offer | None:
+    from services.offer_matching import _pick_offer_by_subject_in_list, subject_is_informative
+    from services.subject_offer import subjects_for_inbound_resolve
+
+    for subj_try in subjects_for_inbound_resolve(subject, body_text):
+        if not subject_is_informative(subj_try):
+            continue
+        pick = _pick_offer_by_subject_in_list(pool, subj_try)
+        if pick:
+            return pick
+    return None
+
+
 async def find_single_offer_for_seller_contact_email(
     session,
     *,
     user_id: int,
     contact_email: str,
     subject: str = "",
+    body_text: str = "",
 ) -> Offer | None:
-    """Один лот на validated email; при нескольких — только по полной теме OFFER."""
+    """Один OfferEmail → один лот; несколько строк — OFFER из цитаты/темы среди этих лотов."""
     from services.mailing_send_log import offer_was_mailed_to, resolve_inbound_from_send_log
-    from services.offer_matching import (
-        _pick_offer_by_subject_in_list,
-        incoming_subject_binds_offer,
-        subject_is_informative,
-    )
 
     subj = (subject or "").strip()
-    subj_strong = subject_is_informative(subj)
 
     table_hits = await _offers_from_offer_email_rows(
         session, user_id=int(user_id), contact_email=contact_email
@@ -717,14 +757,20 @@ async def find_single_offer_for_seller_contact_email(
     if len(table_hits) == 1:
         return table_hits[0]
 
-    hits = await list_offers_for_validated_contact_email(
-        session,
-        user_id=int(user_id),
-        contact_email=contact_email,
-        limit=12,
+    pool = await inbound_seller_offer_pool(
+        session, user_id=int(user_id), contact_email=contact_email, limit=12
     )
-    pool = table_hits if table_hits else hits
     if not pool:
+        from services.mailing_send_log import find_offer_from_mailing_log, has_mailing_send_for_contact
+        from services.subject_offer import subjects_for_inbound_resolve
+
+        if await has_mailing_send_for_contact(session, int(user_id), contact_email):
+            for subj_try in subjects_for_inbound_resolve(subj, body_text or ""):
+                off_ml, _ = await find_offer_from_mailing_log(
+                    session, int(user_id), contact_email, subj_try
+                )
+                if off_ml:
+                    return off_ml
         off, _, _, _ = await resolve_inbound_from_send_log(
             session,
             user_id=int(user_id),
@@ -733,46 +779,44 @@ async def find_single_offer_for_seller_contact_email(
         )
         return off
 
-    def _prefer_linked(cands: list[Offer]) -> list[Offer]:
-        linked = [o for o in cands if (offer_effective_link(o) or "").strip()]
-        return linked or cands
+    linked = [o for o in pool if (offer_effective_link(o) or "").strip()]
+    pool = linked or pool
 
-    pool = _prefer_linked(pool)
-    if subj_strong:
-        pick = _pick_offer_by_subject_in_list(pool, subj)
+    if len(table_hits) > 1 or len(pool) > 1:
+        pick = _pick_offer_from_inbound_subjects(
+            pool, subject=subj, body_text=body_text or ""
+        )
         if pick:
             return pick
         if len(table_hits) > 1:
+            want = normalize_incoming_seller_email(contact_email)
+            mailed = [
+                off
+                for off in pool
+                if await offer_was_mailed_to(
+                    session, int(user_id), int(off.id), want or contact_email
+                )
+            ]
+            if len(mailed) == 1:
+                return mailed[0]
+            off, _, _, _ = await resolve_inbound_from_send_log(
+                session,
+                user_id=int(user_id),
+                contact_email=contact_email,
+                subject=subj,
+            )
+            if off and int(off.id) in {int(o.id) for o in pool}:
+                return off
             return None
 
     if len(pool) == 1:
         return pool[0]
 
-    want = normalize_incoming_seller_email(contact_email)
-    mailed = [
-        off
-        for off in pool
-        if await offer_was_mailed_to(session, int(user_id), int(off.id), want or contact_email)
-    ]
-    if len(mailed) == 1:
-        return mailed[0]
-    if subj_strong and len(mailed) > 1:
-        pick = _pick_offer_by_subject_in_list(mailed, subj)
-        if pick:
-            return pick
-
     off, _, _, _ = await resolve_inbound_from_send_log(
         session, user_id=int(user_id), contact_email=contact_email, subject=subj
     )
-    if off:
-        pool_ids = {int(o.id) for o in pool}
-        if int(off.id) in pool_ids:
-            return off
-        if subj_strong and incoming_subject_binds_offer(subj, off):
-            return off
-
-    if len(table_hits) == 1:
-        return table_hits[0]
+    if off and int(off.id) in {int(o.id) for o in pool}:
+        return off
     return None
 
 
@@ -846,6 +890,17 @@ async def offer_for_mailing_target(session, tgt: OfferEmail) -> Offer | None:
         if off is not None:
             return off
     return getattr(tgt, "offer", None)
+
+
+def offer_incoming_bindable(offer: Offer | None) -> bool:
+    """Лот можно привязать к входящему без пустой колонки link (есть title/photo/link в raw_json)."""
+    if not offer:
+        return False
+    return bool(
+        (offer_effective_title(offer) or "").strip()
+        or (offer_effective_link(offer) or "").strip()
+        or (offer_effective_photo(offer) or "").strip()
+    )
 
 
 def offer_effective_link(offer: Offer | None) -> str:

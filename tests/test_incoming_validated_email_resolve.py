@@ -89,6 +89,9 @@ class MailingSendLogResolveTests(unittest.IsolatedAsyncioTestCase):
             "services.incoming_lead_resolve.resolve_offer_from_validated_seller_email",
             new=AsyncMock(return_value=(None, "", "")),
         ), patch(
+            "services.incoming_lead_resolve.find_offer_from_mailing_log",
+            new=AsyncMock(return_value=(None, "")),
+        ), patch(
             "services.incoming_lead_resolve.resolve_inbound_from_send_log",
             new=AsyncMock(
                 return_value=(
@@ -113,6 +116,47 @@ class MailingSendLogResolveTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(snap.get("product_title"), "Herren Gucci Schuhe")
         self.assertTrue(snap.get("mailing_bound"))
 
+    async def test_send_log_prefers_subject_over_oldest_mailing(self):
+        cube = SimpleNamespace(
+            id=20,
+            title="Cube Damen E-Bike mit Bosch Motor",
+            link="https://www.ricardo.ch/de/a/cube/",
+            raw_json='{"item_link":"https://www.ricardo.ch/de/a/cube/"}',
+            price="500",
+            photo="",
+        )
+        session = AsyncMock()
+        with patch(
+            "services.incoming_lead_resolve.find_single_offer_for_seller_contact_email",
+            new=AsyncMock(return_value=None),
+        ), patch(
+            "services.incoming_lead_resolve.has_mailing_send_for_contact",
+            new=AsyncMock(return_value=True),
+        ), patch(
+            "services.incoming_lead_resolve.resolve_offer_from_validated_seller_email",
+            new=AsyncMock(return_value=(None, "", "")),
+        ), patch(
+            "services.incoming_lead_resolve.find_offer_from_mailing_log",
+            new=AsyncMock(return_value=(cube, "mailing_subject")),
+        ), patch(
+            "services.incoming_lead_resolve._load_conversation_link",
+            new=AsyncMock(return_value=None),
+        ), patch(
+            "services.incoming_lead_resolve._resolve_outgoing_subject",
+            new=AsyncMock(return_value="Interesse an Cube Damen E-Bike"),
+        ):
+            off, link, how, snap = await resolve_offer_for_incoming_lead(
+                session,
+                user_id=1,
+                contact_email="speed_71@bluewin.ch",
+                subject="Re: Kurze Frage zu Cube Damen E-Bike mit Bosch Motor",
+                inbox_email="avusuxebeke62@gmail.com",
+            )
+        self.assertIs(off, cube)
+        self.assertIn("ricardo.ch", link)
+        self.assertEqual(how, "mailing_subject")
+        self.assertTrue(snap.get("mailing_bound"))
+
     async def test_follow_up_uses_incoming_dialog_when_send_log_empty(self):
         bike = SimpleNamespace(
             id=77302,
@@ -132,6 +176,9 @@ class MailingSendLogResolveTests(unittest.IsolatedAsyncioTestCase):
         ), patch(
             "services.incoming_lead_resolve.resolve_offer_from_validated_seller_email",
             new=AsyncMock(return_value=(None, "", "")),
+        ), patch(
+            "services.incoming_lead_resolve.find_offer_from_mailing_log",
+            new=AsyncMock(return_value=(None, "")),
         ), patch(
             "services.incoming_lead_resolve.resolve_inbound_from_send_log",
             new=AsyncMock(return_value=(None, "", "", "")),

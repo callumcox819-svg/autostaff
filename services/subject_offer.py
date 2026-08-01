@@ -207,9 +207,9 @@ def offer_title_from_inbound_subject(subject: str) -> str:
 
 
 def subjects_for_inbound_resolve(subject: str, body: str) -> list[str]:
-    """Тема + цитаты в теле (наше исходящее с OFFER)."""
+    """Сначала цитаты в теле (наше исходящее), потом тема письма."""
     seen: set[str] = set()
-    out: list[str] = []
+    quoted: list[str] = []
 
     def _add(s: str) -> None:
         t = sanitize_email_subject((s or "").strip())
@@ -219,9 +219,8 @@ def subjects_for_inbound_resolve(subject: str, body: str) -> list[str]:
         if k in seen:
             return
         seen.add(k)
-        out.append(t)
+        quoted.append(t)
 
-    _add(subject)
     for line in (body or "").replace("\r", "\n").split("\n"):
         ls = line.strip().lstrip(">").strip()
         if len(ls) < 12:
@@ -247,4 +246,9 @@ def subjects_for_inbound_resolve(subject: str, body: str) -> list[str]:
         ):
             continue
         _add(ls)
+
+    header = sanitize_email_subject((subject or "").strip())
+    out = list(quoted)
+    if len(header) >= 8 and header.lower() not in seen:
+        out.append(header)
     return out

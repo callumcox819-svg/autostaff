@@ -904,10 +904,6 @@ async def find_offer_from_incoming_dialog(
         if not bool(getattr(mail, "mailing_bound", False)):
             continue
         subj_mail = (getattr(mail, "subject", "") or "").strip()
-        if is_seller_reply_subject(subject or "") or is_seller_reply_subject(subj_mail):
-            off = await _load_offer(session, user_id=int(user_id), offer_id=int(oid))
-            if off and offer_effective_link(off):
-                return off, "incoming_dialog"
         prev_subj = _norm_subject(subj_mail).lower()
         needle_now = product_title_from_subject(subject or "").lower()
         prev_needle = product_title_from_subject(subj_mail).lower()
@@ -1271,19 +1267,19 @@ async def resolve_offer_for_aqua_link(
     url = (url or "").strip()
     if off and not url:
         url = (offer_effective_link(off) or "").strip()
-    if off and url:
+    if off:
         return off, url
 
     if not off:
         off = await find_single_offer_for_seller_contact_email(
-            session, user_id=int(user_id), contact_email=from_email, subject=subject or ""
+            session, user_id=int(user_id), contact_email=from_email, subject=subject or "",
+            body_text=body_text or "",
         )
         if off:
             url = (offer_effective_link(off) or "").strip()
-            if url:
-                return off, url
+            return off, url
 
-    for mailed_only in (True, False):
+    for mailed_only in (True,):
         off2, url2 = await resolve_listing_for_incoming_mail(
             session,
             user_id=int(user_id),
@@ -1299,7 +1295,7 @@ async def resolve_offer_for_aqua_link(
         url2 = (url2 or "").strip()
         if off2 and not url2:
             url2 = (offer_effective_link(off2) or "").strip()
-        if off2 and url2:
+        if off2:
             return off2, url2
     return off, url or ""
 

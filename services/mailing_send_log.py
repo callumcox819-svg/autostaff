@@ -15,11 +15,62 @@ from services.offer_matching import (
     subject_title_agrees,
     _norm_subject,
 )
-from services.offer_storage import offer_effective_link, offer_effective_title
+from services.offer_storage import offer_effective_link, offer_effective_title, offer_incoming_bindable
+
+
+def _mailing_return_offer(off: Offer) -> bool:
+    return offer_incoming_bindable(off)
 
 
 def _canon_recipient(email: str) -> str:
     return canon_seller_email((email or "").strip())
+
+
+async def _offer_for_mailing_log_row(
+    session,
+    user_id: int,
+    log: MailingSendLog,
+    *,
+    contact_email: str = "",
+) -> Offer | None:
+    """
+    Лот из строки журнала. Если offer_id устарел (перевалидация с delete Offer),
+    ищем текущий лот по recipient + теме исходящего письма / OfferEmail.
+    """
+    from services.offer_matching import _load_offer
+    from services.offer_storage import inbound_seller_offer_pool
+
+    off = await _load_offer(
+        session, user_id=int(user_id), offer_id=int(log.offer_id or 0)
+    )
+    if off:
+        return off
+
+    rcpt = _canon_recipient(contact_email or log.recipient_email or "")
+    if not rcpt:
+        return None
+    pool = await inbound_seller_offer_pool(
+        session, user_id=int(user_id), contact_email=rcpt, limit=24
+    )
+    if not pool:
+        return None
+
+    sent_subj = (log.mail_subject or "").strip()
+    if sent_subj:
+        pick = _pick_offer_by_subject_in_list(pool, sent_subj)
+        if pick:
+            return pick
+        bound = [o for o in pool if incoming_subject_binds_offer(sent_subj, o)]
+        if len(bound) == 1:
+            return bound[0]
+        if bound:
+            pick2 = _pick_offer_by_subject_in_list(bound, sent_subj)
+            if pick2:
+                return pick2
+
+    if len(pool) == 1:
+        return pool[0]
+    return None
 
 
 async def record_mailing_send(
@@ -76,8 +127,8 @@ async def _mailing_log_rows_for_recipient(
             if lid in seen:
                 continue
             seen.add(lid)
-            off = await _load_offer(
-                session, user_id=int(user_id), offer_id=int(log.offer_id)
+            off = await _offer_for_mailing_log_row(
+                session, int(user_id), log, contact_email=email
             )
             if off:
                 out.append((log, off))
@@ -113,8 +164,8 @@ async def _mailing_log_rows_for_recipient(
         if lid in seen_log:
             continue
         seen_log.add(lid)
-        off = await _load_offer(
-            session, user_id=int(user_id), offer_id=int(log.offer_id)
+        off = await _offer_for_mailing_log_row(
+            session, int(user_id), log, contact_email=email
         )
         if off:
             out.append((log, off))
@@ -453,8 +504,7 @@ async def find_offer_from_mailing_log(
     for log, off in rows:
         sent_norm = _norm_subject(log.mail_subject or "").lower()
         if sent_norm and in_norm and sent_norm == in_norm:
-            link = (offer_effective_link(off) or "").strip()
-            if link:
+            if _mailing_return_offer(off):
                 return off, "mailing_same_subject"
 
     if in_product:
@@ -467,8 +517,7 @@ async def find_offer_from_mailing_log(
                 or in_product in sent_product
                 or sent_product in in_product
             ):
-                link = (offer_effective_link(off) or "").strip()
-                if link:
+                if _mailing_return_offer(off):
                     return off, "mailing_product_thread"
 
     if subj_needle:
@@ -483,24 +532,20 @@ async def find_offer_from_mailing_log(
                 best = (sc, log, off)
         if best and best[0] >= 22.0:
             _log, off = best[1], best[2]
-            link = (offer_effective_link(off) or "").strip()
-            if link:
+            if _mailing_return_offer(off):
                 return off, "mailing_subject_score"
 
         for log, off in rows:
             if subject_title_agrees(subject, off):
-                link = (offer_effective_link(off) or "").strip()
-                if link:
+                if _mailing_return_offer(off):
                     return off, "mailing_subject"
             sent_subj = (log.mail_subject or "").strip()
             if sent_subj and subj_needle.lower() in sent_subj.lower():
-                link = (offer_effective_link(off) or "").strip()
-                if link:
+                if _mailing_return_offer(off):
                     return off, "mailing_sent_subject"
             ot = (offer_effective_title(off) or "").strip()
             if ot and subj_needle.lower() in ot.lower():
-                link = (offer_effective_link(off) or "").strip()
-                if link:
+                if _mailing_return_offer(off):
                     return off, "mailing_title"
 
     unique_ids = {int(off.id) for _log, off in rows}
@@ -509,8 +554,7 @@ async def find_offer_from_mailing_log(
         if subj_needle and subject_is_informative(subject) and not subject_title_agrees(subject, off):
             if not incoming_subject_binds_offer(subject, off):
                 return None, ""
-        link = (offer_effective_link(off) or "").strip()
-        if link:
+        if _mailing_return_offer(off):
             return off, "mailing_only_offer"
 
     if subj_needle and subject_is_informative(subject):
@@ -521,9 +565,7 @@ async def find_offer_from_mailing_log(
         ]
         if bound:
             hit = _pick_offer_by_subject_in_list(bound, subject)
-            if hit:
-                link = (offer_effective_link(hit) or "").strip()
-                if link:
-                    return hit, "mailing_subject_pick"
+            if hit and _mailing_return_offer(hit):
+                return hit, "mailing_subject_pick"
 
     return None, ""

@@ -903,6 +903,7 @@ async def _aqua_last_chance_offer_url(
     contact_email: str,
     resolved_id: int | None,
     subject: str = "",
+    body_text: str = "",
 ) -> tuple[Offer | None, str]:
     """OfferEmail / pin (если тема = OFFER) — перед «не нашёл объявление»."""
     from services.offer_matching import (
@@ -930,19 +931,18 @@ async def _aqua_last_chance_offer_url(
             url = (offer_effective_link(off) or "").strip() or (
                 getattr(conv, "ad_url", "") or ""
             ).strip()
-            if url:
-                return off, url
+            return off, url
 
     off = await find_single_offer_for_seller_contact_email(
         session,
         user_id=int(user_id),
         contact_email=contact_email,
         subject=subj,
+        body_text=body_text or "",
     )
     if off:
         url = (offer_effective_link(off) or "").strip()
-        if url:
-            return off, url
+        return off, url
 
     oid = resolved_id or (int(mail.resolved_offer_id) if mail and mail.resolved_offer_id else None)
     if oid:
@@ -951,8 +951,7 @@ async def _aqua_last_chance_offer_url(
             url = (offer_effective_link(off) or "").strip()
             if not url and mail:
                 url = (getattr(mail, "ad_url", "") or "").strip()
-            if url:
-                return off, url
+            return off, url
     return None, ""
 
 
@@ -1911,18 +1910,35 @@ async def _create_aqua_link_from_db_work(callback: CallbackQuery, mail_id: int) 
                 contact_email=contact_email,
                 resolved_id=int(resolved_id) if resolved_id else None,
                 subject=subj_mail,
+                body_text=(getattr(mail, "body", "") or "") if mail else "",
             )
             if url_lc:
                 offer = offer_lc or offer
                 url = url_lc
 
-        if not url:
+        from services.offer_storage import offer_effective_link
+
+        if not offer:
             subj_hint = product_title_from_subject(subj_mail) if subject_is_informative(subj_mail) else subj_mail
             await callback.message.answer(
                 f"{html_emoji('fail')} <b>Не нашёл объявление для этого письма</b>\n\n"
                 f"<b>Тема:</b> <code>{_e(subj_hint or '—')}</code>\n"
                 f"<b>От:</b> <code>{_e(contact_email) or '—'}</code>\n\n"
                 "Загрузите JSON с этим лотом, провалидируйте email продавца, затем снова «Создать ссылку».",
+                parse_mode="HTML",
+                disable_web_page_preview=True,
+            )
+            await callback.answer()
+            return
+
+        url = (url or (offer_effective_link(offer) or "").strip() or (getattr(mail, "ad_url", "") or "").strip())
+        if not url:
+            subj_hint = product_title_from_subject(subj_mail) if subject_is_informative(subj_mail) else subj_mail
+            await callback.message.answer(
+                f"{html_emoji('fail')} <b>Нет item_link в БД для лота</b> <code>{int(offer.id)}</code>\n\n"
+                f"<b>Тема:</b> <code>{_e(subj_hint or '—')}</code>\n"
+                f"<b>От:</b> <code>{_e(contact_email) or '—'}</code>\n\n"
+                "Перезагрузите JSON с item_link или провалидируйте email заново.",
                 parse_mode="HTML",
                 disable_web_page_preview=True,
             )
@@ -2165,6 +2181,7 @@ async def _create_aqua_link_work(callback: CallbackQuery, acc_id: int, uid: str,
                 contact_email=contact_email,
                 resolved_id=int(resolved_id) if resolved_id else None,
                 subject=subj_pre,
+                body_text=(getattr(mail_pre, "body", "") or "") if mail_pre else "",
             )
             if url_lc:
                 offer = offer_lc or offer

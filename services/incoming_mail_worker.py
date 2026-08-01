@@ -1205,6 +1205,7 @@ async def mail_card_offer_meta(
             user_id=int(user_id),
             contact_email=contact,
             subject=subject or "",
+            body_text=body_text or "",
         )
         if single:
             off = single
@@ -1266,9 +1267,14 @@ async def mail_card_offer_meta(
     except Exception:
         logger.exception("mail_card_offer_meta failed")
 
-    if not offer_id:
-        return None, None, None, None, None, None
-    return offer_id, service_label, product_title, photo_url, offer_price, outgoing_subject
+    if off and not offer_id:
+        offer_id = int(off.id)
+
+    if offer_id:
+        return offer_id, service_label, product_title, photo_url, offer_price, outgoing_subject
+    if product_title or photo_url or offer_price or service_label:
+        return None, service_label, product_title, photo_url, offer_price, outgoing_subject
+    return None, None, None, None, None, None
 
 
 async def is_first_inbound_mail_for_seller_offer(
@@ -1343,17 +1349,6 @@ async def build_mail_card_from_mail(
     body_full = (getattr(mail, "body", None) or "").strip()
 
     oid_for_card = oid or getattr(mail, "resolved_offer_id", None)
-    show_product_details = False
-    if oid_for_card:
-        show_product_details = await is_first_inbound_mail_for_seller_offer(
-            session,
-            user_id=int(mail.user_id),
-            account_id=int(getattr(mail, "account_id", 0) or 0),
-            from_email=str(getattr(mail, "from_email", "") or ""),
-            resolved_offer_id=int(oid_for_card),
-            mail_id=int(mail.id),
-        )
-
     card_subject = (
         (outgoing_subj or "").strip()
         or (getattr(mail, "outgoing_mail_subject", "") or "").strip()
@@ -1370,7 +1365,7 @@ async def build_mail_card_from_mail(
         link_id=link_id,
         service_label=service_label,
         product_title=product_title or None,
-        offer_price=offer_price if show_product_details else None,
+        offer_price=offer_price,
         translation=translation,
     )
     text = (chunks[0] if chunks else "—")[:4096]
@@ -1614,6 +1609,7 @@ async def _process_mails_for_account_impl(
                             user_id=int(user_id),
                             contact_email=contact_email or from_email_clean,
                             subject=subj or "",
+                            body_text=body_clean or "",
                         )
                         if fb_pre:
                             offer_bound = fb_pre
@@ -1987,7 +1983,7 @@ async def _process_mails_for_account_impl(
                 link_id=link_id,
                 service_label=service_label,
                 product_title=product_title,
-                offer_price=offer_price if show_offer_on_card else None,
+                offer_price=offer_price,
             )
             if smtp_block_bounce and chunks:
                 from services.smtp_block_control import smtp_removed_from_mailing_notice_html
@@ -2042,7 +2038,34 @@ async def _process_mails_for_account_impl(
                     disable_web_page_preview=True,
                 )
 
-            if mail_db_id:
+            if mail_db_id and offer_id:
+                try:
+                    async with _imap_db_session() as session:
+                        mail_row = (
+                            await session.execute(
+                                sa_select(IncomingMail).where(IncomingMail.id == int(mail_db_id)).limit(1)
+                            )
+                        ).scalars().first()
+                        if mail_row:
+                            mail_row.telegram_message_id = int(m.message_id)
+                            mail_row.resolved_offer_id = int(offer_id)
+                            mail_row.mailing_bound = True
+                            if product_title:
+                                mail_row.product_title = (product_title or "")[:500]
+                            if offer_price:
+                                mail_row.offer_price = (offer_price or "")[:64]
+                            if photo_url:
+                                mail_row.photo_url = (photo_url or "")[:2000]
+                            if service_label:
+                                mail_row.service_label = (service_label or "")[:64]
+                            if card_outgoing_subject:
+                                mail_row.outgoing_mail_subject = (card_outgoing_subject or "")[:500]
+                            await _db_commit_retry(session)
+                except Exception:
+                    logger.exception(
+                        "Failed to persist telegram_message_id mail_id=%s", mail_db_id
+                    )
+            elif mail_db_id:
                 try:
                     async with _imap_db_session() as session:
                         mail_row = (

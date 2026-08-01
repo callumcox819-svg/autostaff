@@ -1,4 +1,4 @@
-"""Товар/цена/фото только на первом входящем от продавца по лоту."""
+"""Товар/цена/фото на карточке, когда лот привязан."""
 from __future__ import annotations
 
 import unittest
@@ -8,21 +8,22 @@ from services.incoming_mail_worker import render_mail_text_chunks
 
 
 class FirstIncomingCardDisplayTests(unittest.TestCase):
-    def test_follow_up_card_omits_title_and_price(self):
+    def test_follow_up_card_shows_title_and_price_when_bound(self):
         chunks = render_mail_text_chunks(
             account_email="inbox@test.com",
             from_name="Domsta",
             from_email="domsta@gmail.com",
             subject="Re: Interesse an Schulranzen",
             body="Hallo",
+            offer_id=77302,
             service_label="ricardo.ch",
-            product_title=None,
-            offer_price=None,
+            product_title="Schulranzen McNeill",
+            offer_price="80 .-",
         )
         text = chunks[0]
-        self.assertNotIn("Товар:", text)
-        self.assertNotIn("Цена:", text)
-        self.assertIn("Тема:", text)
+        self.assertIn("Товар:", text)
+        self.assertIn("Цена:", text)
+        self.assertIn("Лот:", text)
 
     def test_first_card_shows_title_and_price(self):
         chunks = render_mail_text_chunks(

@@ -204,3 +204,47 @@ def offer_title_from_inbound_subject(subject: str) -> str:
             return offer
 
     return ""
+
+
+def subjects_for_inbound_resolve(subject: str, body: str) -> list[str]:
+    """Тема + цитаты в теле (наше исходящее с OFFER)."""
+    seen: set[str] = set()
+    out: list[str] = []
+
+    def _add(s: str) -> None:
+        t = sanitize_email_subject((s or "").strip())
+        if len(t) < 8:
+            return
+        k = t.lower()
+        if k in seen:
+            return
+        seen.add(k)
+        out.append(t)
+
+    _add(subject)
+    for line in (body or "").replace("\r", "\n").split("\n"):
+        ls = line.strip().lstrip(">").strip()
+        if len(ls) < 12:
+            continue
+        low = ls.lower()
+        if not any(
+            x in low
+            for x in (
+                "noch verfügbar",
+                "noch verfugbar",
+                "noch zu haben",
+                "interesse an",
+                "kurze frage",
+                "kurze anfrage",
+                "kaufinteresse",
+                "guten tag",
+                "haben sie",
+                "noch da",
+                "noch aktuell",
+                "anfrage:",
+                "frage zu",
+            )
+        ):
+            continue
+        _add(ls)
+    return out

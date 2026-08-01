@@ -73,6 +73,8 @@ def product_title_from_subject(subject: str) -> str:
         r"^noch nicht verkauft\?\s*(.+)\s*$",
         r"^guten tag,?\s*(.+?)\s+noch verfügbar\??\s*$",
         r"^guten tag,?\s*(.+?)\s+noch verfugbar\??\s*$",
+        r"^guten tag,?\s*ist\s+(.+?)\s+noch verfügbar oder bereits verkauft\??\s*$",
+        r"^guten tag,?\s*ist\s+(.+?)\s+noch verfugbar oder bereits verkauft\??\s*$",
         r"^(.+?)\s*[-–—]\s*noch da\??\s*$",
         r"^(.+?)\s*[-–—]\s*noch aktuell\??\s*$",
         r"^(.+?)\s*[-–—]\s*noch im verkauf\??\s*$",

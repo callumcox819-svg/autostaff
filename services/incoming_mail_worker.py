@@ -1189,7 +1189,6 @@ async def mail_card_offer_meta(
 
     try:
         from services.offer_matching import _load_offer
-        from services.mailing_send_log import find_latest_mailed_offer_for_recipient
 
         off = None
         contact = normalize_incoming_seller_email(from_email) or (from_email or "").strip().lower()
@@ -1211,12 +1210,6 @@ async def mail_card_offer_meta(
             off = single
             offer_id = int(single.id)
         if not off:
-            off = await find_latest_mailed_offer_for_recipient(
-                session, int(user_id), contact or from_email
-            )
-            if off:
-                offer_id = int(off.id)
-        if offer_id and not off:
             off = await resolve_offer_for_mail_card(
                 session,
                 user_id=int(user_id),

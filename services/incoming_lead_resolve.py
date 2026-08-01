@@ -6,6 +6,7 @@ from models import Offer
 from services.mailing_send_log import (
     find_offer_from_mailing_log,
     has_mailing_send_for_contact,
+    offer_was_mailed_to,
     resolve_inbound_from_send_log,
 )
 from services.offer_matching import (
@@ -22,6 +23,7 @@ from services.offer_storage import (
     offer_effective_photo,
     offer_effective_price,
     offer_effective_title,
+    offer_has_validated_email,
 )
 
 
@@ -279,20 +281,43 @@ async def resolve_offer_for_incoming_lead(
                     how = "pinned_offer_id"
                     break
 
-    if not off and subj_strong and (has_send or validated_hit):
+    if not off and (has_send or validated_hit):
         from services.offer_matching import find_offer_by_incoming_subject
+        from services.subject_offer import subjects_for_inbound_resolve
 
-        off_sub = await find_offer_by_incoming_subject(
-            session,
-            int(user_id),
-            subject or "",
-            from_email=contact_email,
-            mailed_only=False,
-        )
-        if off_sub:
-            off = off_sub
-            link = (offer_effective_link(off_sub) or "").strip()
-            how = how or "subject_full_title"
+        for subj_try in subjects_for_inbound_resolve(subject or "", body_text or ""):
+            if not subject_is_informative(subj_try):
+                continue
+            for mailed_only in (True, False):
+                off_try = await find_offer_by_incoming_subject(
+                    session,
+                    int(user_id),
+                    subj_try,
+                    from_email=contact_email,
+                    mailed_only=mailed_only,
+                )
+                if not off_try:
+                    continue
+                oid = int(off_try.id)
+                if has_send and await offer_was_mailed_to(
+                    session, int(user_id), oid, contact_email
+                ):
+                    off = off_try
+                    link = (offer_effective_link(off_try) or "").strip()
+                    how = how or "offer_subject_mailed"
+                    break
+                if validated_hit and await offer_has_validated_email(
+                    session,
+                    user_id=int(user_id),
+                    offer_id=oid,
+                    contact_email=contact_email,
+                ):
+                    off = off_try
+                    link = (offer_effective_link(off_try) or "").strip()
+                    how = how or "offer_subject_validated"
+                    break
+            if off:
+                break
 
     if not off and not validated_hit and not has_send:
         return None, "", "", empty_snap
@@ -300,45 +325,53 @@ async def resolve_offer_for_incoming_lead(
     if off and not link:
         link = (offer_effective_link(off) or "").strip()
 
-    if (not off or not link) and (has_send or validated_hit) and (subject or "").strip():
+    if (not off or not link) and (has_send or validated_hit):
         from services.offer_matching import resolve_listing_for_incoming_mail
+        from services.subject_offer import subjects_for_inbound_resolve
 
-        off2, link2 = await resolve_listing_for_incoming_mail(
-            session,
-            user_id=int(user_id),
-            from_email=contact_email,
-            subject=subject or "",
-            from_name=from_name or "",
-            body_text=body_text or "",
-            resolved_offer_id=pinned or (int(off.id) if off else None),
-            mail_ad_url=mail_ad_url,
-            inbox_email=(inbox_email or "").strip(),
-            mailed_only=True,
-        )
-        if off2 and (link2 or off2):
-            off = off2
-            link = (link2 or "").strip() or (offer_effective_link(off2) or "").strip()
-            how = how or "listing_mailed_only"
+        for subj_try in subjects_for_inbound_resolve(subject or "", body_text or ""):
+            off2, link2 = await resolve_listing_for_incoming_mail(
+                session,
+                user_id=int(user_id),
+                from_email=contact_email,
+                subject=subj_try,
+                from_name=from_name or "",
+                body_text=body_text or "",
+                resolved_offer_id=pinned or (int(off.id) if off else None),
+                mail_ad_url=mail_ad_url,
+                inbox_email=(inbox_email or "").strip(),
+                mailed_only=True,
+            )
+            if off2 and (link2 or off2):
+                off = off2
+                link = (link2 or "").strip() or (offer_effective_link(off2) or "").strip()
+                how = how or "listing_mailed_only"
+                break
 
-    if (not off) and subj_strong and (has_send or validated_hit):
+    if not off and (has_send or validated_hit):
         from services.offer_matching import resolve_listing_for_incoming_mail
+        from services.subject_offer import subjects_for_inbound_resolve
 
-        off3, link3 = await resolve_listing_for_incoming_mail(
-            session,
-            user_id=int(user_id),
-            from_email=contact_email,
-            subject=subject or "",
-            from_name=from_name or "",
-            body_text=body_text or "",
-            resolved_offer_id=pinned,
-            mail_ad_url=mail_ad_url,
-            inbox_email=(inbox_email or "").strip(),
-            mailed_only=False,
-        )
-        if off3:
-            off = off3
-            link = (link3 or "").strip() or (offer_effective_link(off3) or "").strip()
-            how = how or "listing_subject"
+        for subj_try in subjects_for_inbound_resolve(subject or "", body_text or ""):
+            if not subject_is_informative(subj_try):
+                continue
+            off3, link3 = await resolve_listing_for_incoming_mail(
+                session,
+                user_id=int(user_id),
+                from_email=contact_email,
+                subject=subj_try,
+                from_name=from_name or "",
+                body_text=body_text or "",
+                resolved_offer_id=pinned,
+                mail_ad_url=mail_ad_url,
+                inbox_email=(inbox_email or "").strip(),
+                mailed_only=False,
+            )
+            if off3:
+                off = off3
+                link = (link3 or "").strip() or (offer_effective_link(off3) or "").strip()
+                how = how or "listing_subject"
+                break
 
     if off:
         out_subj = await _resolve_outgoing_subject(

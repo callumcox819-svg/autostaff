@@ -715,22 +715,7 @@ async def find_single_offer_for_seller_contact_email(
         session, user_id=int(user_id), contact_email=contact_email
     )
     if len(table_hits) == 1:
-        only = table_hits[0]
-        if subj_strong and not incoming_subject_binds_offer(subj, only):
-            pick = _pick_offer_by_subject_in_list(table_hits, subj)
-            if pick:
-                return pick
-            hits = await list_offers_for_validated_contact_email(
-                session,
-                user_id=int(user_id),
-                contact_email=contact_email,
-                limit=20,
-            )
-            pick2 = _pick_offer_by_subject_in_list(hits, subj)
-            if pick2:
-                return pick2
-            return None
-        return only
+        return table_hits[0]
 
     hits = await list_offers_for_validated_contact_email(
         session,

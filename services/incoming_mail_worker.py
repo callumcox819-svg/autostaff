@@ -1609,10 +1609,6 @@ async def _process_mails_for_account_impl(
                             offer_effective_title,
                         )
                         from services.subject_offer import pick_mailing_subject
-                        from services.offer_matching import (
-                            subject_is_informative,
-                            subject_title_agrees,
-                        )
 
                         contact_email = normalize_incoming_seller_email(from_email_clean)
                         offer_bound = None
@@ -1627,21 +1623,14 @@ async def _process_mails_for_account_impl(
                             subject=subj or "",
                         )
                         if fb_pre:
-                            subj_ok = (not subject_is_informative(subj)) or subject_title_agrees(
-                                subj, fb_pre
+                            offer_bound = fb_pre
+                            listing_url = (offer_effective_link(fb_pre) or "").strip()
+                            out_subj = pick_mailing_subject(
+                                (offer_effective_title(fb_pre) or "").strip()
                             )
-                            pre_link = (offer_effective_link(fb_pre) or "").strip()
-                            if subj_ok and pre_link:
-                                offer_bound = fb_pre
-                                listing_url = pre_link
-                                out_subj = pick_mailing_subject(
-                                    (offer_effective_title(fb_pre) or "").strip()
-                                )
-                                lead_snap = _snapshot_from_mailed_offer(
-                                    fb_pre, outgoing_mail_subject=out_subj
-                                )
-                            else:
-                                fb_pre = None
+                            lead_snap = _snapshot_from_mailed_offer(
+                                fb_pre, outgoing_mail_subject=out_subj
+                            )
 
                         if not offer_bound:
                             offer_bound, listing_url, _match_how, lead_snap = (

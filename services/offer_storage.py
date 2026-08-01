@@ -704,6 +704,8 @@ async def inbound_seller_offer_pool(
     limit: int = 12,
 ) -> list[Offer]:
     """Лоты продавца: OfferEmail, иначе только то, что уходило на этот email в /send."""
+    from services.mailing_send_log import list_offers_from_mailing_log
+
     table_hits = await _offers_from_offer_email_rows(
         session, user_id=int(user_id), contact_email=contact_email
     )

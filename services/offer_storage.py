@@ -385,10 +385,11 @@ async def find_offer_by_product_title_in_subject(
     user_id: int,
     subject: str,
     contact_email: str = "",
+    allow_outbound_subject: bool = False,
 ) -> Offer | None:
     """
     Aw:/Re: + название в теме → лот по title в БД (без email/log).
-    Один однозначный match или лучший score среди кандидатов.
+    allow_outbound_subject: тема из журнала /send («Noch verfügbar? OFFER») без Re:.
     """
     from services.offer_matching import (
         _offer_title_matches_needle,
@@ -401,7 +402,9 @@ async def find_offer_by_product_title_in_subject(
     )
 
     subj = (subject or "").strip()
-    if not subject_is_informative(subj) or not is_seller_reply_subject(subj):
+    if not subject_is_informative(subj):
+        return None
+    if not allow_outbound_subject and not is_seller_reply_subject(subj):
         return None
 
     needle = product_title_from_subject(subj).strip().lower()

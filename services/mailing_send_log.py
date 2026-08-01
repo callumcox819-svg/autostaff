@@ -52,10 +52,24 @@ async def _offer_for_mailing_log_row(
     pool = await inbound_seller_offer_pool(
         session, user_id=int(user_id), contact_email=rcpt, limit=24
     )
-    if not pool:
+    sent_subj = (log.mail_subject or "").strip()
+
+    if not pool and sent_subj:
+        from services.offer_storage import find_offer_by_product_title_in_subject
+
+        off_title = await find_offer_by_product_title_in_subject(
+            session,
+            user_id=int(user_id),
+            subject=sent_subj,
+            contact_email=rcpt,
+            allow_outbound_subject=True,
+        )
+        if off_title:
+            return off_title
         return None
 
-    sent_subj = (log.mail_subject or "").strip()
+    if not pool:
+        return None
     if sent_subj:
         pick = _pick_offer_by_subject_in_list(pool, sent_subj)
         if pick:

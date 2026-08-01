@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import email
 import html
+import html as html_module
 import imaplib
 import logging
 import re
@@ -859,6 +860,10 @@ def _clean_mail_body_for_card(raw: str) -> str:
         lines.append(line.rstrip())
     txt = "\n".join(lines)
     txt = re.sub(r"\n{3,}", "\n\n", txt).strip()
+    try:
+        txt = html_module.unescape(txt)
+    except Exception:
+        pass
     return txt
 
 
@@ -2017,6 +2022,56 @@ async def _process_mails_for_account_impl(
                 if offer_id:
                     mailing_bound_flag = True
                     resolved_offer_id = int(offer_id)
+                elif mail_db_id:
+                    from services.mailing_send_log import (
+                        find_offer_from_mailing_log,
+                        has_mailing_send_for_contact,
+                    )
+                    from services.offer_storage import (
+                        normalize_incoming_seller_email,
+                        offer_effective_link,
+                        offer_effective_photo,
+                        offer_effective_price,
+                        offer_effective_title,
+                    )
+
+                    try:
+                        async with _imap_db_session() as _s_fb:
+                            contact_fb = (
+                                normalize_incoming_seller_email(from_email_clean)
+                                or from_email_clean
+                            )
+                            if await has_mailing_send_for_contact(
+                                _s_fb, int(user_id), contact_fb
+                            ):
+                                off_fb, _how = await find_offer_from_mailing_log(
+                                    _s_fb,
+                                    int(user_id),
+                                    contact_fb,
+                                    subject or "",
+                                )
+                                if off_fb:
+                                    offer_id = int(off_fb.id)
+                                    mailing_bound_flag = True
+                                    resolved_offer_id = int(offer_id)
+                                    product_title = (
+                                        offer_effective_title(off_fb) or ""
+                                    ).strip() or product_title
+                                    offer_price = (
+                                        offer_effective_price(off_fb, default="") or ""
+                                    ).strip() or offer_price
+                                    photo_url = (
+                                        offer_effective_photo(off_fb) or ""
+                                    ).strip() or photo_url
+                                    if not service_label:
+                                        service_label = _service_label_from_link(
+                                            offer_effective_link(off_fb)
+                                        )
+                    except Exception:
+                        logger.exception(
+                            "mailing-log fallback bind failed from=%s",
+                            from_email_clean,
+                        )
             except Exception:
                 logger.exception("Failed to load Offer meta for incoming mail: from=%s", from_email_clean)
 

@@ -1090,7 +1090,13 @@ async def _acquire_incoming_notify_lock(
 
         bind = session.get_bind()
         if bind.dialect.name == "postgresql":
-            await session.execute(text("SELECT pg_advisory_xact_lock(:k)"), {"k": lock_id})
+            got = (
+                await session.execute(
+                    text("SELECT pg_try_advisory_xact_lock(:k)"), {"k": lock_id}
+                )
+            ).scalar()
+            if got is False:
+                logger.debug("notify lock busy user=%s acc=%s", user_id, account_id)
     except Exception:
         pass
 
@@ -1206,6 +1212,25 @@ async def _wait_duplicate_telegram_notify(
             continue
         return None
     return -1
+
+
+async def _release_stale_telegram_notify_claims(
+    session,
+    *,
+    older_than_minutes: int = 3,
+) -> int:
+    """Зависший claim (-1) после краша воркера — иначе IMAP навсегда молчит."""
+    from datetime import datetime, timedelta
+
+    cutoff = datetime.utcnow() - timedelta(minutes=max(1, int(older_than_minutes)))
+    res = await session.execute(
+        update(IncomingMail)
+        .where(IncomingMail.telegram_message_id == -1)
+        .where(IncomingMail.updated_at < cutoff)
+        .values(telegram_message_id=None)
+    )
+    await session.commit()
+    return int(res.rowcount or 0)
 
 
 async def _try_claim_telegram_notify(session, mail_db_id: int) -> bool:
@@ -1833,9 +1858,14 @@ async def _process_mails_for_account_impl(
                             .limit(1)
                         )
                     ).scalars().first()
-                    already_notified_tg = int(existing.telegram_message_id) if (
-                        existing and getattr(existing, "telegram_message_id", None)
-                    ) else None
+                    already_notified_tg = None
+                    if existing and getattr(existing, "telegram_message_id", None) is not None:
+                        tid0 = int(existing.telegram_message_id)
+                        if tid0 > 0:
+                            already_notified_tg = tid0
+                        elif tid0 == -1:
+                            await _release_telegram_notify_claim(session, int(existing.id))
+                            existing.telegram_message_id = None
 
                     if not existing:
                         existing = IncomingMail(
@@ -2446,6 +2476,7 @@ async def _process_mails_for_account_impl(
                 if mail_db_id:
                     try:
                         async with _imap_db_session() as session:
+                            await _release_stale_telegram_notify_claims(session)
                             await _acquire_incoming_notify_lock(
                                 session,
                                 user_id=int(user_id),
@@ -2463,8 +2494,9 @@ async def _process_mails_for_account_impl(
                                 body=body_clean or "",
                             )
                             if dup_tid == -1:
-                                forwarded += 1
-                                continue
+                                await _release_stale_telegram_notify_claims(session)
+                                await _release_telegram_notify_claim(session, int(mail_db_id))
+                                dup_tid = None
                             if dup_tid and int(dup_tid) > 0:
                                 await session.execute(
                                     update(IncomingMail)
@@ -2478,6 +2510,16 @@ async def _process_mails_for_account_impl(
                                 session, int(mail_db_id)
                             )
                             if not claimed_notify:
+                                await asyncio.sleep(0.5)
+                                claimed_notify = await _try_claim_telegram_notify(
+                                    session, int(mail_db_id)
+                                )
+                            if not claimed_notify:
+                                logger.warning(
+                                    "telegram notify claim lost mail_id=%s from=%s — skip TG",
+                                    mail_db_id,
+                                    from_email_clean,
+                                )
                                 forwarded += 1
                                 continue
                     except Exception:

@@ -148,7 +148,7 @@ def inbox_stagger_ms() -> int:
 
 def inbox_account_gap_sec() -> float:
     """Пауза между волнами с одного Gmail (если адресов > ящиков)."""
-    return max(0.0, min(3.0, float(os.getenv("INBOX_ACCOUNT_GAP_SEC", "0.35"))))
+    return max(0.0, min(3.0, float(os.getenv("INBOX_ACCOUNT_GAP_SEC", "0.42"))))
 
 
 def burst_target_max_sec() -> float:

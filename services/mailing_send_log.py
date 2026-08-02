@@ -375,6 +375,13 @@ async def bindable_offers_for_mailing_recipient(
             continue
         seen.add(oid)
         ordered.append(off)
+    if not ordered:
+        for _log, off in rows:
+            oid = int(off.id)
+            if oid in seen:
+                continue
+            seen.add(oid)
+            ordered.append(off)
     return ordered
 
 
@@ -715,6 +722,7 @@ async def find_offer_from_mailing_log(
         _log, off = rows[0]
         if _mailing_return_offer(off):
             return off, "mailing_only_offer"
+        return off, "mailing_only_recipient_relaxed"
 
     if subj_needle and subject_is_informative(subject):
         bound = [
@@ -726,5 +734,11 @@ async def find_offer_from_mailing_log(
             hit = _pick_offer_by_subject_in_list(bound, subject)
             if hit and _mailing_return_offer(hit):
                 return hit, "mailing_subject_pick"
+
+    off_latest = await find_latest_mailed_offer_for_recipient(
+        session, int(user_id), contact_email
+    )
+    if off_latest:
+        return off_latest, "mailing_latest_fallback"
 
     return None, ""

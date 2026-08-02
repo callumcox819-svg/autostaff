@@ -1522,6 +1522,26 @@ async def mail_card_offer_meta(
                 off = single
                 offer_id = int(single.id)
 
+        if not off:
+            from services.mailing_send_log import list_allowed_offers_for_incoming_contact
+            from services.offer_matching import is_seller_reply_subject
+
+            allowed = await list_allowed_offers_for_incoming_contact(
+                session,
+                int(user_id),
+                contact,
+                from_name=from_name or "",
+                limit=24,
+            )
+            if len(allowed) == 1:
+                off = allowed[0]
+            elif allowed and is_seller_reply_subject(subject or ""):
+                pick = _pick_offer_from_inbound_subjects(
+                    allowed, subject=subject or "", body_text=body_text or ""
+                )
+                if pick:
+                    off = pick
+
         if off:
             offer_id = int(off.id)
             if not product_title:
@@ -1977,6 +1997,7 @@ async def _process_mails_for_account_impl(
                                 listing_url = ""
                         elif offer_bound and hasattr(offer_bound, "id"):
                             resolved_offer_id = int(offer_bound.id)
+                            mailing_bound_flag = True
                         else:
                             resolved_offer_id = None
                             listing_url = ""
@@ -1985,8 +2006,9 @@ async def _process_mails_for_account_impl(
                         existing.resolved_offer_email_id = resolved_offer_email_id
                         if listing_url:
                             existing.ad_url = listing_url.strip()
-                        mailing_bound_flag = bool(lead_snap.get("mailing_bound"))
-                        existing.mailing_bound = mailing_bound_flag
+                        if offer_bound and hasattr(offer_bound, "id"):
+                            mailing_bound_flag = True
+                        existing.mailing_bound = mailing_bound_flag or bool(resolved_offer_id)
                         saved_product_title = (lead_snap.get("product_title") or "").strip()
                         saved_offer_price = (lead_snap.get("offer_price") or "").strip()
                         saved_photo_url = (lead_snap.get("photo_url") or "").strip()

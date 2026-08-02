@@ -415,6 +415,42 @@ async def resolve_offer_for_incoming_lead(
         snap = _snapshot_from_mailed_offer(off, outgoing_mail_subject=out_subj)
         return off, link, how or "seller_lead", snap
 
+    if not off and has_send:
+        from services.mailing_send_log import (
+            find_latest_mailed_offer_for_recipient,
+            list_offers_from_mailing_log,
+        )
+
+        mailed = await list_offers_from_mailing_log(
+            session, int(user_id), contact_email, limit=16
+        )
+        if len(mailed) == 1:
+            off = mailed[0]
+            link = (offer_effective_link(off) or "").strip()
+            how = "mailing_log_single"
+        else:
+            off = await find_latest_mailed_offer_for_recipient(
+                session, int(user_id), contact_email
+            )
+            if off:
+                link = (offer_effective_link(off) or "").strip()
+                how = "mailing_log_latest"
+        if off:
+            out_subj = await _resolve_outgoing_subject(
+                session,
+                user_id=int(user_id),
+                contact_email=contact_email,
+                inbox_email=(inbox_email or "").strip(),
+                pinned_offer_id=int(off.id),
+                pinned_subj=pinned_subj,
+                offer=off,
+                mail_subject=subject or "",
+            )
+            if pinned_subj:
+                out_subj = pinned_subj
+            snap = _snapshot_from_mailed_offer(off, outgoing_mail_subject=out_subj)
+            return off, link, how, snap
+
     return None, "", "", empty_snap
 
 

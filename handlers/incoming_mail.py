@@ -844,6 +844,92 @@ def _canon_email(email: str) -> str:
     return f"{local}@{domain}"
 
 
+_LOT_ID_FROM_CARD_RE = re.compile(
+    r"Лот:\s*(?:</b>\s*)?<code>\s*(\d+)\s*</code>",
+    re.IGNORECASE,
+)
+
+
+def _offer_id_from_incoming_card_message(message: Message | None) -> int | None:
+    """Лот с HTML-карточки Telegram (кнопка «Создать ссылку» на том же сообщении)."""
+    if not message:
+        return None
+    raw = (getattr(message, "html_text", None) or message.text or "") or ""
+    m = _LOT_ID_FROM_CARD_RE.search(raw)
+    if not m:
+        return None
+    try:
+        return int(m.group(1))
+    except (TypeError, ValueError):
+        return None
+
+
+async def _sync_incoming_mail_offer_with_card(
+    session,
+    mail: IncomingMail,
+    *,
+    tg_message: Message | None = None,
+) -> None:
+    """Подтянуть лот как на карточке (meta + «Лот:» в тексте), записать в IncomingMail."""
+    from services.incoming_mail_worker import mail_card_offer_meta
+    from services.offer_storage import normalize_incoming_seller_email
+
+    card_oid = _offer_id_from_incoming_card_message(tg_message)
+    if card_oid:
+        mail.resolved_offer_id = int(card_oid)
+        mail.mailing_bound = True
+
+    contact = normalize_incoming_seller_email(getattr(mail, "from_email", "") or "") or (
+        getattr(mail, "from_email", "") or ""
+    ).strip()
+    if not contact:
+        return
+
+    try:
+        (
+            offer_id,
+            service_label,
+            product_title,
+            photo_url,
+            offer_price,
+            outgoing_subj,
+        ) = await mail_card_offer_meta(
+            session,
+            user_id=int(mail.user_id),
+            from_email=contact,
+            resolved_offer_id=getattr(mail, "resolved_offer_id", None),
+            ad_url=(getattr(mail, "ad_url", "") or "").strip() or None,
+            inbox_email=(getattr(mail, "account_email", "") or "").strip() or None,
+            subject=(getattr(mail, "subject", "") or "").strip(),
+            from_name=(getattr(mail, "from_name", "") or "").strip(),
+            body_text=(getattr(mail, "body", "") or "").strip(),
+            stored_product_title=(getattr(mail, "product_title", None) or "").strip() or None,
+            stored_offer_price=(getattr(mail, "offer_price", None) or "").strip() or None,
+            stored_photo_url=(getattr(mail, "photo_url", None) or "").strip() or None,
+            stored_service_label=(getattr(mail, "service_label", None) or "").strip() or None,
+            stored_outgoing_subject=(getattr(mail, "outgoing_mail_subject", None) or "").strip() or None,
+            mailing_bound=True,
+        )
+    except Exception:
+        logger.exception("sync incoming mail offer with card meta failed mail_id=%s", getattr(mail, "id", None))
+        return
+
+    if offer_id:
+        mail.resolved_offer_id = int(offer_id)
+        mail.mailing_bound = True
+    if product_title:
+        mail.product_title = (product_title or "")[:500]
+    if offer_price:
+        mail.offer_price = (offer_price or "")[:120]
+    if photo_url:
+        mail.photo_url = (photo_url or "")[:2000]
+    if service_label:
+        mail.service_label = (service_label or "")[:80]
+    if outgoing_subj:
+        mail.outgoing_mail_subject = (outgoing_subj or "")[:500]
+    await session.flush()
+
+
 async def _bound_offer_from_incoming_mail(
     session,
     mail: IncomingMail,
@@ -868,13 +954,19 @@ async def _bound_offer_from_incoming_mail(
                     url = (getattr(mail, "ad_url", "") or "").strip()
                 return off, url
 
-    if getattr(mail, "mailing_bound", False) or (getattr(mail, "product_title", "") or "").strip():
-        from services.offer_storage import find_offer_for_mailed_seller_reply, normalize_incoming_seller_email
+    from services.offer_storage import find_offer_for_mailed_seller_reply, normalize_incoming_seller_email
 
-        contact = normalize_incoming_seller_email(getattr(mail, "from_email", "") or "") or (
-            getattr(mail, "from_email", "") or ""
-        ).strip()
-        if contact and owner_id:
+    contact = normalize_incoming_seller_email(getattr(mail, "from_email", "") or "") or (
+        getattr(mail, "from_email", "") or ""
+    ).strip()
+
+    if contact and owner_id:
+        from services.mailing_send_log import has_mailing_send_for_contact
+
+        mailed = bool(getattr(mail, "mailing_bound", False)) or await has_mailing_send_for_contact(
+            session, int(owner_id), contact
+        )
+        if mailed or (getattr(mail, "product_title", "") or "").strip():
             off = await find_offer_for_mailed_seller_reply(
                 session,
                 user_id=owner_id,
@@ -1917,6 +2009,10 @@ async def _create_aqua_link_from_db_work(callback: CallbackQuery, mail_id: int) 
         subj_mail = (getattr(mail, "subject", "") or "").strip()
         body_mail = (getattr(mail, "body", "") or "").strip()
 
+        await _sync_incoming_mail_offer_with_card(
+            session, mail, tg_message=callback.message
+        )
+
         offer, url = await _bound_offer_from_incoming_mail(
             session, mail, user_id=int(tg_user.id)
         )
@@ -1987,7 +2083,9 @@ async def _create_aqua_link_from_db_work(callback: CallbackQuery, mail_id: int) 
 
         if not offer:
             subj_hint = product_title_from_subject(subj_mail) if subject_is_informative(subj_mail) else subj_mail
-            oid_hint = getattr(mail, "resolved_offer_id", None)
+            oid_hint = getattr(mail, "resolved_offer_id", None) or _offer_id_from_incoming_card_message(
+                callback.message
+            )
             extra = ""
             if oid_hint:
                 extra = f"\n<b>Лот в письме:</b> <code>{int(oid_hint)}</code> — перезагрузите JSON или нажмите «Создать ссылку» после деплоя."

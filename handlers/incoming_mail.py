@@ -944,6 +944,19 @@ async def _aqua_last_chance_offer_url(
         url = (offer_effective_link(off) or "").strip()
         return off, url
 
+    from services.offer_storage import find_offer_for_mailed_seller_reply
+
+    off_fi = await find_offer_for_mailed_seller_reply(
+        session,
+        user_id=int(user_id),
+        contact_email=contact_email,
+        subject=subj,
+        body_text=body_text or "",
+    )
+    if off_fi:
+        url = (offer_effective_link(off_fi) or "").strip()
+        return off_fi, url
+
     oid = resolved_id or (int(mail.resolved_offer_id) if mail and mail.resolved_offer_id else None)
     if oid:
         off = await _load_offer(session, user_id=int(user_id), offer_id=int(oid))

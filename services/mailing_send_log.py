@@ -55,7 +55,10 @@ async def _offer_for_mailing_log_row(
     sent_subj = (log.mail_subject or "").strip()
 
     if not pool and sent_subj:
-        from services.offer_storage import find_offer_by_product_title_in_subject
+        from services.offer_storage import (
+            find_offer_by_product_title_in_subject,
+            list_offers_for_validated_contact_email,
+        )
 
         off_title = await find_offer_by_product_title_in_subject(
             session,
@@ -66,6 +69,11 @@ async def _offer_for_mailing_log_row(
         )
         if off_title:
             return off_title
+        validated = await list_offers_for_validated_contact_email(
+            session, user_id=int(user_id), contact_email=rcpt, limit=8
+        )
+        if len(validated) == 1:
+            return validated[0]
         return None
 
     if not pool:

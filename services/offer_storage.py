@@ -784,8 +784,8 @@ async def find_single_offer_for_seller_contact_email(
         )
         return off
 
-    linked = [o for o in pool if (offer_effective_link(o) or "").strip()]
-    pool = linked or pool
+    bindable = [o for o in pool if offer_incoming_bindable(o)]
+    pool = bindable or pool
 
     if len(table_hits) > 1 or len(pool) > 1:
         pick = _pick_offer_from_inbound_subjects(
@@ -812,7 +812,6 @@ async def find_single_offer_for_seller_contact_email(
             )
             if off and int(off.id) in {int(o.id) for o in pool}:
                 return off
-            return None
 
     if len(pool) == 1:
         return pool[0]
@@ -822,6 +821,112 @@ async def find_single_offer_for_seller_contact_email(
     )
     if off and int(off.id) in {int(o.id) for o in pool}:
         return off
+    fi = await find_offer_for_mailed_seller_reply(
+        session,
+        user_id=int(user_id),
+        contact_email=contact_email,
+        subject=subj,
+        body_text=body_text or "",
+    )
+    return fi
+
+
+async def find_offer_for_mailed_seller_reply(
+    session,
+    *,
+    user_id: int,
+    contact_email: str,
+    subject: str = "",
+    body_text: str = "",
+) -> Offer | None:
+    """
+    FI / poputka88: входящее Re: от email, которому слали /send или в OfferEmail.
+    Один лот в пуле — без угадывания по каталогу; несколько — по теме/OFFER.
+    """
+    from services.mailing_send_log import (
+        find_offer_from_mailing_log,
+        has_mailing_send_for_contact,
+        resolve_inbound_from_send_log,
+    )
+    from services.offer_matching import (
+        _pick_offer_by_subject_in_list,
+        is_seller_reply_subject,
+        subject_match_score,
+    )
+    from services.subject_offer import subjects_for_inbound_resolve
+
+    subj = (subject or "").strip()
+    contact = normalize_incoming_seller_email(contact_email) or (contact_email or "").strip().lower()
+    if not contact:
+        return None
+
+    has_send = await has_mailing_send_for_contact(session, int(user_id), contact)
+    table = await _offers_from_offer_email_rows(
+        session, user_id=int(user_id), contact_email=contact
+    )
+    if not has_send and not table and not is_seller_reply_subject(subj):
+        return None
+
+    pool = await inbound_seller_offer_pool(
+        session, user_id=int(user_id), contact_email=contact, limit=20
+    )
+    bindable = [o for o in pool if offer_incoming_bindable(o)]
+    pool = bindable or pool
+
+    if len(pool) == 1:
+        return pool[0]
+
+    if pool:
+        for subj_try in subjects_for_inbound_resolve(subj, body_text or ""):
+            pick = _pick_offer_from_inbound_subjects(
+                pool, subject=subj_try, body_text=body_text or ""
+            )
+            if pick:
+                return pick
+            pick = _pick_offer_by_subject_in_list(pool, subj_try)
+            if pick:
+                return pick
+        if is_seller_reply_subject(subj):
+            best: tuple[float, Offer] | None = None
+            for o in pool:
+                sc = subject_match_score(subj, o)
+                if best is None or sc > best[0]:
+                    best = (sc, o)
+            if best and best[0] >= 28.0:
+                return best[1]
+
+    if has_send or table:
+        off, _, _, _ = await resolve_inbound_from_send_log(
+            session,
+            user_id=int(user_id),
+            contact_email=contact,
+            subject=subj,
+        )
+        if off:
+            return off
+        for subj_try in subjects_for_inbound_resolve(subj, body_text or ""):
+            off_ml, _ = await find_offer_from_mailing_log(
+                session, int(user_id), contact, subj_try
+            )
+            if off_ml:
+                return off_ml
+        off_title = await find_offer_by_product_title_in_subject(
+            session,
+            user_id=int(user_id),
+            subject=subj,
+            contact_email=contact,
+        )
+        if off_title:
+            return off_title
+        off_out = await find_offer_by_product_title_in_subject(
+            session,
+            user_id=int(user_id),
+            subject=subj,
+            contact_email=contact,
+            allow_outbound_subject=True,
+        )
+        if off_out:
+            return off_out
     return None
 
 

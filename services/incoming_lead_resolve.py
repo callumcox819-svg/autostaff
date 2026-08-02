@@ -349,6 +349,21 @@ async def resolve_offer_for_incoming_lead(
                 how = how or "listing_mailed_only"
                 break
 
+    if not off and has_seller_binding:
+        from services.offer_storage import find_offer_for_mailed_seller_reply
+
+        fi = await find_offer_for_mailed_seller_reply(
+            session,
+            user_id=int(user_id),
+            contact_email=contact_email,
+            subject=subject or "",
+            body_text=body_text or "",
+        )
+        if fi:
+            off = fi
+            link = (offer_effective_link(fi) or "").strip()
+            how = how or "fi_mailed_seller_reply"
+
     if off:
         out_subj = await _resolve_outgoing_subject(
             session,

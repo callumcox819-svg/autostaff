@@ -205,5 +205,37 @@ class MailingSendLogResolveTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(snap.get("mailing_bound"))
 
 
+class FiMailedSellerReplyTests(unittest.IsolatedAsyncioTestCase):
+    async def test_single_pool_binds_without_strict_subject_score(self):
+        from services.offer_storage import find_offer_for_mailed_seller_reply
+
+        gewinde = SimpleNamespace(
+            id=88050,
+            title="Gewindeschneide Set",
+            link="https://www.ricardo.ch/de/a/gewinde/",
+            raw_json='{"item_title":"Gewindeschneide Set","item_link":"https://www.ricardo.ch/de/a/gewinde/"}',
+            price="45 .-",
+            photo="https://img.example/g.jpg",
+        )
+        session = AsyncMock()
+        with patch(
+            "services.mailing_send_log.has_mailing_send_for_contact",
+            new=AsyncMock(return_value=True),
+        ), patch(
+            "services.offer_storage._offers_from_offer_email_rows",
+            new=AsyncMock(return_value=[]),
+        ), patch(
+            "services.offer_storage.inbound_seller_offer_pool",
+            new=AsyncMock(return_value=[gewinde]),
+        ):
+            off = await find_offer_for_mailed_seller_reply(
+                session,
+                user_id=1,
+                contact_email="mboenis@bluewin.ch",
+                subject="Re: Kurze Frage zu Gewindeschneide Set",
+            )
+        self.assertIs(off, gewinde)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -16,6 +16,7 @@ from services.offer_matching import (
     subject_is_informative,
 )
 from services.offer_storage import (
+    find_offer_for_mailed_seller_reply,
     find_single_offer_for_seller_contact_email,
     inbound_seller_offer_pool,
     normalize_incoming_seller_email,
@@ -23,6 +24,7 @@ from services.offer_storage import (
     offer_effective_photo,
     offer_effective_price,
     offer_effective_title,
+    offer_incoming_bindable,
 )
 
 
@@ -181,6 +183,23 @@ async def resolve_offer_for_incoming_lead(
         return None, "", "", empty_snap
 
     pinned: int | None = int(resolved_offer_id) if resolved_offer_id else None
+    if pinned:
+        stored = await _offer_from_id(session, user_id=int(user_id), offer_id=pinned)
+        if stored and offer_incoming_bindable(stored):
+            link = (offer_effective_link(stored) or "").strip()
+            out_subj = await _resolve_outgoing_subject(
+                session,
+                user_id=int(user_id),
+                contact_email=contact_email,
+                inbox_email=(inbox_email or "").strip(),
+                pinned_offer_id=pinned,
+                pinned_subj="",
+                offer=stored,
+                mail_subject=subject or "",
+            )
+            snap = _snapshot_from_mailed_offer(stored, outgoing_mail_subject=out_subj)
+            return stored, link, "stored_resolved_offer_id", snap
+
     conv_pin: int | None = None
     pinned_subj = ""
     if (inbox_email or "").strip() and contact_email:
@@ -232,6 +251,37 @@ async def resolve_offer_for_incoming_lead(
 
         if is_seller_reply_subject(subject or ""):
             has_seller_binding = bool(await _get_seller_pool())
+
+    if validated_hit and offer_incoming_bindable(validated_hit):
+        fi = validated_hit
+    elif has_seller_binding:
+        fi = await find_offer_for_mailed_seller_reply(
+            session,
+            user_id=int(user_id),
+            contact_email=contact_email,
+            subject=subject or "",
+            body_text=body_text or "",
+            inbox_email=(inbox_email or "").strip(),
+        )
+    else:
+        fi = None
+
+    if fi and offer_incoming_bindable(fi):
+        link = (offer_effective_link(fi) or "").strip()
+        out_subj = await _resolve_outgoing_subject(
+            session,
+            user_id=int(user_id),
+            contact_email=contact_email,
+            inbox_email=(inbox_email or "").strip(),
+            pinned_offer_id=int(fi.id),
+            pinned_subj=pinned_subj,
+            offer=fi,
+            mail_subject=subject or "",
+        )
+        if pinned_subj:
+            out_subj = pinned_subj
+        snap = _snapshot_from_mailed_offer(fi, outgoing_mail_subject=out_subj)
+        return fi, link, "fi_seller_bind", snap
 
     off: Offer | None = None
     link = ""
@@ -348,21 +398,6 @@ async def resolve_offer_for_incoming_lead(
                 link = (link2 or "").strip() or (offer_effective_link(off2) or "").strip()
                 how = how or "listing_mailed_only"
                 break
-
-    if not off and has_seller_binding:
-        from services.offer_storage import find_offer_for_mailed_seller_reply
-
-        fi = await find_offer_for_mailed_seller_reply(
-            session,
-            user_id=int(user_id),
-            contact_email=contact_email,
-            subject=subject or "",
-            body_text=body_text or "",
-        )
-        if fi:
-            off = fi
-            link = (offer_effective_link(fi) or "").strip()
-            how = how or "fi_mailed_seller_reply"
 
     if off:
         out_subj = await _resolve_outgoing_subject(

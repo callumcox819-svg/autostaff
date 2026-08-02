@@ -838,6 +838,7 @@ async def find_offer_for_mailed_seller_reply(
     contact_email: str,
     subject: str = "",
     body_text: str = "",
+    inbox_email: str = "",
 ) -> Offer | None:
     """
     FI / poputka88: входящее Re: от email, которому слали /send или в OfferEmail.
@@ -861,11 +862,27 @@ async def find_offer_for_mailed_seller_reply(
         return None
 
     has_send = await has_mailing_send_for_contact(session, int(user_id), contact)
+    if has_send:
+        from services.mailing_send_log import resolve_primary_mailed_offer
+
+        prim = await resolve_primary_mailed_offer(
+            session,
+            int(user_id),
+            contact,
+            inbox_email=(inbox_email or "").strip(),
+            subject=subj,
+        )
+        if prim:
+            return prim
+
     table = await _offers_from_offer_email_rows(
         session, user_id=int(user_id), contact_email=contact
     )
     if not has_send and not table and not is_seller_reply_subject(subj):
         return None
+
+    if len(table) == 1:
+        return table[0]
 
     pool = await inbound_seller_offer_pool(
         session, user_id=int(user_id), contact_email=contact, limit=20

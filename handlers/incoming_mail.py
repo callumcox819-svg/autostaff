@@ -952,6 +952,7 @@ async def _aqua_last_chance_offer_url(
         contact_email=contact_email,
         subject=subj,
         body_text=body_text or "",
+        inbox_email=(inbox_email or "").strip(),
     )
     if off_fi:
         url = (offer_effective_link(off_fi) or "").strip()

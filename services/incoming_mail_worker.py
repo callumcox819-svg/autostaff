@@ -1459,41 +1459,18 @@ async def mail_card_offer_meta(
             if off:
                 offer_id = int(off.id)
 
-        single = await find_single_offer_for_seller_contact_email(
-            session,
-            user_id=int(user_id),
-            contact_email=contact,
-            subject=subject or "",
-            body_text=body_text or "",
-        )
-        if single:
-            off = single
-            offer_id = int(single.id)
-        if not off:
-            off = await resolve_offer_for_mail_card(
-                session,
-                user_id=int(user_id),
-                from_email=from_email,
-                resolved_offer_id=offer_id,
-                ad_url=ad_url,
-                inbox_email=inbox_email,
-                subject=subject,
-                from_name=from_name,
-                body_text=body_text,
-                mailing_bound=True,
-            )
         if not off:
             off, _url, _how, snap = await resolve_offer_for_incoming_lead(
                 session,
                 user_id=int(user_id),
-                contact_email=from_email,
-                subject=subject,
+                contact_email=contact,
+                subject=subject or "",
                 from_name=from_name,
-                body_text=body_text,
+                body_text=body_text or "",
                 resolved_offer_id=resolved_offer_id,
                 mail_ad_url=ad_url,
                 inbox_email=inbox_email,
-                mailing_bound=mailing_bound,
+                mailing_bound=True,
             )
             if off:
                 offer_id = int(off.id)
@@ -1507,6 +1484,19 @@ async def mail_card_offer_meta(
                     service_label = (snap.get("service_label") or "").strip() or None
                 if not outgoing_subject:
                     outgoing_subject = (snap.get("outgoing_mail_subject") or "").strip() or None
+
+        if not off:
+            single = await find_single_offer_for_seller_contact_email(
+                session,
+                user_id=int(user_id),
+                contact_email=contact,
+                subject=subject or "",
+                body_text=body_text or "",
+            )
+            if single:
+                off = single
+                offer_id = int(single.id)
+
         if off:
             offer_id = int(off.id)
             if not product_title:

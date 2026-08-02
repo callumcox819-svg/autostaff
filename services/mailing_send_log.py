@@ -350,6 +350,86 @@ async def has_mailing_send_for_contact(
     return any(_canon_recipient(r or "") == email for r in broad)
 
 
+async def bindable_offers_for_mailing_recipient(
+    session,
+    user_id: int,
+    contact_email: str,
+) -> list[Offer]:
+    """Уникальные лоты из журнала /send на этот email (с восстановлением offer_id)."""
+    from services.offer_storage import offer_incoming_bindable
+
+    rows = await _mailing_log_rows_for_recipient(
+        session, int(user_id), contact_email, limit=400
+    )
+    if not rows:
+        rows = await _recover_mailing_log_rows(
+            session, int(user_id), contact_email, limit=80
+        )
+    seen: set[int] = set()
+    ordered: list[Offer] = []
+    for _log, off in rows:
+        if not offer_incoming_bindable(off):
+            continue
+        oid = int(off.id)
+        if oid in seen:
+            continue
+        seen.add(oid)
+        ordered.append(off)
+    return ordered
+
+
+async def resolve_primary_mailed_offer(
+    session,
+    user_id: int,
+    contact_email: str,
+    *,
+    inbox_email: str = "",
+    subject: str = "",
+) -> Offer | None:
+    """
+    FI/poputka: 1 email — 1 лот из журнала; несколько следов — тема Re: / inbox / последний send.
+    """
+    offers = await bindable_offers_for_mailing_recipient(
+        session, int(user_id), contact_email
+    )
+    if len(offers) == 1:
+        return offers[0]
+    if len(offers) > 1:
+        if (subject or "").strip():
+            off, _how = await find_offer_from_mailing_log(
+                session, int(user_id), contact_email, subject or ""
+            )
+            if off:
+                return off
+        off, _link, _subj, _how = await resolve_inbound_from_send_log(
+            session,
+            user_id=int(user_id),
+            contact_email=contact_email,
+            inbox_email=(inbox_email or "").strip(),
+            subject=subject or "",
+        )
+        if off:
+            return off
+        return offers[0]
+    off, _link, _subj, _how = await resolve_inbound_from_send_log(
+        session,
+        user_id=int(user_id),
+        contact_email=contact_email,
+        inbox_email=(inbox_email or "").strip(),
+        subject=subject or "",
+    )
+    if off:
+        return off
+    off2, _link2, _subj2, _how2 = await resolve_inbound_from_send_log(
+        session,
+        user_id=int(user_id),
+        contact_email=contact_email,
+        inbox_email="",
+        subject=subject or "",
+    )
+    return off2
+
+
 async def find_latest_mailed_offer_for_recipient(
     session,
     user_id: int,

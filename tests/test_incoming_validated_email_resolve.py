@@ -92,6 +92,9 @@ class MailingSendLogResolveTests(unittest.IsolatedAsyncioTestCase):
             "services.incoming_lead_resolve.find_offer_from_mailing_log",
             new=AsyncMock(return_value=(None, "")),
         ), patch(
+            "services.incoming_lead_resolve.find_offer_for_mailed_seller_reply",
+            new=AsyncMock(return_value=None),
+        ), patch(
             "services.incoming_lead_resolve.resolve_inbound_from_send_log",
             new=AsyncMock(
                 return_value=(
@@ -139,6 +142,9 @@ class MailingSendLogResolveTests(unittest.IsolatedAsyncioTestCase):
             "services.incoming_lead_resolve.find_offer_from_mailing_log",
             new=AsyncMock(return_value=(cube, "mailing_subject")),
         ), patch(
+            "services.incoming_lead_resolve.find_offer_for_mailed_seller_reply",
+            new=AsyncMock(return_value=None),
+        ), patch(
             "services.incoming_lead_resolve._load_conversation_link",
             new=AsyncMock(return_value=None),
         ), patch(
@@ -179,6 +185,9 @@ class MailingSendLogResolveTests(unittest.IsolatedAsyncioTestCase):
         ), patch(
             "services.incoming_lead_resolve.find_offer_from_mailing_log",
             new=AsyncMock(return_value=(None, "")),
+        ), patch(
+            "services.incoming_lead_resolve.find_offer_for_mailed_seller_reply",
+            new=AsyncMock(return_value=None),
         ), patch(
             "services.incoming_lead_resolve.resolve_inbound_from_send_log",
             new=AsyncMock(return_value=(None, "", "", "")),
@@ -222,11 +231,8 @@ class FiMailedSellerReplyTests(unittest.IsolatedAsyncioTestCase):
             "services.mailing_send_log.has_mailing_send_for_contact",
             new=AsyncMock(return_value=True),
         ), patch(
-            "services.offer_storage._offers_from_offer_email_rows",
-            new=AsyncMock(return_value=[]),
-        ), patch(
-            "services.offer_storage.inbound_seller_offer_pool",
-            new=AsyncMock(return_value=[gewinde]),
+            "services.mailing_send_log.resolve_primary_mailed_offer",
+            new=AsyncMock(return_value=gewinde),
         ):
             off = await find_offer_for_mailed_seller_reply(
                 session,

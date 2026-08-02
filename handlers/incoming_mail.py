@@ -844,6 +844,53 @@ def _canon_email(email: str) -> str:
     return f"{local}@{domain}"
 
 
+async def _bound_offer_from_incoming_mail(
+    session,
+    mail: IncomingMail,
+    *,
+    user_id: int,
+) -> tuple[Offer | None, str]:
+    """Лот уже на карточке (resolved_offer_id / snapshot) — не резолвить заново."""
+    from services.offer_matching import _load_offer
+    from services.offer_storage import offer_effective_link
+
+    uid = int(user_id)
+    owner_id = int(getattr(mail, "user_id", 0) or 0)
+    oid = getattr(mail, "resolved_offer_id", None)
+    if oid:
+        for uid_try in (uid, owner_id):
+            if not uid_try:
+                continue
+            off = await _load_offer(session, user_id=int(uid_try), offer_id=int(oid))
+            if off:
+                url = (offer_effective_link(off) or "").strip()
+                if not url:
+                    url = (getattr(mail, "ad_url", "") or "").strip()
+                return off, url
+
+    if getattr(mail, "mailing_bound", False) or (getattr(mail, "product_title", "") or "").strip():
+        from services.offer_storage import find_offer_for_mailed_seller_reply, normalize_incoming_seller_email
+
+        contact = normalize_incoming_seller_email(getattr(mail, "from_email", "") or "") or (
+            getattr(mail, "from_email", "") or ""
+        ).strip()
+        if contact and owner_id:
+            off = await find_offer_for_mailed_seller_reply(
+                session,
+                user_id=owner_id,
+                contact_email=contact,
+                subject=(getattr(mail, "subject", "") or "").strip(),
+                body_text=(getattr(mail, "body", "") or "").strip(),
+                inbox_email=(getattr(mail, "account_email", "") or "").strip(),
+            )
+            if off:
+                url = (offer_effective_link(off) or "").strip() or (
+                    getattr(mail, "ad_url", "") or ""
+                ).strip()
+                return off, url
+    return None, ""
+
+
 async def _resolve_and_bind_incoming_mail_offer(
     session,
     *,
@@ -853,6 +900,16 @@ async def _resolve_and_bind_incoming_mail_offer(
     """Найти лот по validated email / send log и записать в IncomingMail."""
     from services.incoming_lead_resolve import resolve_offer_for_incoming_lead
     from services.offer_storage import normalize_incoming_seller_email, offer_effective_link
+
+    off_stored, url_stored = await _bound_offer_from_incoming_mail(
+        session, mail, user_id=int(mail.user_id)
+    )
+    if off_stored:
+        mail.resolved_offer_id = int(off_stored.id)
+        mail.mailing_bound = True
+        if url_stored:
+            mail.ad_url = url_stored
+        return off_stored, url_stored
 
     contact = normalize_incoming_seller_email(getattr(mail, "from_email", "") or "")
     if not contact:
@@ -1860,11 +1917,15 @@ async def _create_aqua_link_from_db_work(callback: CallbackQuery, mail_id: int) 
         subj_mail = (getattr(mail, "subject", "") or "").strip()
         body_mail = (getattr(mail, "body", "") or "").strip()
 
-        offer, url = await _resolve_and_bind_incoming_mail_offer(
-            session,
-            mail=mail,
-            inbox_email=inbox_email,
+        offer, url = await _bound_offer_from_incoming_mail(
+            session, mail, user_id=int(tg_user.id)
         )
+        if not offer:
+            offer, url = await _resolve_and_bind_incoming_mail_offer(
+                session,
+                mail=mail,
+                inbox_email=inbox_email,
+            )
         resolved_id = int(offer.id) if offer else getattr(mail, "resolved_offer_id", None)
         mailing_bound = bool(getattr(mail, "mailing_bound", False))
 
@@ -1926,10 +1987,14 @@ async def _create_aqua_link_from_db_work(callback: CallbackQuery, mail_id: int) 
 
         if not offer:
             subj_hint = product_title_from_subject(subj_mail) if subject_is_informative(subj_mail) else subj_mail
+            oid_hint = getattr(mail, "resolved_offer_id", None)
+            extra = ""
+            if oid_hint:
+                extra = f"\n<b>Лот в письме:</b> <code>{int(oid_hint)}</code> — перезагрузите JSON или нажмите «Создать ссылку» после деплоя."
             await callback.message.answer(
                 f"{html_emoji('fail')} <b>Не нашёл объявление для этого письма</b>\n\n"
                 f"<b>Тема:</b> <code>{_e(subj_hint or '—')}</code>\n"
-                f"<b>От:</b> <code>{_e(contact_email) or '—'}</code>\n\n"
+                f"<b>От:</b> <code>{_e(contact_email) or '—'}</code>{extra}\n\n"
                 "Загрузите JSON с этим лотом, провалидируйте email продавца, затем снова «Создать ссылку».",
                 parse_mode="HTML",
                 disable_web_page_preview=True,
@@ -2038,7 +2103,8 @@ async def _create_aqua_link_from_db_work(callback: CallbackQuery, mail_id: int) 
 
 async def _enqueue_aqua_link_by_mail_id(callback: CallbackQuery, mail_id: int) -> None:
     uid_tg = callback.from_user.id
-    if bg_is_running(uid_tg, "aqua_link"):
+    bg_key = f"aqua_link:{int(mail_id)}"
+    if bg_is_running(uid_tg, bg_key):
         return await callback.answer(toast("wait", "Ссылка уже создаётся…"), show_alert=True)
     try:
         await callback.answer(toast("wait", "Создаю ссылку…"), show_alert=False)
@@ -2048,7 +2114,7 @@ async def _enqueue_aqua_link_by_mail_id(callback: CallbackQuery, mail_id: int) -
     async def _link_job() -> None:
         await _run_aqua_link_bg(callback, lambda: _create_aqua_link_from_db_work(callback, int(mail_id)))
 
-    if not bg_start(uid_tg, "aqua_link", _link_job()):
+    if not bg_start(uid_tg, bg_key, _link_job()):
         return await callback.answer(toast("wait", "Ссылка уже создаётся…"), show_alert=True)
 
 

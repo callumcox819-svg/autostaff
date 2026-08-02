@@ -420,6 +420,12 @@ async def find_offer_by_product_title_in_subject(
             limit=80,
         )
         if not scope:
+            from services.mailing_send_log import list_offers_from_mailing_log
+
+            scope = await list_offers_from_mailing_log(
+                session, int(user_id), contact_email, limit=60
+            )
+        if not scope:
             scope = await list_offers_for_seller_contact_hints(
                 session,
                 user_id=int(user_id),

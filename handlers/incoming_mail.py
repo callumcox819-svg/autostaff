@@ -1006,16 +1006,18 @@ async def _resolve_and_bind_incoming_mail_offer(
     contact = normalize_incoming_seller_email(getattr(mail, "from_email", "") or "")
     if not contact:
         return None, ""
-    off, url, _how, snap = await resolve_offer_for_incoming_lead(
+    from services.incoming_offer_bind import force_bind_incoming_seller_offer
+
+    off, url, _how, snap = await force_bind_incoming_seller_offer(
         session,
         user_id=int(mail.user_id),
         contact_email=contact,
         subject=(getattr(mail, "subject", "") or "").strip(),
         from_name=(getattr(mail, "from_name", "") or "").strip(),
         body_text=(getattr(mail, "body", "") or "").strip(),
-        resolved_offer_id=getattr(mail, "resolved_offer_id", None),
-        mail_ad_url=(getattr(mail, "ad_url", "") or "").strip() or None,
         inbox_email=(inbox_email or "").strip(),
+        mail_ad_url=(getattr(mail, "ad_url", "") or "").strip() or None,
+        resolved_offer_id=getattr(mail, "resolved_offer_id", None),
         mailing_bound=bool(getattr(mail, "mailing_bound", False)),
     )
     if not off:

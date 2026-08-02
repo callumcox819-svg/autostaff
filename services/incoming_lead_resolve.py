@@ -16,6 +16,7 @@ from services.offer_matching import (
     subject_is_informative,
 )
 from services.offer_storage import (
+    find_offer_by_product_title_in_subject,
     find_offer_for_mailed_seller_reply,
     find_single_offer_for_seller_contact_email,
     inbound_seller_offer_pool,
@@ -371,7 +372,21 @@ async def resolve_offer_for_incoming_lead(
                 how = how or "offer_subject_seller_pool"
 
     if not off and not has_seller_binding:
-        return None, "", "", empty_snap
+        from services.offer_matching import is_seller_reply_subject, product_title_from_subject
+
+        if is_seller_reply_subject(subject or "") and (product_title_from_subject(subject or "") or "").strip():
+            off = await find_offer_by_product_title_in_subject(
+                session,
+                user_id=int(user_id),
+                subject=subject or "",
+                contact_email=contact_email,
+            )
+            if off:
+                link = (offer_effective_link(off) or "").strip()
+                how = how or "subject_title_early"
+                has_seller_binding = True
+        if not off and not has_seller_binding:
+            return None, "", "", empty_snap
 
     if off and not link:
         link = (offer_effective_link(off) or "").strip()

@@ -1008,6 +1008,7 @@ async def _find_duplicate_telegram_by_body(
     account_id: int,
     from_email: str,
     body: str,
+    cross_account: bool = True,
 ) -> int | None:
     from datetime import datetime, timedelta
 
@@ -1016,23 +1017,28 @@ async def _find_duplicate_telegram_by_body(
     if not key or not from_e:
         return None
     cutoff = datetime.utcnow() - timedelta(minutes=_INCOMING_BODY_DEDUPE_MINUTES)
-    rows = (
-        await session.execute(
+
+    def _query(*, same_account_only: bool):
+        q = (
             sa_select(IncomingMail.id, IncomingMail.body, IncomingMail.telegram_message_id)
             .where(IncomingMail.user_id == int(user_id))
-            .where(IncomingMail.account_id == int(account_id))
             .where(func.lower(IncomingMail.from_email) == from_e)
             .where(IncomingMail.created_at >= cutoff)
             .where(IncomingMail.id != int(mail_db_id))
             .order_by(IncomingMail.id.desc())
-            .limit(16)
+            .limit(24)
         )
-    ).all()
-    for _rid, b, tid in rows:
-        if tid is None or int(tid) <= 0:
-            continue
-        if _incoming_body_dedupe_key(b or "") == key:
-            return int(tid)
+        if same_account_only:
+            q = q.where(IncomingMail.account_id == int(account_id))
+        return q
+
+    for same_acc in (False, True) if cross_account else (True,):
+        rows = (await session.execute(_query(same_account_only=same_acc))).all()
+        for _rid, b, tid in rows:
+            if tid is None or int(tid) <= 0:
+                continue
+            if _incoming_body_dedupe_key(b or "") == key:
+                return int(tid)
     return None
 
 
@@ -1052,23 +1058,27 @@ async def _incoming_body_notify_inflight(
     if not key or not from_e:
         return False
     cutoff = datetime.utcnow() - timedelta(minutes=_INCOMING_BODY_DEDUPE_MINUTES)
-    rows = (
-        await session.execute(
+
+    async def _rows(same_account_only: bool):
+        q = (
             sa_select(IncomingMail.id, IncomingMail.body, IncomingMail.telegram_message_id)
             .where(IncomingMail.user_id == int(user_id))
-            .where(IncomingMail.account_id == int(account_id))
             .where(func.lower(IncomingMail.from_email) == from_e)
             .where(IncomingMail.created_at >= cutoff)
             .where(IncomingMail.id != int(mail_db_id))
             .order_by(IncomingMail.id.desc())
-            .limit(16)
+            .limit(24)
         )
-    ).all()
-    for _rid, b, tid in rows:
-        if tid is None or int(tid) != -1:
-            continue
-        if _incoming_body_dedupe_key(b or "") == key:
-            return True
+        if same_account_only:
+            q = q.where(IncomingMail.account_id == int(account_id))
+        return (await session.execute(q)).all()
+
+    for same_acc in (False, True):
+        for _rid, b, tid in await _rows(same_account_only=same_acc):
+            if tid is None or int(tid) != -1:
+                continue
+            if _incoming_body_dedupe_key(b or "") == key:
+                return True
     return False
 
 
@@ -1131,7 +1141,6 @@ async def _find_duplicate_telegram_message_id(
         await session.execute(
             sa_select(IncomingMail.telegram_message_id)
             .where(IncomingMail.user_id == int(user_id))
-            .where(IncomingMail.account_id == int(account_id))
             .where(IncomingMail.from_email == from_e)
             .where(IncomingMail.subject == subj)
             .where(IncomingMail.telegram_message_id.isnot(None))
@@ -1189,7 +1198,6 @@ async def _wait_duplicate_telegram_notify(
                 await session.execute(
                     sa_select(IncomingMail.id)
                     .where(IncomingMail.user_id == int(user_id))
-                    .where(IncomingMail.account_id == int(account_id))
                     .where(IncomingMail.from_email == from_e)
                     .where(IncomingMail.subject == subj)
                     .where(IncomingMail.telegram_message_id == -1)
@@ -1998,9 +2006,30 @@ async def _process_mails_for_account_impl(
                         elif offer_bound and hasattr(offer_bound, "id"):
                             resolved_offer_id = int(offer_bound.id)
                             mailing_bound_flag = True
+                            if not (lead_snap.get("product_title") or "").strip():
+                                lead_snap = _snapshot_from_mailed_offer(
+                                    offer_bound,
+                                    outgoing_mail_subject=(
+                                        lead_snap.get("outgoing_mail_subject") or ""
+                                    ).strip()
+                                    or pick_mailing_subject(
+                                        (offer_effective_title(offer_bound) or "").strip()
+                                    ),
+                                )
                         else:
-                            resolved_offer_id = None
-                            listing_url = ""
+                            prev_oid = getattr(existing, "resolved_offer_id", None)
+                            if prev_oid:
+                                resolved_offer_id = int(prev_oid)
+                                listing_url = (
+                                    listing_url
+                                    or (getattr(existing, "ad_url", "") or "").strip()
+                                )
+                                mailing_bound_flag = bool(
+                                    getattr(existing, "mailing_bound", False)
+                                )
+                            else:
+                                resolved_offer_id = None
+                                listing_url = ""
 
                         existing.resolved_offer_id = resolved_offer_id
                         existing.resolved_offer_email_id = resolved_offer_email_id
@@ -2016,6 +2045,21 @@ async def _process_mails_for_account_impl(
                         saved_outgoing_mail_subject = (
                             lead_snap.get("outgoing_mail_subject") or ""
                         ).strip()
+                        if offer_bound and hasattr(offer_bound, "id") and not saved_product_title:
+                            snap2 = _snapshot_from_mailed_offer(
+                                offer_bound,
+                                outgoing_mail_subject=saved_outgoing_mail_subject,
+                            )
+                            saved_product_title = (snap2.get("product_title") or "").strip()
+                            saved_offer_price = saved_offer_price or (
+                                snap2.get("offer_price") or ""
+                            ).strip()
+                            saved_photo_url = saved_photo_url or (
+                                snap2.get("photo_url") or ""
+                            ).strip()
+                            saved_service_label = saved_service_label or (
+                                snap2.get("service_label") or ""
+                            ).strip()
                         if saved_product_title:
                             existing.product_title = saved_product_title
                         if saved_offer_price:
@@ -2103,19 +2147,39 @@ async def _process_mails_for_account_impl(
             if mail_db_id:
                 try:
                     async with _imap_db_session() as session:
-                        mail_ad_row = (
+                        mr = (
                             await session.execute(
-                                sa_select(IncomingMail.ad_url, IncomingMail.resolved_offer_id)
-                                .where(IncomingMail.id == int(mail_db_id))
-                                .limit(1)
+                                sa_select(IncomingMail).where(IncomingMail.id == int(mail_db_id)).limit(1)
                             )
-                        ).first()
-                        if mail_ad_row and mail_ad_row[0]:
-                            ad_url = (mail_ad_row[0] or "").strip()
-                            if mail_ad_row[1]:
-                                resolved_offer_id = int(mail_ad_row[1])
+                        ).scalars().first()
+                        if mr:
+                            if getattr(mr, "resolved_offer_id", None):
+                                resolved_offer_id = int(mr.resolved_offer_id)
+                            mailing_bound_flag = bool(
+                                mailing_bound_flag or getattr(mr, "mailing_bound", False)
+                            )
+                            if (getattr(mr, "ad_url", None) or "").strip():
+                                ad_url = (mr.ad_url or "").strip()
+                            saved_product_title = (
+                                saved_product_title
+                                or (getattr(mr, "product_title", None) or "")
+                            ).strip()
+                            saved_offer_price = (
+                                saved_offer_price or (getattr(mr, "offer_price", None) or "")
+                            ).strip()
+                            saved_photo_url = (
+                                saved_photo_url or (getattr(mr, "photo_url", None) or "")
+                            ).strip()
+                            saved_service_label = (
+                                saved_service_label
+                                or (getattr(mr, "service_label", None) or "")
+                            ).strip()
+                            saved_outgoing_mail_subject = (
+                                saved_outgoing_mail_subject
+                                or (getattr(mr, "outgoing_mail_subject", None) or "")
+                            ).strip()
                 except Exception:
-                    logger.exception("Failed to load IncomingMail.ad_url mail_id=%s", mail_db_id)
+                    logger.exception("Failed to reload IncomingMail mail_id=%s", mail_db_id)
 
             if (not ad_url) and resolved_offer_id:
                 try:
@@ -2180,7 +2244,7 @@ async def _process_mails_for_account_impl(
             if ad_url:
                 FULL_META[(acc_id, uid_key)]["ad_url"] = ad_url
 
-            pin_offer = int(resolved_offer_id) if (mailing_bound_flag and resolved_offer_id) else None
+            pin_offer = int(resolved_offer_id) if resolved_offer_id else None
             await _upsert_convlink(
                 user_id=user_id,
                 inbox_email=_canon_email(inbox_email_clean),

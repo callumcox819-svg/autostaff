@@ -160,6 +160,27 @@ class OfferSubjectMatchTests(unittest.TestCase):
         hit = _pick_offer_by_subject_in_list([sofa, tramp], "Re: Trampoline")
         self.assertIs(hit, tramp)
 
+    def test_aw_subject_plain_title_with_noch_im_verkauf_trailer(self):
+        from services.subject_offer import offer_title_from_inbound_subject
+
+        subj = (
+            "AW: Kärcher Akku-Staubsauger BVL 3/1 Bp inkl. Akku und Ladegerät "
+            "- noch im Verk…"
+        )
+        title = offer_title_from_inbound_subject(subj)
+        self.assertIn("Kärcher Akku-Staubsauger", title)
+        self.assertNotIn("noch im Verk", title.lower())
+
+    def test_subjects_for_inbound_resolve_quoted_betreff(self):
+        from services.subject_offer import subjects_for_inbound_resolve
+
+        body = (
+            "Ja !\n\n-----Ursprüngliche Nachricht-----\n"
+            "Betreff: Kärcher Akku-Staubsauger BVL 3/1 Bp inkl. Akku und Ladegerät\n"
+        )
+        subs = subjects_for_inbound_resolve("AW: Kärcher …", body)
+        self.assertTrue(any("Kärcher Akku-Staubsauger" in s for s in subs))
+
     def test_incoming_subject_binds_rejects_unrelated_lot(self):
         book = SimpleNamespace(
             title="Neu erschienen: Tödlicher Rheinfall | Gabriela Kasperski",

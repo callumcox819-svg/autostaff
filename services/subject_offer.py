@@ -179,6 +179,24 @@ def _inbound_offer_extractors() -> tuple[re.Pattern[str], ...]:
     return _INBOUND_OFFER_EXTRACTORS
 
 
+def _strip_inbound_subject_trailer(subj: str) -> str:
+    """«Kärcher … - noch im Verkauf» → только название (Aw:/Re: уже сняты)."""
+    s = sanitize_email_subject(subj)
+    s = re.sub(
+        r"\s*[-–—]\s*noch im verk(?:auf)?[\.\s…]*$",
+        "",
+        s,
+        flags=re.IGNORECASE,
+    )
+    s = re.sub(
+        r"\s*[-–—]\s*noch verf[uü]gbar[\.\?\s…]*$",
+        "",
+        s,
+        flags=re.IGNORECASE,
+    )
+    return s.strip()
+
+
 def offer_title_from_inbound_subject(subject: str) -> str:
     """
     Из Re:/Aw:/WG: темы ответа продавца — только OFFER (полное item_title),
@@ -191,17 +209,28 @@ def offer_title_from_inbound_subject(subject: str) -> str:
     if not subj:
         return ""
 
+    subj = _strip_inbound_subject_trailer(subj) or subj
+
     for rx in _inbound_offer_extractors():
         m = rx.match(subj)
         if not m:
             continue
         offer = sanitize_email_subject((m.group("offer") or "").strip())
+        offer = _strip_inbound_subject_trailer(offer) or offer
         if len(offer) >= 3 and offer.upper() not in ("OFFER", "ARTIKEL", "TEST"):
             if offer == subj and _MAILING_WRAPPER_RE.search(subj):
-                continue
+                # «OFFER» plain + хвост «noch im Verkauf» — не отбрасывать
+                if not re.search(r"noch\s+im\s+verk", subj, re.I):
+                    continue
             if len(offer) > 140:
                 offer = offer[:137].rstrip() + "…"
             return offer
+
+    # Aw:/Re: и в теме только item_title (без пресета Kurze Frage / Interesse)
+    plain = _strip_inbound_subject_trailer(subj)
+    if len(plain) >= 8 and not _MAILING_WRAPPER_RE.match(plain):
+        if plain.upper() not in ("OFFER", "ARTIKEL", "TEST"):
+            return plain[:140]
 
     return ""
 
@@ -221,8 +250,19 @@ def subjects_for_inbound_resolve(subject: str, body: str) -> list[str]:
         seen.add(k)
         quoted.append(t)
 
+    _QUOTED_SUBJ_RE = re.compile(
+        r"^(?:betreff|subject|oggetto|objet)\s*:\s*(.+)$",
+        re.IGNORECASE,
+    )
+
     for line in (body or "").replace("\r", "\n").split("\n"):
         ls = line.strip().lstrip(">").strip()
+        if len(ls) < 8:
+            continue
+        m_subj = _QUOTED_SUBJ_RE.match(ls)
+        if m_subj:
+            _add(m_subj.group(1))
+            continue
         if len(ls) < 12:
             continue
         low = ls.lower()

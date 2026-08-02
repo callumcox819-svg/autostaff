@@ -471,7 +471,29 @@ async def find_offer_by_product_title_in_subject(
     )
     if best and incoming_subject_binds_offer(subj, best):
         return best
-    return None
+
+    if (contact_email or "").strip():
+        from services.mailing_send_log import offer_was_mailed_to
+
+        mailed = [
+            h
+            for h in hits
+            if await offer_was_mailed_to(
+                session, int(user_id), int(h.id), contact_email
+            )
+        ]
+        if len(mailed) == 1:
+            return mailed[0]
+        if mailed:
+            pick2 = _pick_offer_by_subject_in_list(mailed, subj)
+            if pick2:
+                return pick2
+            return mailed[0]
+
+    pick3 = _pick_offer_by_subject_in_list(hits, subj)
+    if pick3:
+        return pick3
+    return hits[0]
 
 
 def _seller_email_matches(stored: str, contact_email: str) -> bool:

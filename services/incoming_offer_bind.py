@@ -153,4 +153,45 @@ async def force_bind_incoming_seller_offer(
         link = (offer_effective_link(off) or "").strip()
         return off, link, "allowed_single", _snapshot_from_mailed_offer(off)
 
+    if is_seller_reply_subject(subject or ""):
+        needle = (product_title_from_subject(subject or "") or "").strip().lower()
+        if len(needle) >= 4:
+            from sqlalchemy import select as sa_select
+
+            from models import Offer
+            from services.offer_matching import (
+                _offer_title_matches_needle,
+                _pick_offer_by_subject_in_list,
+            )
+            from services.mailing_send_log import offer_was_mailed_to
+
+            rows = (
+                await session.execute(
+                    sa_select(Offer)
+                    .where(Offer.user_id == int(user_id))
+                    .order_by(Offer.id.desc())
+                    .limit(4000)
+                )
+            ).scalars().all()
+            hits: list[Offer] = []
+            for cand in rows:
+                title = (offer_effective_title(cand) or "").strip()
+                if title and _offer_title_matches_needle(needle, title):
+                    hits.append(cand)
+            if hits:
+                pick = _pick_offer_by_subject_in_list(hits, subject or "")
+                if pick:
+                    off = pick
+                else:
+                    mailed = [
+                        h
+                        for h in hits
+                        if await offer_was_mailed_to(
+                            session, int(user_id), int(h.id), contact
+                        )
+                    ]
+                    off = mailed[0] if len(mailed) == 1 else (mailed[0] if mailed else hits[0])
+                link = (offer_effective_link(off) or "").strip()
+                return off, link, "catalog_title", _snapshot_from_mailed_offer(off)
+
     return None, "", "", empty_snap

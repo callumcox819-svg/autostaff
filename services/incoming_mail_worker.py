@@ -2252,16 +2252,16 @@ async def _process_mails_for_account_impl(
                 except Exception:
                     logger.exception("Failed to persist IncomingMail links mail_id=%s", mail_db_id)
             # ✅ ТЗ: подтягиваем товар/сервис/фото из БД по email отправителя (валиднутый email продавца)
-            offer_id = None
-            service_label = None
-            product_title = None
-            photo_url = None
-            offer_price: str | None = None
-            card_outgoing_subject = ""
+            offer_id = int(resolved_offer_id) if resolved_offer_id else None
+            service_label = (saved_service_label or "").strip() or None
+            product_title = (saved_product_title or "").strip() or None
+            photo_url = (saved_photo_url or "").strip() or None
+            offer_price = (saved_offer_price or "").strip() or None
+            card_outgoing_subject = (saved_outgoing_mail_subject or "").strip()
             try:
                 async with _imap_db_session() as _s:
                     (
-                        offer_id,
+                        meta_oid,
                         service_label,
                         product_title,
                         photo_url,
@@ -2282,63 +2282,15 @@ async def _process_mails_for_account_impl(
                         stored_photo_url=saved_photo_url or None,
                         stored_service_label=saved_service_label or None,
                         stored_outgoing_subject=saved_outgoing_mail_subject or None,
-                        mailing_bound=mailing_bound_flag,
+                        mailing_bound=mailing_bound_flag or bool(resolved_offer_id),
                     )
-                if offer_id:
+                if meta_oid:
+                    offer_id = int(meta_oid)
                     mailing_bound_flag = True
                     resolved_offer_id = int(offer_id)
-                elif mail_db_id:
-                    from services.mailing_send_log import (
-                        find_offer_from_mailing_log,
-                        has_mailing_send_for_contact,
-                    )
-                    from services.offer_storage import (
-                        normalize_incoming_seller_email,
-                        offer_effective_link,
-                        offer_effective_photo,
-                        offer_effective_price,
-                        offer_effective_title,
-                    )
 
-                    try:
-                        async with _imap_db_session() as _s_fb:
-                            contact_fb = (
-                                normalize_incoming_seller_email(from_email_clean)
-                                or from_email_clean
-                            )
-                            if await has_mailing_send_for_contact(
-                                _s_fb, int(user_id), contact_fb
-                            ):
-                                off_fb, _how = await find_offer_from_mailing_log(
-                                    _s_fb,
-                                    int(user_id),
-                                    contact_fb,
-                                    subject or "",
-                                )
-                                if off_fb:
-                                    offer_id = int(off_fb.id)
-                                    mailing_bound_flag = True
-                                    resolved_offer_id = int(offer_id)
-                                    product_title = (
-                                        offer_effective_title(off_fb) or ""
-                                    ).strip() or product_title
-                                    offer_price = (
-                                        offer_effective_price(off_fb, default="") or ""
-                                    ).strip() or offer_price
-                                    photo_url = (
-                                        offer_effective_photo(off_fb) or ""
-                                    ).strip() or photo_url
-                                    if not service_label:
-                                        service_label = _service_label_from_link(
-                                            offer_effective_link(off_fb)
-                                        )
-                    except Exception:
-                        logger.exception(
-                            "mailing-log fallback bind failed from=%s",
-                            from_email_clean,
-                        )
                 if not offer_id and mail_db_id:
-                    from services.incoming_lead_resolve import resolve_offer_for_incoming_lead
+                    from services.incoming_offer_bind import force_bind_incoming_seller_offer
                     from services.offer_storage import (
                         normalize_incoming_seller_email,
                         offer_effective_link,
@@ -2347,54 +2299,74 @@ async def _process_mails_for_account_impl(
                         offer_effective_title,
                     )
 
-                    try:
-                        async with _imap_db_session() as _s_lr:
-                            contact_lr = (
-                                normalize_incoming_seller_email(from_email_clean)
-                                or from_email_clean
-                            )
-                            off_lr, _u, _how, snap_lr = await resolve_offer_for_incoming_lead(
-                                _s_lr,
-                                user_id=int(user_id),
-                                contact_email=contact_lr,
-                                subject=subject or "",
-                                from_name=(from_name or "").strip(),
-                                body_text=body_clean or "",
-                                resolved_offer_id=resolved_offer_id,
-                                mail_ad_url=ad_url,
-                                inbox_email=inbox_email_clean,
-                                mailing_bound=mailing_bound_flag,
-                            )
-                            if off_lr:
-                                offer_id = int(off_lr.id)
-                                mailing_bound_flag = True
-                                resolved_offer_id = int(offer_id)
-                                product_title = (
-                                    snap_lr.get("product_title") or ""
-                                ).strip() or product_title or (
-                                    offer_effective_title(off_lr) or ""
-                                ).strip()
-                                offer_price = (
-                                    snap_lr.get("offer_price") or ""
-                                ).strip() or offer_price or (
-                                    offer_effective_price(off_lr, default="") or ""
-                                ).strip()
-                                photo_url = (
-                                    snap_lr.get("photo_url") or ""
-                                ).strip() or photo_url or (
-                                    offer_effective_photo(off_lr) or ""
-                                ).strip()
-                                if not service_label:
-                                    service_label = (
-                                        snap_lr.get("service_label") or ""
-                                    ).strip() or _service_label_from_link(
-                                        offer_effective_link(off_lr)
-                                    )
-                    except Exception:
-                        logger.exception(
-                            "resolve_offer_for_incoming_lead before card from=%s",
-                            from_email_clean,
+                    async with _imap_db_session() as _s_fb:
+                        contact_fb = (
+                            normalize_incoming_seller_email(from_email_clean)
+                            or from_email_clean
                         )
+                        off_fb, url_fb, _how_fb, snap_fb = await force_bind_incoming_seller_offer(
+                            _s_fb,
+                            user_id=int(user_id),
+                            contact_email=contact_fb,
+                            subject=subject or "",
+                            body_text=body_clean or "",
+                            from_name=(from_name or "").strip(),
+                            inbox_email=inbox_email_clean,
+                            mail_ad_url=ad_url,
+                            resolved_offer_id=resolved_offer_id,
+                            mailing_bound=True,
+                        )
+                        if off_fb:
+                            offer_id = int(off_fb.id)
+                            mailing_bound_flag = True
+                            resolved_offer_id = int(offer_id)
+                            product_title = (
+                                (snap_fb.get("product_title") or "").strip()
+                                or product_title
+                                or (offer_effective_title(off_fb) or "").strip()
+                            ) or None
+                            offer_price = (
+                                (snap_fb.get("offer_price") or "").strip()
+                                or offer_price
+                                or (offer_effective_price(off_fb, default="") or "").strip()
+                            ) or None
+                            photo_url = (
+                                (snap_fb.get("photo_url") or "").strip()
+                                or photo_url
+                                or (offer_effective_photo(off_fb) or "").strip()
+                            ) or None
+                            if not service_label:
+                                service_label = (
+                                    (snap_fb.get("service_label") or "").strip()
+                                    or _service_label_from_link(
+                                        offer_effective_link(off_fb)
+                                    )
+                                ) or None
+                            if url_fb and not ad_url:
+                                ad_url = url_fb.strip()
+                            mr = (
+                                await _s_fb.execute(
+                                    sa_select(IncomingMail)
+                                    .where(IncomingMail.id == int(mail_db_id))
+                                    .limit(1)
+                                )
+                            ).scalars().first()
+                            if mr:
+                                mr.resolved_offer_id = int(offer_id)
+                                mr.mailing_bound = True
+                                if ad_url:
+                                    mr.ad_url = ad_url
+                                if product_title:
+                                    mr.product_title = (product_title or "")[:500]
+                                if offer_price:
+                                    mr.offer_price = (offer_price or "")[:64]
+                                if photo_url:
+                                    mr.photo_url = (photo_url or "")[:2000]
+                                if service_label:
+                                    mr.service_label = (service_label or "")[:64]
+                                if card_outgoing_subject:
+                                    mr.outgoing_mail_subject = card_outgoing_subject[:500]
+                                await _db_commit_retry(_s_fb)
             except Exception:
                 logger.exception("Failed to load Offer meta for incoming mail: from=%s", from_email_clean)
 

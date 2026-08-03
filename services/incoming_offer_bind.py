@@ -10,11 +10,66 @@ from services.incoming_lead_resolve import (
 from services.offer_storage import (
     find_offer_by_product_title_in_subject,
     find_offer_for_mailed_seller_reply,
+    inbound_seller_offer_pool,
     list_offers_for_validated_contact_email,
     normalize_incoming_seller_email,
     offer_effective_link,
     offer_effective_title,
+    _pick_offer_from_inbound_subjects,
 )
+
+
+async def _offer_from_prior_inbound_mail(
+    session,
+    *,
+    user_id: int,
+    contact_email: str,
+    subject: str,
+    exclude_mail_id: int | None = None,
+) -> Offer | None:
+    """Повторное письмо в том же треде — лот с прошлой карточки этого продавца."""
+    from sqlalchemy import func, select as sa_select
+
+    from models import IncomingMail, Offer
+    from services.offer_matching import (
+        _load_offer,
+        incoming_subject_binds_offer,
+        product_title_from_subject,
+    )
+
+    contact = normalize_incoming_seller_email(contact_email) or (contact_email or "").strip().lower()
+    if not contact:
+        return None
+    needle = (product_title_from_subject(subject or "") or "").strip().lower()
+    rows = (
+        await session.execute(
+            sa_select(IncomingMail)
+            .where(IncomingMail.user_id == int(user_id))
+            .where(func.lower(IncomingMail.from_email) == contact)
+            .where(IncomingMail.resolved_offer_id.isnot(None))
+            .order_by(IncomingMail.id.desc())
+            .limit(32)
+        )
+    ).scalars().all()
+    for mail in rows:
+        if exclude_mail_id and int(mail.id) == int(exclude_mail_id):
+            continue
+        oid = int(mail.resolved_offer_id or 0)
+        if not oid:
+            continue
+        off = await _load_offer(session, user_id=int(user_id), offer_id=oid)
+        if not off:
+            continue
+        if needle and len(needle) >= 4:
+            pt = (
+                (getattr(mail, "product_title", None) or "").strip()
+                or (offer_effective_title(off) or "").strip()
+            ).lower()
+            if pt and (needle in pt or pt in needle):
+                return off
+        if incoming_subject_binds_offer(subject or "", off):
+            return off
+    return None
 
 
 async def force_bind_incoming_seller_offer(
@@ -29,6 +84,7 @@ async def force_bind_incoming_seller_offer(
     mail_ad_url: str | None = None,
     resolved_offer_id: int | None = None,
     mailing_bound: bool = False,
+    exclude_mail_id: int | None = None,
 ) -> tuple[Offer | None, str, str, dict]:
     """
     FI-логика: email продавца + журнал /send + validated → лот, title/photo/price в snap.
@@ -64,6 +120,17 @@ async def force_bind_incoming_seller_offer(
             link = (offer_effective_link(off) or "").strip()
         return off, link, how or "resolve_lead", snap
 
+    off = await _offer_from_prior_inbound_mail(
+        session,
+        user_id=int(user_id),
+        contact_email=contact,
+        subject=(subject or "").strip(),
+        exclude_mail_id=exclude_mail_id,
+    )
+    if off:
+        link = (offer_effective_link(off) or "").strip()
+        return off, link, "prior_inbound_mail", _snapshot_from_mailed_offer(off)
+
     off = await find_offer_for_mailed_seller_reply(
         session,
         user_id=int(user_id),
@@ -79,6 +146,7 @@ async def force_bind_incoming_seller_offer(
     from services.mailing_send_log import (
         bindable_offers_for_mailing_recipient,
         find_latest_mailed_offer_for_recipient,
+        find_offer_from_mailing_log,
         has_mailing_send_for_contact,
         list_allowed_offers_for_incoming_contact,
         list_offers_from_mailing_log,
@@ -91,9 +159,33 @@ async def force_bind_incoming_seller_offer(
         if len(mailed) == 1:
             off = mailed[0]
         elif mailed:
-            off = await find_latest_mailed_offer_for_recipient(
-                session, int(user_id), contact
+            pick = _pick_offer_from_inbound_subjects(
+                mailed,
+                subject=(subject or "").strip(),
+                body_text=(body_text or "").strip(),
             )
+            if pick:
+                off = pick
+            else:
+                off, _how_ml = await find_offer_from_mailing_log(
+                    session,
+                    int(user_id),
+                    contact,
+                    subject or "",
+                )
+                if not off:
+                    from services.subject_offer import subjects_for_inbound_resolve
+
+                    for subj_try in subjects_for_inbound_resolve(subject or "", body_text or ""):
+                        off, _ = await find_offer_from_mailing_log(
+                            session, int(user_id), contact, subj_try
+                        )
+                        if off:
+                            break
+                if not off:
+                    off = await find_latest_mailed_offer_for_recipient(
+                        session, int(user_id), contact
+                    )
         else:
             bound = await bindable_offers_for_mailing_recipient(
                 session, int(user_id), contact

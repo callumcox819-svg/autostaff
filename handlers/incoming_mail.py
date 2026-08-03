@@ -1019,6 +1019,7 @@ async def _resolve_and_bind_incoming_mail_offer(
         mail_ad_url=(getattr(mail, "ad_url", "") or "").strip() or None,
         resolved_offer_id=getattr(mail, "resolved_offer_id", None),
         mailing_bound=bool(getattr(mail, "mailing_bound", False)),
+        exclude_mail_id=int(mail.id) if getattr(mail, "id", None) else None,
     )
     if not off:
         return None, ""
@@ -1078,7 +1079,7 @@ async def _aqua_last_chance_offer_url(
         off = await _load_offer(
             session, user_id=int(user_id), offer_id=int(conv.pinned_offer_id)
         )
-        if off and (not subj_strong or incoming_subject_binds_offer(subj, off)):
+        if off and incoming_subject_binds_offer(subj, off):
             url = (offer_effective_link(off) or "").strip() or (
                 getattr(conv, "ad_url", "") or ""
             ).strip()

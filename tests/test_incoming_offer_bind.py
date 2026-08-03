@@ -28,6 +28,9 @@ class ForceBindIncomingTests(unittest.IsolatedAsyncioTestCase):
             "services.incoming_offer_bind.resolve_offer_for_incoming_lead",
             new=AsyncMock(side_effect=_resolve_empty),
         ), patch(
+            "services.incoming_offer_bind._offer_from_prior_inbound_mail",
+            new=AsyncMock(return_value=None),
+        ), patch(
             "services.incoming_offer_bind.find_offer_for_mailed_seller_reply",
             new=AsyncMock(return_value=None),
         ), patch(

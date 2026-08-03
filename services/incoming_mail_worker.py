@@ -521,10 +521,9 @@ async def _upsert_convlink(
                 if generated_link:
                     row.generated_link = generated_link
                 if pinned_offer_id:
-                    if not row.pinned_offer_id:
-                        row.pinned_offer_id = int(pinned_offer_id)
+                    row.pinned_offer_id = int(pinned_offer_id)
                 ps = (pinned_outgoing_subject or "").strip()[:500]
-                if ps and not (getattr(row, "pinned_outgoing_subject", None) or "").strip():
+                if ps:
                     row.pinned_outgoing_subject = ps
                 # Запоминаем anchor message_id только если его ещё нет, либо если явно передали.
                 if tg_message_id is not None:
@@ -1290,7 +1289,7 @@ def render_mail_text_chunks(
 
     extra = ""
     lid = (link_id or "").strip()
-    if lid:
+    if lid and offer_id:
         extra += f"<b>ID:</b> <code>{_e(lid)}</code>\n"
     if offer_id:
         extra += f"<b>Лот:</b> <code>{int(offer_id)}</code>\n"
@@ -1921,6 +1920,7 @@ async def _process_mails_for_account_impl(
                                 mail_ad_url=(getattr(existing, "ad_url", "") or "").strip() or None,
                                 resolved_offer_id=getattr(existing, "resolved_offer_id", None),
                                 mailing_bound=bool(getattr(existing, "mailing_bound", False)),
+                                exclude_mail_id=int(existing.id) if getattr(existing, "id", None) else None,
                             )
                         )
                         if offer_bound:
@@ -2315,6 +2315,7 @@ async def _process_mails_for_account_impl(
                             mail_ad_url=ad_url,
                             resolved_offer_id=resolved_offer_id,
                             mailing_bound=True,
+                            exclude_mail_id=int(mail_db_id) if mail_db_id else None,
                         )
                         if off_fb:
                             offer_id = int(off_fb.id)

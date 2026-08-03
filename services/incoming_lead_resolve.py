@@ -254,7 +254,15 @@ async def resolve_offer_for_incoming_lead(
             has_seller_binding = bool(await _get_seller_pool())
 
     if validated_hit and offer_incoming_bindable(validated_hit):
-        fi = validated_hit
+        seller_pool_n = await inbound_seller_offer_pool(
+            session, user_id=int(user_id), contact_email=contact_email, limit=20
+        )
+        if len(seller_pool_n) <= 1:
+            fi = validated_hit
+        elif incoming_subject_binds_offer(subject or "", validated_hit):
+            fi = validated_hit
+        else:
+            fi = None
     elif has_seller_binding:
         fi = await find_offer_for_mailed_seller_reply(
             session,
@@ -347,14 +355,6 @@ async def resolve_offer_for_incoming_lead(
                 link = (offer_effective_link(o) or "").strip()
                 how = "pinned_offer_id"
                 break
-        if not off and not subj_strong:
-            for pin_id in (pinned, conv_pin):
-                o = await _offer_from_id(session, user_id=int(user_id), offer_id=int(pin_id or 0))
-                if o:
-                    off = o
-                    link = (offer_effective_link(o) or "").strip()
-                    how = "pinned_offer_id"
-                    break
 
     if not off and has_seller_binding:
         from services.offer_storage import _pick_offer_from_inbound_subjects

@@ -57,6 +57,12 @@ class MailingSendLogResolveTests(unittest.IsolatedAsyncioTestCase):
         ), patch(
             "services.incoming_lead_resolve._resolve_outgoing_subject",
             new=AsyncMock(return_value="Interesse an FLYER C8.1 NextG 14"),
+        ), patch(
+            "services.incoming_lead_resolve.inbound_seller_offer_pool",
+            new=AsyncMock(return_value=[flyer]),
+        ), patch(
+            "services.incoming_lead_resolve.incoming_subject_binds_offer",
+            return_value=True,
         ):
             off, link, how, snap = await resolve_offer_for_incoming_lead(
                 session,

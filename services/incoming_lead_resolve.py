@@ -79,6 +79,38 @@ async def resolve_offer_from_validated_seller_email(
     return None, "", ""
 
 
+async def prior_resolved_offer_id_for_seller(
+    session,
+    *,
+    user_id: int,
+    contact_email: str,
+    exclude_mail_id: int | None = None,
+) -> int | None:
+    """Повторное письмо: тот же validated email уже был привязан к лоту."""
+    from sqlalchemy import func, select as sa_select
+
+    from models import IncomingMail
+
+    contact = normalize_incoming_seller_email(contact_email)
+    if not contact:
+        return None
+    q = (
+        sa_select(IncomingMail.resolved_offer_id)
+        .where(IncomingMail.user_id == int(user_id))
+        .where(func.lower(IncomingMail.from_email) == contact)
+        .where(IncomingMail.resolved_offer_id.isnot(None))
+        .order_by(IncomingMail.id.desc())
+        .limit(1)
+    )
+    if exclude_mail_id:
+        q = q.where(IncomingMail.id != int(exclude_mail_id))
+    oid = (await session.execute(q)).scalar_one_or_none()
+    try:
+        return int(oid) if oid else None
+    except (TypeError, ValueError):
+        return None
+
+
 async def resolve_offer_for_incoming_lead(
     session,
     *,
@@ -131,5 +163,22 @@ async def resolve_offer_for_incoming_lead(
         snap = _snapshot_from_mailed_offer(off)
         snap["mailing_bound"] = True
         return off, link, how or "validated_email", snap
+
+    prior_oid = await prior_resolved_offer_id_for_seller(
+        session,
+        user_id=int(user_id),
+        contact_email=contact_email,
+    )
+    if prior_oid:
+        from services.offer_matching import _load_offer
+
+        off_p = await _load_offer(
+            session, user_id=int(user_id), offer_id=int(prior_oid)
+        )
+        if off_p:
+            link = (offer_effective_link(off_p) or "").strip()
+            snap = _snapshot_from_mailed_offer(off_p)
+            snap["mailing_bound"] = True
+            return off_p, link, "prior_inbound_same_seller", snap
 
     return None, "", "", empty_snap

@@ -1457,10 +1457,9 @@ async def mail_card_offer_meta(
     from services.incoming_lead_resolve import resolve_offer_for_incoming_lead
     from services.offer_storage import normalize_incoming_seller_email
 
-    if (stored_product_title or "").strip():
-        oid = int(resolved_offer_id) if resolved_offer_id else None
+    if (stored_product_title or "").strip() and resolved_offer_id:
         return (
-            oid,
+            int(resolved_offer_id),
             (stored_service_label or "").strip() or None,
             (stored_product_title or "").strip() or None,
             (stored_photo_url or "").strip() or None,
@@ -1887,6 +1886,61 @@ async def _process_mails_for_account_impl(
                                 existing.photo_url = saved_photo_url[:2000]
                             if saved_service_label:
                                 existing.service_label = saved_service_label[:64]
+                        else:
+                            from services.incoming_lead_resolve import (
+                                prior_resolved_offer_id_for_seller,
+                            )
+                            from services.offer_matching import _load_offer
+
+                            prior_oid = await prior_resolved_offer_id_for_seller(
+                                session,
+                                user_id=int(user_id),
+                                contact_email=contact,
+                                exclude_mail_id=int(mail_db_id or 0) or None,
+                            )
+                            if prior_oid:
+                                off_p = await _load_offer(
+                                    session,
+                                    user_id=int(user_id),
+                                    offer_id=int(prior_oid),
+                                )
+                                if off_p:
+                                    bound_offer = off_p
+                                    resolved_offer_id = int(off_p.id)
+                                    mailing_bound_flag = True
+                                    existing.resolved_offer_id = resolved_offer_id
+                                    existing.mailing_bound = True
+                                    from services.incoming_lead_resolve import (
+                                        _snapshot_from_mailed_offer,
+                                    )
+
+                                    snap_p = _snapshot_from_mailed_offer(off_p)
+                                    saved_product_title = (
+                                        snap_p.get("product_title") or ""
+                                    ).strip()
+                                    saved_offer_price = (
+                                        snap_p.get("offer_price") or ""
+                                    ).strip()
+                                    saved_photo_url = (
+                                        snap_p.get("photo_url") or ""
+                                    ).strip()
+                                    saved_service_label = (
+                                        snap_p.get("service_label") or ""
+                                    ).strip()
+                                    from services.offer_storage import offer_effective_link
+
+                                    link_p = (offer_effective_link(off_p) or "").strip()
+                                    if link_p:
+                                        existing.ad_url = link_p
+                                        ad_url = link_p
+                                    if saved_product_title:
+                                        existing.product_title = saved_product_title[:500]
+                                    if saved_offer_price:
+                                        existing.offer_price = saved_offer_price[:64]
+                                    if saved_photo_url:
+                                        existing.photo_url = saved_photo_url[:2000]
+                                    if saved_service_label:
+                                        existing.service_label = saved_service_label[:64]
                     except Exception:
                         logger.exception(
                             "Validated offer bind IncomingMail id=%s acc=%s uid=%s",

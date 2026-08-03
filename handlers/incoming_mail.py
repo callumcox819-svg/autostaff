@@ -912,6 +912,10 @@ async def _sync_incoming_mail_offer_with_card(
         )
     except Exception:
         logger.exception("sync incoming mail offer with card meta failed mail_id=%s", getattr(mail, "id", None))
+        try:
+            await session.rollback()
+        except Exception:
+            pass
         return
 
     if offer_id:
@@ -938,38 +942,61 @@ async def _bound_offer_from_incoming_mail(
 ) -> tuple[Offer | None, str]:
     """Лот уже на карточке (resolved_offer_id / snapshot) — не резолвить заново."""
     from services.offer_matching import _load_offer
-    from services.offer_storage import offer_effective_link
+    from services.offer_storage import (
+        find_offer_for_mailed_seller_reply,
+        normalize_incoming_seller_email,
+        offer_effective_link,
+    )
 
     uid = int(user_id)
     owner_id = int(getattr(mail, "user_id", 0) or 0)
     oid = getattr(mail, "resolved_offer_id", None)
-    subj_check = (getattr(mail, "subject", "") or "").strip()
     if oid:
-        for uid_try in (uid, owner_id):
+        for uid_try in (owner_id, uid):
             if not uid_try:
                 continue
             off = await _load_offer(session, user_id=int(uid_try), offer_id=int(oid))
             if off:
-                from services.offer_matching import incoming_subject_binds_offer
-                from services.subject_offer import offer_title_from_inbound_subject
-
-                cur_offer = (offer_title_from_inbound_subject(subj_check) or "").strip()
-                stale = (
-                    cur_offer
-                    and len(cur_offer) >= 4
-                    and not incoming_subject_binds_offer(subj_check, off)
-                )
-                if not stale:
-                    url = (offer_effective_link(off) or "").strip()
-                    if not url:
-                        url = (getattr(mail, "ad_url", "") or "").strip()
-                    return off, url
-
-    from services.offer_storage import find_offer_for_mailed_seller_reply, normalize_incoming_seller_email
+                url = (offer_effective_link(off) or "").strip()
+                if not url:
+                    url = (getattr(mail, "ad_url", "") or "").strip()
+                return off, url
 
     contact = normalize_incoming_seller_email(getattr(mail, "from_email", "") or "") or (
         getattr(mail, "from_email", "") or ""
     ).strip()
+    if contact and owner_id:
+        from services.incoming_validated_offer import resolve_inbound_by_validated_email
+
+        off_v, _ = await resolve_inbound_by_validated_email(
+            session,
+            int(owner_id),
+            contact,
+            subject=(getattr(mail, "subject", "") or "").strip(),
+            body_text=(getattr(mail, "body", "") or "").strip(),
+        )
+        if off_v:
+            url = (offer_effective_link(off_v) or "").strip() or (
+                getattr(mail, "ad_url", "") or ""
+            ).strip()
+            return off_v, url
+
+    if contact and owner_id:
+        from services.incoming_lead_resolve import prior_resolved_offer_id_for_seller
+
+        prior_oid = await prior_resolved_offer_id_for_seller(
+            session,
+            user_id=int(owner_id),
+            contact_email=contact,
+            exclude_mail_id=int(getattr(mail, "id", 0) or 0) or None,
+        )
+        if prior_oid:
+            off = await _load_offer(session, user_id=int(owner_id), offer_id=int(prior_oid))
+            if off:
+                url = (offer_effective_link(off) or "").strip() or (
+                    getattr(mail, "ad_url", "") or ""
+                ).strip()
+                return off, url
 
     if contact and owner_id:
         from services.mailing_send_log import has_mailing_send_for_contact
@@ -1992,6 +2019,26 @@ async def cb_create_goo_link_from_db(callback: CallbackQuery):
 
 async def _create_aqua_link_from_db_work(callback: CallbackQuery, mail_id: int) -> None:
     async with Session() as session:
+        try:
+            await _create_aqua_link_from_db_work_impl(session, callback, mail_id)
+        except Exception as e:
+            logger.exception("create aqua link from db mail_id=%s", mail_id)
+            try:
+                await session.rollback()
+            except Exception:
+                pass
+            await callback.message.answer(
+                f"{html_emoji('fail')} <b>Ошибка создания ссылки</b>\n<code>{_e(str(e)[:350])}</code>",
+                parse_mode="HTML",
+            )
+            await callback.answer()
+
+
+async def _create_aqua_link_from_db_work_impl(
+    session,
+    callback: CallbackQuery,
+    mail_id: int,
+) -> None:
         # Ensure the telegram user is the owner in our DB
         tg_user = await get_or_create_user(session, int(callback.from_user.id))
 

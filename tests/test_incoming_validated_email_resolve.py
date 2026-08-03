@@ -12,6 +12,9 @@ class MailingSendLogResolveTests(unittest.IsolatedAsyncioTestCase):
     async def test_spam_email_without_send_log_gets_no_offer(self):
         session = AsyncMock()
         with patch(
+            "services.strict_seller_bind.resolve_strict_seller_inbound_offer",
+            new=AsyncMock(return_value=(None, "")),
+        ), patch(
             "services.incoming_lead_resolve.resolve_fi_inbound_offer",
             new=AsyncMock(return_value=(None, "")),
         ), patch(
@@ -44,6 +47,9 @@ class MailingSendLogResolveTests(unittest.IsolatedAsyncioTestCase):
         )
         session = AsyncMock()
         with patch(
+            "services.strict_seller_bind.resolve_strict_seller_inbound_offer",
+            new=AsyncMock(return_value=(None, "")),
+        ), patch(
             "services.incoming_lead_resolve.resolve_fi_inbound_offer",
             new=AsyncMock(return_value=(None, "")),
         ), patch(
@@ -92,6 +98,9 @@ class MailingSendLogResolveTests(unittest.IsolatedAsyncioTestCase):
         )
         session = AsyncMock()
         with patch(
+            "services.strict_seller_bind.resolve_strict_seller_inbound_offer",
+            new=AsyncMock(return_value=(None, "")),
+        ), patch(
             "services.incoming_lead_resolve.resolve_fi_inbound_offer",
             new=AsyncMock(return_value=(None, "")),
         ), patch(
@@ -145,6 +154,9 @@ class MailingSendLogResolveTests(unittest.IsolatedAsyncioTestCase):
         )
         session = AsyncMock()
         with patch(
+            "services.strict_seller_bind.resolve_strict_seller_inbound_offer",
+            new=AsyncMock(return_value=(None, "")),
+        ), patch(
             "services.incoming_lead_resolve.resolve_fi_inbound_offer",
             new=AsyncMock(return_value=(None, "")),
         ), patch(
@@ -192,6 +204,9 @@ class MailingSendLogResolveTests(unittest.IsolatedAsyncioTestCase):
         )
         session = AsyncMock()
         with patch(
+            "services.strict_seller_bind.resolve_strict_seller_inbound_offer",
+            new=AsyncMock(return_value=(None, "")),
+        ), patch(
             "services.incoming_lead_resolve.resolve_fi_inbound_offer",
             new=AsyncMock(return_value=(None, "")),
         ), patch(

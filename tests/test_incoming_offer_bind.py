@@ -25,6 +25,9 @@ class ForceBindIncomingTests(unittest.IsolatedAsyncioTestCase):
             return None
 
         with patch(
+            "services.strict_seller_bind.resolve_strict_seller_inbound_offer",
+            new=AsyncMock(return_value=(None, "")),
+        ), patch(
             "services.incoming_offer_bind.resolve_offer_for_incoming_lead",
             new=AsyncMock(side_effect=_resolve_empty),
         ), patch(
@@ -39,9 +42,6 @@ class ForceBindIncomingTests(unittest.IsolatedAsyncioTestCase):
         ), patch(
             "services.incoming_offer_bind.list_offers_for_validated_contact_email",
             new=AsyncMock(return_value=[]),
-        ), patch(
-            "services.incoming_offer_bind.find_offer_by_product_title_in_subject",
-            new=AsyncMock(return_value=None),
         ), patch(
             "services.mailing_send_log.list_offers_from_mailing_log",
             new=AsyncMock(return_value=[stickers]),
@@ -61,7 +61,7 @@ class ForceBindIncomingTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertIs(off, stickers)
         self.assertIn("ricardo.ch", link)
-        self.assertEqual(how, "subject_needle_pool")
+        self.assertEqual(how, "mailing_log_force")
         self.assertIn("Stickers", snap.get("product_title", ""))
 
 

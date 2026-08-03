@@ -102,20 +102,18 @@ async def force_bind_incoming_seller_offer(
     if not contact:
         return None, "", "", empty_snap
 
-    from services.mailing_send_log import has_mailing_send_for_contact, resolve_fi_inbound_offer
+    from services.strict_seller_bind import resolve_strict_seller_inbound_offer
 
-    if await has_mailing_send_for_contact(session, int(user_id), contact):
-        off_fi, how_fi = await resolve_fi_inbound_offer(
-            session,
-            int(user_id),
-            contact,
-            subject=(subject or "").strip(),
-            body_text=(body_text or "").strip(),
-            inbox_email=(inbox_email or "").strip(),
-        )
-        if off_fi:
-            link = (offer_effective_link(off_fi) or "").strip()
-            return off_fi, link, how_fi or "fi_inbound_send_log", _snapshot_from_mailed_offer(off_fi)
+    off, how_strict = await resolve_strict_seller_inbound_offer(
+        session,
+        int(user_id),
+        contact,
+        subject=(subject or "").strip(),
+        body_text=(body_text or "").strip(),
+    )
+    if off:
+        link = (offer_effective_link(off) or "").strip()
+        return off, link, how_strict or "strict_seller", _snapshot_from_mailed_offer(off)
 
     off, link, how, snap = await resolve_offer_for_incoming_lead(
         session,
@@ -232,89 +230,5 @@ async def force_bind_incoming_seller_offer(
         off = validated[0]
         link = (offer_effective_link(off) or "").strip()
         return off, link, "validated_single", _snapshot_from_mailed_offer(off)
-
-    from services.offer_matching import is_seller_reply_subject, product_title_from_subject
-    from services.subject_offer import subjects_for_inbound_resolve
-
-    if is_seller_reply_subject(subject or ""):
-        for subj_try in subjects_for_inbound_resolve(subject or "", body_text or ""):
-            off = await find_offer_by_product_title_in_subject(
-                session,
-                user_id=int(user_id),
-                subject=subj_try,
-                contact_email=contact,
-            )
-            if off:
-                link = (offer_effective_link(off) or "").strip()
-                return off, link, "subject_title", _snapshot_from_mailed_offer(off)
-
-        needle = (product_title_from_subject(subject or "") or "").strip().lower()
-        if len(needle) >= 4:
-            pool = validated or await list_offers_from_mailing_log(
-                session, int(user_id), contact, limit=40
-            )
-            for cand in pool:
-                title = (offer_effective_title(cand) or "").strip().lower()
-                if title and (needle in title or title in needle):
-                    link = (offer_effective_link(cand) or "").strip()
-                    return (
-                        cand,
-                        link,
-                        "subject_needle_pool",
-                        _snapshot_from_mailed_offer(cand),
-                    )
-
-    allowed = await list_allowed_offers_for_incoming_contact(
-        session, int(user_id), contact, from_name=(from_name or "").strip(), limit=40
-    )
-    if len(allowed) == 1:
-        off = allowed[0]
-        link = (offer_effective_link(off) or "").strip()
-        return off, link, "allowed_single", _snapshot_from_mailed_offer(off)
-
-    if is_seller_reply_subject(subject or ""):
-        needle = (product_title_from_subject(subject or "") or "").strip().lower()
-        from services.offer_matching import offer_needle_is_too_generic
-
-        if len(needle) >= 4 and not offer_needle_is_too_generic(needle):
-            from sqlalchemy import select as sa_select
-
-            from models import Offer
-            from services.offer_matching import (
-                _offer_title_matches_needle,
-                _pick_offer_by_subject_in_list,
-            )
-            from services.mailing_send_log import offer_was_mailed_to
-
-            rows = (
-                await session.execute(
-                    sa_select(Offer)
-                    .where(Offer.user_id == int(user_id))
-                    .order_by(Offer.id.desc())
-                    .limit(4000)
-                )
-            ).scalars().all()
-            hits: list[Offer] = []
-            for cand in rows:
-                title = (offer_effective_title(cand) or "").strip()
-                if title and _offer_title_matches_needle(needle, title):
-                    hits.append(cand)
-            if hits:
-                pick = _pick_offer_by_subject_in_list(hits, subject or "")
-                if pick:
-                    off = pick
-                else:
-                    mailed = [
-                        h
-                        for h in hits
-                        if await offer_was_mailed_to(
-                            session, int(user_id), int(h.id), contact
-                        )
-                    ]
-                    off = mailed[0] if len(mailed) == 1 else None
-                    if not off and len(hits) == 1:
-                        off = hits[0]
-                link = (offer_effective_link(off) or "").strip()
-                return off, link, "catalog_title", _snapshot_from_mailed_offer(off)
 
     return None, "", "", empty_snap

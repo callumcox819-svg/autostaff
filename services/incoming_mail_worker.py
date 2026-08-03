@@ -1533,28 +1533,15 @@ async def mail_card_offer_meta(
                     outgoing_subject = (snap.get("outgoing_mail_subject") or "").strip() or None
 
         if not off and contact:
-            from services.offer_matching import is_seller_reply_subject
-            from services.offer_storage import find_offer_by_product_title_in_subject
-            from services.subject_offer import subjects_for_inbound_resolve
+            from services.strict_seller_bind import resolve_strict_seller_inbound_offer
 
-            if is_seller_reply_subject(subject or ""):
-                for subj_try in subjects_for_inbound_resolve(subject or "", body_text or ""):
-                    off = await find_offer_by_product_title_in_subject(
-                        session,
-                        user_id=int(user_id),
-                        subject=subj_try,
-                        contact_email=contact,
-                    )
-                    if off:
-                        break
-                if not off:
-                    off = await find_offer_by_product_title_in_subject(
-                        session,
-                        user_id=int(user_id),
-                        subject=subject or "",
-                        contact_email=contact,
-                        allow_outbound_subject=True,
-                    )
+            off, _how_st = await resolve_strict_seller_inbound_offer(
+                session,
+                int(user_id),
+                contact,
+                subject=subject or "",
+                body_text=body_text or "",
+            )
 
         if off:
             offer_id = int(off.id)

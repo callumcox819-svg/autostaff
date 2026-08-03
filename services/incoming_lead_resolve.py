@@ -184,6 +184,31 @@ async def resolve_offer_for_incoming_lead(
     if not contact_email:
         return None, "", "", empty_snap
 
+    from services.strict_seller_bind import resolve_strict_seller_inbound_offer
+
+    off_st, how_st = await resolve_strict_seller_inbound_offer(
+        session,
+        int(user_id),
+        contact_email,
+        subject=(subject or "").strip(),
+        body_text=(body_text or "").strip(),
+    )
+    if off_st and offer_incoming_bindable(off_st):
+        link = (offer_effective_link(off_st) or "").strip()
+        out_subj = await _resolve_outgoing_subject(
+            session,
+            user_id=int(user_id),
+            contact_email=contact_email,
+            inbox_email=(inbox_email or "").strip(),
+            pinned_offer_id=int(off_st.id),
+            pinned_subj="",
+            offer=off_st,
+            mail_subject=subject or "",
+        )
+        snap = _snapshot_from_mailed_offer(off_st, outgoing_mail_subject=out_subj)
+        snap["mailing_bound"] = True
+        return off_st, link, how_st or "strict_seller", snap
+
     if await has_mailing_send_for_contact(session, int(user_id), contact_email):
         off_fi, how_fi = await resolve_fi_inbound_offer(
             session,

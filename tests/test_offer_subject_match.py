@@ -212,5 +212,19 @@ class OfferSubjectMatchTests(unittest.TestCase):
         self.assertIn("Zeichentisch", gag_link_title_from_mail(subj, book))
 
 
+class InboundQuotedBodyTests(unittest.TestCase):
+    def test_quoted_nachfragen_ob_offer_in_body(self):
+        from services.subject_offer import subjects_for_inbound_resolve
+
+        body = (
+            "Ciao Anna, klar ist ok.\n\n"
+            ">> Hallo, ich wollte nachfragen, ob Sammlung Sternenschweif Kinderbücher noch angeboten wird."
+        )
+        subj = "Re: Sammlung Sternenschweif Kinderbücher - noch da?"
+        tries = subjects_for_inbound_resolve(subj, body)
+        joined = " | ".join(tries).lower()
+        self.assertIn("sternenschweif", joined)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -254,6 +254,15 @@ def subjects_for_inbound_resolve(subject: str, body: str) -> list[str]:
         r"^(?:betreff|subject|oggetto|objet)\s*:\s*(.+)$",
         re.IGNORECASE,
     )
+    _BODY_OFFER_EXTRACT = (
+        re.compile(r"ob\s+(.+?)\s+noch\s+angeboten", re.IGNORECASE),
+        re.compile(r"nachfragen,?\s+ob\s+(.+?)\s+noch\b", re.IGNORECASE),
+        re.compile(
+            r"(?:haben\s+sie|ist)\s+(.+?)\s+noch\s+(?:verfügbar|verfugbar|da|\?)",
+            re.IGNORECASE,
+        ),
+        re.compile(r"wollte\s+nachfragen,?\s+ob\s+(.+?)\s+noch", re.IGNORECASE),
+    )
 
     for line in (body or "").replace("\r", "\n").split("\n"):
         ls = line.strip().lstrip(">").strip()
@@ -263,6 +272,14 @@ def subjects_for_inbound_resolve(subject: str, body: str) -> list[str]:
         if m_subj:
             _add(m_subj.group(1))
             continue
+        for rx in _BODY_OFFER_EXTRACT:
+            m_ob = rx.search(ls)
+            if not m_ob:
+                continue
+            extracted = sanitize_email_subject((m_ob.group(1) or "").strip())
+            if len(extracted) >= 4:
+                _add(extracted)
+            break
         if len(ls) < 12:
             continue
         low = ls.lower()
@@ -272,6 +289,10 @@ def subjects_for_inbound_resolve(subject: str, body: str) -> list[str]:
                 "noch verfügbar",
                 "noch verfugbar",
                 "noch zu haben",
+                "noch angeboten",
+                "angeboten wird",
+                "nachfragen",
+                "wollte nachfragen",
                 "interesse an",
                 "kurze frage",
                 "kurze anfrage",

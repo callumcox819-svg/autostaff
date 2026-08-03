@@ -1417,13 +1417,14 @@ async def resolve_offer_for_mail_card(
     body_text: str = "",
     mailing_bound: bool = False,
 ) -> Offer | None:
-    """Карточка письма — тот же резолвер, что «Создать ссылку»."""
     from services.incoming_lead_resolve import resolve_offer_for_incoming_lead
+    from services.offer_storage import normalize_incoming_seller_email
 
-    offer, _url, _how, _snap = await resolve_offer_for_incoming_lead(
+    contact = normalize_incoming_seller_email(from_email) or (from_email or "").strip().lower()
+    off, _url, _how, _snap = await resolve_offer_for_incoming_lead(
         session,
         user_id=int(user_id),
-        contact_email=from_email,
+        contact_email=contact,
         subject=subject,
         from_name=from_name,
         body_text=body_text,
@@ -1432,7 +1433,7 @@ async def resolve_offer_for_mail_card(
         inbox_email=inbox_email,
         mailing_bound=mailing_bound,
     )
-    return offer
+    return off
 
 
 async def mail_card_offer_meta(
@@ -1453,143 +1454,43 @@ async def mail_card_offer_meta(
     stored_outgoing_subject: str | None = None,
     mailing_bound: bool = False,
 ) -> tuple[int | None, str | None, str | None, str | None, str | None, str | None]:
-    """Return offer_id, service_label, product_title, photo_url, offer_price, outgoing_subject."""
     from services.incoming_lead_resolve import resolve_offer_for_incoming_lead
-    from services.offer_storage import (
-        find_single_offer_for_seller_contact_email,
-        normalize_incoming_seller_email,
-        offer_effective_link,
-        offer_effective_photo,
-        offer_effective_price,
-        offer_effective_title,
-    )
+    from services.offer_storage import normalize_incoming_seller_email
 
-    offer_id = int(resolved_offer_id) if resolved_offer_id else None
-    service_label = product_title = photo_url = offer_price = outgoing_subject = None
-
-    if (stored_outgoing_subject or "").strip():
-        outgoing_subject = (stored_outgoing_subject or "").strip()
     if (stored_product_title or "").strip():
-        product_title = (stored_product_title or "").strip()
-    if (stored_offer_price or "").strip():
-        offer_price = (stored_offer_price or "").strip()
-    if (stored_photo_url or "").strip():
-        photo_url = (stored_photo_url or "").strip()
-    if (stored_service_label or "").strip():
-        service_label = (stored_service_label or "").strip()
+        oid = int(resolved_offer_id) if resolved_offer_id else None
+        return (
+            oid,
+            (stored_service_label or "").strip() or None,
+            (stored_product_title or "").strip() or None,
+            (stored_photo_url or "").strip() or None,
+            (stored_offer_price or "").strip() or None,
+            (stored_outgoing_subject or "").strip() or None,
+        )
 
-    try:
-        from services.offer_matching import _load_offer
-
-        off = None
-        contact = normalize_incoming_seller_email(from_email) or (from_email or "").strip().lower()
-
-        if resolved_offer_id:
-            from services.offer_matching import _offer_title_matches_needle, incoming_subject_binds_offer
-            from services.subject_offer import primary_inbound_product_needle
-
-            cand = await _load_offer(
-                session, user_id=int(user_id), offer_id=int(resolved_offer_id)
-            )
-            if cand:
-                needle = primary_inbound_product_needle(subject or "", body_text or "")
-                title_c = (offer_effective_title(cand) or "").strip()
-                stale = bool(
-                    needle
-                    and len(needle) >= 4
-                    and not incoming_subject_binds_offer(subject or "", cand)
-                    and not _offer_title_matches_needle(needle.lower(), title_c)
-                )
-                if not stale:
-                    off = cand
-                    offer_id = int(off.id)
-
-        if not off:
-            from services.incoming_offer_bind import force_bind_incoming_seller_offer
-
-            off, _url, _how, snap = await force_bind_incoming_seller_offer(
-                session,
-                user_id=int(user_id),
-                contact_email=contact,
-                subject=subject or "",
-                from_name=from_name,
-                body_text=body_text or "",
-                inbox_email=inbox_email,
-                mail_ad_url=ad_url,
-                resolved_offer_id=resolved_offer_id,
-                mailing_bound=True,
-            )
-            if off:
-                offer_id = int(off.id)
-                if not product_title:
-                    product_title = (snap.get("product_title") or "").strip() or None
-                if not offer_price:
-                    offer_price = (snap.get("offer_price") or "").strip() or None
-                if not photo_url:
-                    photo_url = (snap.get("photo_url") or "").strip() or None
-                if not service_label:
-                    service_label = (snap.get("service_label") or "").strip() or None
-                if not outgoing_subject:
-                    outgoing_subject = (snap.get("outgoing_mail_subject") or "").strip() or None
-
-        if not off and contact:
-            from services.strict_seller_bind import resolve_strict_seller_inbound_offer
-
-            off, _how_st = await resolve_strict_seller_inbound_offer(
-                session,
-                int(user_id),
-                contact,
-                subject=subject or "",
-                body_text=body_text or "",
-            )
-
-        if off:
-            offer_id = int(off.id)
-            if not product_title:
-                product_title = (offer_effective_title(off) or "").strip() or None
-            if not service_label:
-                service_label = _service_label_from_link(offer_effective_link(off))
-            if not photo_url:
-                photo_url = (offer_effective_photo(off) or "").strip() or None
-            if not offer_price:
-                offer_price = (offer_effective_price(off, default="") or "").strip() or None
-            if not outgoing_subject:
-                from services.incoming_lead_resolve import _resolve_outgoing_subject
-
-                outgoing_subject = (
-                    await _resolve_outgoing_subject(
-                        session,
-                        user_id=int(user_id),
-                        contact_email=contact,
-                        inbox_email=(inbox_email or "").strip(),
-                        pinned_offer_id=int(off.id),
-                        pinned_subj="",
-                        offer=off,
-                        mail_subject=subject or "",
-                    )
-                ).strip() or None
-    except Exception:
-        logger.exception("mail_card_offer_meta failed")
-
-    if off and not offer_id:
-        offer_id = int(off.id)
-
-    if offer_id:
-        return offer_id, service_label, product_title, photo_url, offer_price, outgoing_subject
-    if not product_title:
-        try:
-            from services.offer_matching import subject_is_informative
-            from services.subject_offer import offer_title_from_inbound_subject
-
-            if subject_is_informative(subject or ""):
-                subj_title = (offer_title_from_inbound_subject(subject or "") or "").strip()
-                if len(subj_title) >= 4:
-                    product_title = subj_title
-        except Exception:
-            pass
-    if product_title or photo_url or offer_price or service_label:
-        return None, service_label, product_title, photo_url, offer_price, outgoing_subject
-    return None, None, None, None, None, None
+    contact = normalize_incoming_seller_email(from_email) or (from_email or "").strip().lower()
+    off, _url, _how, snap = await resolve_offer_for_incoming_lead(
+        session,
+        user_id=int(user_id),
+        contact_email=contact,
+        subject=subject or "",
+        from_name=from_name,
+        body_text=body_text or "",
+        resolved_offer_id=resolved_offer_id,
+        mail_ad_url=ad_url,
+        inbox_email=inbox_email,
+        mailing_bound=mailing_bound,
+    )
+    if not off:
+        return None, None, None, None, None, None
+    return (
+        int(off.id),
+        (snap.get("service_label") or "").strip() or None,
+        (snap.get("product_title") or "").strip() or None,
+        (snap.get("photo_url") or "").strip() or None,
+        (snap.get("offer_price") or "").strip() or None,
+        (snap.get("outgoing_mail_subject") or "").strip() or None,
+    )
 
 
 async def is_first_inbound_mail_for_seller_offer(
@@ -1665,7 +1566,9 @@ async def build_mail_card_from_mail(
         except Exception:
             inbox_label = None
 
-    oid, service_label, product_title, _photo, offer_price, outgoing_subj = await mail_card_offer_meta(
+    body_full = (getattr(mail, "body", None) or "").strip()
+    buyer_label = inbox_label
+    oid, service_label, product_title, photo_url, offer_price, _out_subj = await mail_card_offer_meta(
         session,
         user_id=int(mail.user_id),
         from_email=str(getattr(mail, "from_email", "") or ""),
@@ -1674,7 +1577,7 @@ async def build_mail_card_from_mail(
         inbox_email=str(getattr(mail, "account_email", "") or ""),
         subject=str(getattr(mail, "subject", "") or ""),
         from_name=str(getattr(mail, "from_name", "") or ""),
-        body_text=str(getattr(mail, "body", "") or ""),
+        body_text=body_full,
         stored_product_title=(getattr(mail, "product_title", None) or "").strip() or None,
         stored_offer_price=(getattr(mail, "offer_price", None) or "").strip() or None,
         stored_photo_url=(getattr(mail, "photo_url", None) or "").strip() or None,
@@ -1682,6 +1585,19 @@ async def build_mail_card_from_mail(
         stored_outgoing_subject=(getattr(mail, "outgoing_mail_subject", None) or "").strip() or None,
         mailing_bound=bool(getattr(mail, "mailing_bound", False)),
     )
+    off_for_label = None
+    if oid:
+        off_for_label = (
+            await session.execute(
+                sa_select(Offer).where(Offer.id == int(oid)).where(Offer.user_id == int(mail.user_id)).limit(1)
+            )
+        ).scalars().first()
+    if off_for_label:
+        from services.incoming_validated_offer import inbound_card_inbox_label
+
+        inbox_label = inbound_card_inbox_label(
+            off_for_label, buyer_display_name=(buyer_label or "")
+        ) or inbox_label
 
     generated_link = (getattr(mail, "generated_link", None) or "").strip()
     conv = await _load_convlink(
@@ -1692,14 +1608,8 @@ async def build_mail_card_from_mail(
     if conv and (conv.generated_link or "").strip():
         generated_link = (conv.generated_link or "").strip()
     link_id = link_id_from_generated_url(generated_link)
-    body_full = (getattr(mail, "body", None) or "").strip()
 
-    oid_for_card = oid or getattr(mail, "resolved_offer_id", None)
-    card_subject = (
-        (outgoing_subj or "").strip()
-        or (getattr(mail, "outgoing_mail_subject", "") or "").strip()
-        or str(getattr(mail, "subject", "") or "")
-    )
+    card_subject = (product_title or "").strip() or str(getattr(mail, "subject", "") or "")
     chunks = render_mail_text_chunks(
         account_email=str(getattr(mail, "account_email", "") or ""),
         inbox_label=inbox_label,
@@ -1707,7 +1617,7 @@ async def build_mail_card_from_mail(
         from_email=str(getattr(mail, "from_email", "") or ""),
         subject=card_subject,
         body=body_full,
-        offer_id=oid_for_card,
+        offer_id=oid,
         link_id=link_id,
         service_label=service_label,
         product_title=product_title or None,
@@ -1875,9 +1785,14 @@ async def _process_mails_for_account_impl(
             account_already_smtp_blocked = False
             saved_outgoing_mail_subject = ""
             mailing_bound_flag = False
+            saved_product_title = ""
+            saved_offer_price = ""
+            saved_photo_url = ""
+            saved_service_label = ""
+            bound_offer: Offer | None = None
+            ad_url: str | None = None
             try:
                 async with _imap_db_session() as session:
-                    from services.offer_matching import resolve_listing_for_incoming_mail
 
                     if smtp_block_bounce:
                         acc_st = (
@@ -1926,156 +1841,61 @@ async def _process_mails_for_account_impl(
                     existing.body = body_clean or None
                     await session.flush()
                     mail_db_id = int(existing.id)
-                    await _db_commit_retry(session)
 
-                    subj = subject or ""
-                    listing_url = ""
-                    saved_product_title = ""
-                    saved_offer_price = ""
-                    saved_photo_url = ""
-                    saved_service_label = ""
-                    saved_outgoing_mail_subject = ""
-                    mailing_bound_flag = False
                     try:
-                        from services.incoming_lead_resolve import _snapshot_from_mailed_offer
-                        from services.incoming_offer_bind import force_bind_incoming_seller_offer
-                        from services.offer_storage import (
-                            normalize_incoming_seller_email,
-                            offer_effective_link,
-                            offer_effective_title,
+                        from services.incoming_lead_resolve import resolve_offer_for_incoming_lead
+                        from services.offer_storage import normalize_incoming_seller_email
+
+                        contact = (
+                            normalize_incoming_seller_email(from_email_clean)
+                            or from_email_clean
                         )
-                        from services.subject_offer import pick_mailing_subject
-
-                        contact_email = normalize_incoming_seller_email(from_email_clean)
-                        offer_bound = None
-                        listing_url = ""
-                        lead_snap: dict = {"mailing_bound": False}
-                        resolved_offer_email_id = None
-
-                        offer_bound, listing_url, _match_how, lead_snap = (
-                            await force_bind_incoming_seller_offer(
+                        off_b, listing_url, _how_b, lead_snap = (
+                            await resolve_offer_for_incoming_lead(
                                 session,
                                 user_id=int(user_id),
-                                contact_email=contact_email or from_email_clean,
-                                subject=subj or "",
+                                contact_email=contact,
+                                subject=subject or "",
                                 body_text=body_clean or "",
-                                from_name=from_name or "",
-                                inbox_email=inbox_email_clean,
-                                mail_ad_url=(getattr(existing, "ad_url", "") or "").strip() or None,
-                                resolved_offer_id=None,
-                                mailing_bound=False,
-                                exclude_mail_id=int(existing.id) if getattr(existing, "id", None) else None,
+                                resolved_offer_id=getattr(
+                                    existing, "resolved_offer_id", None
+                                ),
                             )
                         )
-                        if offer_bound:
-                            lead_snap = dict(lead_snap or {})
-                            lead_snap["mailing_bound"] = True
-                        if not listing_url and offer_bound:
-                            listing_url = (offer_effective_link(offer_bound) or "").strip()
-
-                        if not offer_bound and getattr(existing, "resolved_offer_id", None) and getattr(
-                            existing, "mailing_bound", False
-                        ):
-                            from services.offer_matching import _load_offer, incoming_subject_binds_offer
-
-                            prev_oid = int(existing.resolved_offer_id)
-                            offer_bound = await _load_offer(
-                                session,
-                                user_id=int(user_id),
-                                offer_id=prev_oid,
-                            )
-                            if offer_bound and incoming_subject_binds_offer(subj or "", offer_bound):
-                                resolved_offer_id = prev_oid
-                                listing_url = (offer_effective_link(offer_bound) or "").strip()
-                                lead_snap = {
-                                    "product_title": (existing.product_title or "").strip(),
-                                    "offer_price": (existing.offer_price or "").strip(),
-                                    "photo_url": (existing.photo_url or "").strip(),
-                                    "service_label": (existing.service_label or "").strip(),
-                                    "outgoing_mail_subject": (
-                                        getattr(existing, "outgoing_mail_subject", "") or ""
-                                    ).strip(),
-                                    "mailing_bound": True,
-                                }
-                            else:
-                                offer_bound = None
-                                resolved_offer_id = None
-                                listing_url = ""
-                        elif offer_bound and hasattr(offer_bound, "id"):
-                            resolved_offer_id = int(offer_bound.id)
+                        if off_b:
+                            bound_offer = off_b
+                            resolved_offer_id = int(off_b.id)
                             mailing_bound_flag = True
-                            if not (lead_snap.get("product_title") or "").strip():
-                                lead_snap = _snapshot_from_mailed_offer(
-                                    offer_bound,
-                                    outgoing_mail_subject=(
-                                        lead_snap.get("outgoing_mail_subject") or ""
-                                    ).strip()
-                                    or pick_mailing_subject(
-                                        (offer_effective_title(offer_bound) or "").strip()
-                                    ),
-                                )
-                        else:
-                            prev_oid = getattr(existing, "resolved_offer_id", None)
-                            if prev_oid:
-                                resolved_offer_id = int(prev_oid)
-                                listing_url = (
-                                    listing_url
-                                    or (getattr(existing, "ad_url", "") or "").strip()
-                                )
-                                mailing_bound_flag = bool(
-                                    getattr(existing, "mailing_bound", False)
-                                )
-                            else:
-                                resolved_offer_id = None
-                                listing_url = ""
-
-                        existing.resolved_offer_id = resolved_offer_id
-                        existing.resolved_offer_email_id = resolved_offer_email_id
-                        if listing_url:
-                            existing.ad_url = listing_url.strip()
-                        if offer_bound and hasattr(offer_bound, "id"):
-                            mailing_bound_flag = True
-                        existing.mailing_bound = mailing_bound_flag or bool(resolved_offer_id)
-                        saved_product_title = (lead_snap.get("product_title") or "").strip()
-                        saved_offer_price = (lead_snap.get("offer_price") or "").strip()
-                        saved_photo_url = (lead_snap.get("photo_url") or "").strip()
-                        saved_service_label = (lead_snap.get("service_label") or "").strip()
-                        saved_outgoing_mail_subject = (
-                            lead_snap.get("outgoing_mail_subject") or ""
-                        ).strip()
-                        if offer_bound and hasattr(offer_bound, "id") and not saved_product_title:
-                            snap2 = _snapshot_from_mailed_offer(
-                                offer_bound,
-                                outgoing_mail_subject=saved_outgoing_mail_subject,
-                            )
-                            saved_product_title = (snap2.get("product_title") or "").strip()
-                            saved_offer_price = saved_offer_price or (
-                                snap2.get("offer_price") or ""
+                            existing.resolved_offer_id = resolved_offer_id
+                            existing.mailing_bound = True
+                            if (listing_url or "").strip():
+                                existing.ad_url = listing_url.strip()
+                                ad_url = listing_url.strip()
+                            saved_product_title = (
+                                lead_snap.get("product_title") or ""
                             ).strip()
-                            saved_photo_url = saved_photo_url or (
-                                snap2.get("photo_url") or ""
+                            saved_offer_price = (lead_snap.get("offer_price") or "").strip()
+                            saved_photo_url = (lead_snap.get("photo_url") or "").strip()
+                            saved_service_label = (
+                                lead_snap.get("service_label") or ""
                             ).strip()
-                            saved_service_label = saved_service_label or (
-                                snap2.get("service_label") or ""
-                            ).strip()
-                        if saved_product_title:
-                            existing.product_title = saved_product_title
-                        if saved_offer_price:
-                            existing.offer_price = saved_offer_price[:64]
-                        if saved_photo_url:
-                            existing.photo_url = saved_photo_url
-                        if saved_service_label:
-                            existing.service_label = saved_service_label[:64]
-                        if saved_outgoing_mail_subject:
-                            existing.outgoing_mail_subject = saved_outgoing_mail_subject[:500]
-                        await _db_commit_retry(session)
+                            if saved_product_title:
+                                existing.product_title = saved_product_title[:500]
+                            if saved_offer_price:
+                                existing.offer_price = saved_offer_price[:64]
+                            if saved_photo_url:
+                                existing.photo_url = saved_photo_url[:2000]
+                            if saved_service_label:
+                                existing.service_label = saved_service_label[:64]
                     except Exception:
                         logger.exception(
-                            "Offer match for IncomingMail id=%s acc=%s uid=%s",
+                            "Validated offer bind IncomingMail id=%s acc=%s uid=%s",
                             mail_db_id,
                             acc_id,
                             uid_key,
                         )
+
+                    await _db_commit_retry(session)
 
             except Exception:
                 logger.exception("Failed to persist IncomingMail acc=%s uid=%s", acc_id, uid)
@@ -2140,120 +1960,13 @@ async def _process_mails_for_account_impl(
                 except Exception:
                     logger.exception("Failed pre-mark smtp_blocked acc=%s", acc_id)
 
-            # ad_url только из БД (оффер + item_link), не из тела письма
-            ad_url: str | None = None
-            if mail_db_id:
-                try:
-                    async with _imap_db_session() as session:
-                        mr = (
-                            await session.execute(
-                                sa_select(IncomingMail).where(IncomingMail.id == int(mail_db_id)).limit(1)
-                            )
-                        ).scalars().first()
-                        if mr:
-                            if getattr(mr, "resolved_offer_id", None):
-                                resolved_offer_id = int(mr.resolved_offer_id)
-                            mailing_bound_flag = bool(
-                                mailing_bound_flag or getattr(mr, "mailing_bound", False)
-                            )
-                            if (getattr(mr, "ad_url", None) or "").strip():
-                                ad_url = (mr.ad_url or "").strip()
-                            saved_product_title = (
-                                saved_product_title
-                                or (getattr(mr, "product_title", None) or "")
-                            ).strip()
-                            saved_offer_price = (
-                                saved_offer_price or (getattr(mr, "offer_price", None) or "")
-                            ).strip()
-                            saved_photo_url = (
-                                saved_photo_url or (getattr(mr, "photo_url", None) or "")
-                            ).strip()
-                            saved_service_label = (
-                                saved_service_label
-                                or (getattr(mr, "service_label", None) or "")
-                            ).strip()
-                            saved_outgoing_mail_subject = (
-                                saved_outgoing_mail_subject
-                                or (getattr(mr, "outgoing_mail_subject", None) or "")
-                            ).strip()
-                except Exception:
-                    logger.exception("Failed to reload IncomingMail mail_id=%s", mail_db_id)
-
-            if (not ad_url) and resolved_offer_id:
-                try:
-                    from services.offer_storage import offer_effective_link
-
-                    async with _imap_db_session() as session:
-                        off = (
-                            await session.execute(
-                                sa_select(Offer)
-                                .where(Offer.id == int(resolved_offer_id))
-                                .where(Offer.user_id == int(user_id))
-                                .limit(1)
-                            )
-                        ).scalars().first()
-                        if off:
-                            ad_url = offer_effective_link(off) or None
-                except Exception:
-                    logger.exception("Failed to load offer link for resolved_offer_id=%s", resolved_offer_id)
-
-            if (not ad_url) and mail_db_id and mailing_bound_flag:
-                try:
-                    from services.incoming_lead_resolve import is_incoming_seller_lead
-
-                    async with _imap_db_session() as session:
-                        if not await is_incoming_seller_lead(
-                            session, int(user_id), from_email_clean
-                        ):
-                            raise RuntimeError("skip_resolve_non_lead")
-                        from services.offer_matching import resolve_listing_for_incoming_mail
-
-                        offer2, url2 = await resolve_listing_for_incoming_mail(
-                            session,
-                            user_id=int(user_id),
-                            from_email=from_email_clean,
-                            subject=subject or "",
-                            from_name=from_name or "",
-                            body_text=body_clean or "",
-                            resolved_offer_id=resolved_offer_id,
-                            inbox_email=inbox_email_clean,
-                        )
-                        if url2:
-                            ad_url = url2.strip()
-                            if offer2:
-                                resolved_offer_id = int(offer2.id)
-                            mr = (
-                                await session.execute(
-                                    sa_select(IncomingMail)
-                                    .where(IncomingMail.id == int(mail_db_id))
-                                    .limit(1)
-                                )
-                            ).scalars().first()
-                            if mr:
-                                mr.ad_url = ad_url
-                                if resolved_offer_id:
-                                    mr.resolved_offer_id = int(resolved_offer_id)
-                                await _db_commit_retry(session)
-                except RuntimeError:
-                    pass
-                except Exception:
-                    logger.exception("Failed re-resolve listing for incoming mail")
-
-            if ad_url:
-                FULL_META[(acc_id, uid_key)]["ad_url"] = ad_url
-
-            pin_offer = int(resolved_offer_id) if resolved_offer_id else None
             await _upsert_convlink(
                 user_id=user_id,
                 inbox_email=_canon_email(inbox_email_clean),
                 contact_email=_canon_email(from_email_clean),
-                ad_url=(ad_url or None),
-                pinned_offer_id=pin_offer,
-                pinned_outgoing_subject=(
-                    (saved_outgoing_mail_subject or "").strip()[:500] or None
-                    if pin_offer
-                    else None
-                ),
+                ad_url=ad_url,
+                pinned_offer_id=int(resolved_offer_id) if resolved_offer_id else None,
+                pinned_outgoing_subject=None,
             )
 
             conv = await _load_convlink(
@@ -2261,169 +1974,35 @@ async def _process_mails_for_account_impl(
                 inbox_email=_canon_email(inbox_email_clean),
                 contact_email=_canon_email(from_email_clean),
             )
-            gen_link = _resolve_generated_link_for_card(
-                conv=conv,
-                meta_generated_link=FULL_META.get((acc_id, uid_key), {}).get("generated_link"),
-            )
-            if gen_link:
-                FULL_META[(acc_id, uid_key)]["generated_link"] = gen_link
-            if (
-                conv
-                and conv.ad_url
-                and not FULL_META[(acc_id, uid_key)].get("ad_url")
-                and not resolved_offer_id
-            ):
-                FULL_META[(acc_id, uid_key)]["ad_url"] = (conv.ad_url or "").strip()
 
-            link_id = link_id_from_generated_url(gen_link)
-            if link_id:
-                FULL_META[(acc_id, uid_key)]["link_id"] = link_id
-
-            # ✅ сохраняем в БД полные данные по письму (включая ссылки),
-            # чтобы их можно было смотреть по кнопке ℹ️ Инфо и использовать дальше.
-            if mail_db_id:
-                try:
-                    async with _imap_db_session() as session:
-                        mail_row = (
-                            await session.execute(
-                                sa_select(IncomingMail).where(IncomingMail.id == int(mail_db_id)).limit(1)
-                            )
-                        ).scalars().first()
-                        if mail_row:
-                            mail_row.ad_url = (FULL_META.get((acc_id, uid_key), {}).get("ad_url") or "").strip() or None
-                            mail_row.generated_link = (
-                                FULL_META.get((acc_id, uid_key), {}).get("generated_link") or ""
-                            ).strip() or None
-                            await _db_commit_retry(session)
-                except Exception:
-                    logger.exception("Failed to persist IncomingMail links mail_id=%s", mail_db_id)
-            # ✅ ТЗ: подтягиваем товар/сервис/фото из БД по email отправителя (валиднутый email продавца)
             offer_id = int(resolved_offer_id) if resolved_offer_id else None
-            service_label = (saved_service_label or "").strip() or None
             product_title = (saved_product_title or "").strip() or None
-            photo_url = (saved_photo_url or "").strip() or None
             offer_price = (saved_offer_price or "").strip() or None
-            card_outgoing_subject = (saved_outgoing_mail_subject or "").strip()
-            try:
-                async with _imap_db_session() as _s:
-                    (
-                        meta_oid,
-                        service_label,
-                        product_title,
-                        photo_url,
-                        offer_price,
-                        card_outgoing_subject,
-                    ) = await mail_card_offer_meta(
-                        _s,
-                        user_id=int(user_id),
-                        from_email=from_email_clean,
-                        resolved_offer_id=resolved_offer_id,
-                        ad_url=(FULL_META.get((acc_id, uid_key), {}).get("ad_url") or ad_url or "").strip() or None,
-                        inbox_email=inbox_email_clean,
-                        subject=subject or "",
-                        from_name=(from_name or "").strip(),
-                        body_text=body_clean or "",
-                        stored_product_title=saved_product_title or None,
-                        stored_offer_price=saved_offer_price or None,
-                        stored_photo_url=saved_photo_url or None,
-                        stored_service_label=saved_service_label or None,
-                        stored_outgoing_subject=saved_outgoing_mail_subject or None,
-                        mailing_bound=mailing_bound_flag or bool(resolved_offer_id),
-                    )
-                if meta_oid:
-                    offer_id = int(meta_oid)
-                    mailing_bound_flag = True
-                    resolved_offer_id = int(offer_id)
+            photo_url = (saved_photo_url or "").strip() or None
+            service_label = (saved_service_label or "").strip() or None
 
-                if not offer_id and mail_db_id:
-                    from services.incoming_offer_bind import force_bind_incoming_seller_offer
-                    from services.offer_storage import (
-                        normalize_incoming_seller_email,
-                        offer_effective_link,
-                        offer_effective_photo,
-                        offer_effective_price,
-                        offer_effective_title,
-                    )
+            card_inbox_label = inbox_label
+            if bound_offer:
+                from services.incoming_validated_offer import inbound_card_inbox_label
 
-                    async with _imap_db_session() as _s_fb:
-                        contact_fb = (
-                            normalize_incoming_seller_email(from_email_clean)
-                            or from_email_clean
-                        )
-                        off_fb, url_fb, _how_fb, snap_fb = await force_bind_incoming_seller_offer(
-                            _s_fb,
-                            user_id=int(user_id),
-                            contact_email=contact_fb,
-                            subject=subject or "",
-                            body_text=body_clean or "",
-                            from_name=(from_name or "").strip(),
-                            inbox_email=inbox_email_clean,
-                            mail_ad_url=ad_url,
-                            resolved_offer_id=resolved_offer_id,
-                            mailing_bound=True,
-                            exclude_mail_id=int(mail_db_id) if mail_db_id else None,
-                        )
-                        if off_fb:
-                            offer_id = int(off_fb.id)
-                            mailing_bound_flag = True
-                            resolved_offer_id = int(offer_id)
-                            product_title = (
-                                (snap_fb.get("product_title") or "").strip()
-                                or product_title
-                                or (offer_effective_title(off_fb) or "").strip()
-                            ) or None
-                            offer_price = (
-                                (snap_fb.get("offer_price") or "").strip()
-                                or offer_price
-                                or (offer_effective_price(off_fb, default="") or "").strip()
-                            ) or None
-                            photo_url = (
-                                (snap_fb.get("photo_url") or "").strip()
-                                or photo_url
-                                or (offer_effective_photo(off_fb) or "").strip()
-                            ) or None
-                            if not service_label:
-                                service_label = (
-                                    (snap_fb.get("service_label") or "").strip()
-                                    or _service_label_from_link(
-                                        offer_effective_link(off_fb)
-                                    )
-                                ) or None
-                            if url_fb and not ad_url:
-                                ad_url = url_fb.strip()
-                            mr = (
-                                await _s_fb.execute(
-                                    sa_select(IncomingMail)
-                                    .where(IncomingMail.id == int(mail_db_id))
-                                    .limit(1)
-                                )
-                            ).scalars().first()
-                            if mr:
-                                mr.resolved_offer_id = int(offer_id)
-                                mr.mailing_bound = True
-                                if ad_url:
-                                    mr.ad_url = ad_url
-                                if product_title:
-                                    mr.product_title = (product_title or "")[:500]
-                                if offer_price:
-                                    mr.offer_price = (offer_price or "")[:64]
-                                if photo_url:
-                                    mr.photo_url = (photo_url or "")[:2000]
-                                if service_label:
-                                    mr.service_label = (service_label or "")[:64]
-                                if card_outgoing_subject:
-                                    mr.outgoing_mail_subject = card_outgoing_subject[:500]
-                                await _db_commit_retry(_s_fb)
-            except Exception:
-                logger.exception("Failed to load Offer meta for incoming mail: from=%s", from_email_clean)
+                card_inbox_label = (
+                    inbound_card_inbox_label(
+                        bound_offer, buyer_display_name=(inbox_label or "")
+                    )
+                    or inbox_label
+                )
+
+            card_subject = (product_title or "").strip() or (subject or "").strip()
+            link_id = None
+            if conv and (conv.generated_link or "").strip():
+                link_id = link_id_from_generated_url((conv.generated_link or "").strip())
 
             photo_to_send: str | None = None
             photo_caption: str | None = None
-            show_offer_on_card = False
-            if mail_db_id and offer_id:
+            if mail_db_id and offer_id and photo_url:
                 try:
                     async with _imap_db_session() as _s2:
-                        show_offer_on_card = await is_first_inbound_mail_for_seller_offer(
+                        first = await is_first_inbound_mail_for_seller_offer(
                             _s2,
                             user_id=int(user_id),
                             account_id=int(acc_id),
@@ -2431,134 +2010,31 @@ async def _process_mails_for_account_impl(
                             resolved_offer_id=int(offer_id),
                             mail_id=int(mail_db_id),
                         )
-                    if show_offer_on_card and photo_url:
-                        async with _imap_db_session() as _s2:
-                            if await seller_offer_photo_sent_recently(
+                        if first:
+                            dup_photo = await seller_offer_photo_sent_recently(
                                 _s2,
                                 user_id=int(user_id),
                                 account_id=int(acc_id),
                                 from_email=str(from_email_clean).strip(),
                                 resolved_offer_id=int(offer_id),
                                 mail_id=int(mail_db_id),
-                            ):
-                                show_offer_on_card = False
-                    if show_offer_on_card and photo_url:
-                        photo_to_send = photo_url
-                        photo_caption = format_first_incoming_photo_caption(
-                            product_title=product_title,
-                            offer_price=offer_price,
-                        )
+                            )
+                            if not dup_photo:
+                                photo_to_send = photo_url
+                                photo_caption = format_first_incoming_photo_caption(
+                                    product_title=product_title,
+                                    offer_price=offer_price,
+                                )
                 except Exception:
                     logger.exception(
-                        "first-incoming photo check failed from=%s mail_id=%s",
+                        "first-incoming photo check from=%s mail_id=%s",
                         from_email_clean,
                         mail_db_id,
                     )
 
-            card_subject = (
-                (subject or "").strip()
-                or (card_outgoing_subject or saved_outgoing_mail_subject or "").strip()
-            )
-
-            if not offer_id:
-                from services.offer_matching import product_title_from_subject
-                from services.subject_offer import primary_inbound_product_needle
-
-                pt_hint = (
-                    primary_inbound_product_needle(subject or "", body_clean or "")
-                    or product_title_from_subject(subject or "")
-                    or product_title_from_subject(card_subject or "")
-                ).strip()
-                if pt_hint:
-                    product_title = (product_title or pt_hint) or None
-                try:
-                    from services.incoming_offer_bind import force_bind_incoming_seller_offer
-                    from services.offer_storage import (
-                        normalize_incoming_seller_email,
-                        offer_effective_link,
-                        offer_effective_photo,
-                        offer_effective_price,
-                        offer_effective_title,
-                    )
-
-                    async with _imap_db_session() as _s_last:
-                        contact_last = (
-                            normalize_incoming_seller_email(from_email_clean)
-                            or from_email_clean
-                        )
-                        off_last, url_last, _h_last, snap_last = (
-                            await force_bind_incoming_seller_offer(
-                                _s_last,
-                                user_id=int(user_id),
-                                contact_email=contact_last,
-                                subject=subject or "",
-                                body_text=body_clean or "",
-                                from_name=(from_name or "").strip(),
-                                inbox_email=inbox_email_clean,
-                                mail_ad_url=ad_url,
-                                resolved_offer_id=None,
-                                mailing_bound=False,
-                                exclude_mail_id=int(mail_db_id) if mail_db_id else None,
-                            )
-                        )
-                        if off_last:
-                            offer_id = int(off_last.id)
-                            resolved_offer_id = int(offer_id)
-                            mailing_bound_flag = True
-                            product_title = (
-                                (snap_last.get("product_title") or "").strip()
-                                or product_title
-                                or (offer_effective_title(off_last) or "").strip()
-                            ) or None
-                            offer_price = (
-                                (snap_last.get("offer_price") or "").strip()
-                                or offer_price
-                                or (offer_effective_price(off_last, default="") or "").strip()
-                            ) or None
-                            photo_url = (
-                                (snap_last.get("photo_url") or "").strip()
-                                or photo_url
-                                or (offer_effective_photo(off_last) or "").strip()
-                            ) or None
-                            service_label = (
-                                (snap_last.get("service_label") or "").strip()
-                                or service_label
-                                or _service_label_from_link(
-                                    offer_effective_link(off_last)
-                                )
-                            ) or None
-                            if url_last and not ad_url:
-                                ad_url = url_last.strip()
-                except Exception:
-                    logger.exception(
-                        "last-chance inbound bind failed from=%s", from_email_clean
-                    )
-
-            if mail_db_id and offer_id:
-                try:
-                    async with _imap_db_session() as session:
-                        await session.execute(
-                            update(IncomingMail)
-                            .where(IncomingMail.id == int(mail_db_id))
-                            .values(
-                                resolved_offer_id=int(offer_id),
-                                mailing_bound=True,
-                                product_title=(product_title or "")[:500] or None,
-                                offer_price=(offer_price or "")[:64] or None,
-                                photo_url=(photo_url or "")[:2000] or None,
-                                service_label=(service_label or "")[:64] or None,
-                                outgoing_mail_subject=(card_subject or "")[:500] or None,
-                            )
-                        )
-                        await _db_commit_retry(session)
-                except Exception:
-                    logger.exception(
-                        "persist offer snapshot before TG mail_id=%s", mail_db_id
-                    )
-
             chunks = render_mail_text_chunks(
                 account_email=account_email,
-                inbox_label=inbox_label,
+                inbox_label=card_inbox_label,
                 from_name=from_name,
                 from_email=from_email,
                 subject=card_subject,
@@ -2690,7 +2166,7 @@ async def _process_mails_for_account_impl(
                     disable_web_page_preview=True,
                 )
 
-            if mail_db_id and offer_id:
+            if mail_db_id:
                 try:
                     async with _imap_db_session() as session:
                         mail_row = (
@@ -2700,33 +2176,9 @@ async def _process_mails_for_account_impl(
                         ).scalars().first()
                         if mail_row:
                             mail_row.telegram_message_id = int(m.message_id)
-                            mail_row.resolved_offer_id = int(offer_id)
-                            mail_row.mailing_bound = True
-                            if product_title:
-                                mail_row.product_title = (product_title or "")[:500]
-                            if offer_price:
-                                mail_row.offer_price = (offer_price or "")[:64]
-                            if photo_url:
-                                mail_row.photo_url = (photo_url or "")[:2000]
-                            if service_label:
-                                mail_row.service_label = (service_label or "")[:64]
-                            if card_outgoing_subject:
-                                mail_row.outgoing_mail_subject = (card_outgoing_subject or "")[:500]
-                            await _db_commit_retry(session)
-                except Exception:
-                    logger.exception(
-                        "Failed to persist telegram_message_id mail_id=%s", mail_db_id
-                    )
-            elif mail_db_id:
-                try:
-                    async with _imap_db_session() as session:
-                        mail_row = (
-                            await session.execute(
-                                sa_select(IncomingMail).where(IncomingMail.id == int(mail_db_id)).limit(1)
-                            )
-                        ).scalars().first()
-                        if mail_row:
-                            mail_row.telegram_message_id = int(m.message_id)
+                            if offer_id:
+                                mail_row.resolved_offer_id = int(offer_id)
+                                mail_row.mailing_bound = True
                             await _db_commit_retry(session)
                 except Exception:
                     logger.exception(
@@ -2757,7 +2209,8 @@ async def _process_mails_for_account_impl(
                     await bot.send_photo(
                         chat_id=tg_id,
                         photo=photo_to_send,
-                        caption=photo_caption or format_first_incoming_photo_caption(
+                        caption=photo_caption
+                        or format_first_incoming_photo_caption(
                             product_title=product_title,
                             offer_price=offer_price,
                         ),

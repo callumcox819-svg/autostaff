@@ -1000,7 +1000,7 @@ async def _resolve_and_bind_incoming_mail_offer(
     mail: IncomingMail,
     inbox_email: str,
 ) -> tuple[Offer | None, str]:
-    """Найти лот по validated email / send log и записать в IncomingMail."""
+    """Лот по validated email (OfferEmail) → поля IncomingMail."""
     from services.incoming_lead_resolve import resolve_offer_for_incoming_lead
     from services.offer_storage import normalize_incoming_seller_email, offer_effective_link
 
@@ -1017,20 +1017,17 @@ async def _resolve_and_bind_incoming_mail_offer(
     contact = normalize_incoming_seller_email(getattr(mail, "from_email", "") or "")
     if not contact:
         return None, ""
-    from services.incoming_offer_bind import force_bind_incoming_seller_offer
 
-    off, url, _how, snap = await force_bind_incoming_seller_offer(
+    off, url, _how, snap = await resolve_offer_for_incoming_lead(
         session,
         user_id=int(mail.user_id),
         contact_email=contact,
         subject=(getattr(mail, "subject", "") or "").strip(),
         from_name=(getattr(mail, "from_name", "") or "").strip(),
         body_text=(getattr(mail, "body", "") or "").strip(),
-        inbox_email=(inbox_email or "").strip(),
-        mail_ad_url=(getattr(mail, "ad_url", "") or "").strip() or None,
         resolved_offer_id=getattr(mail, "resolved_offer_id", None),
+        inbox_email=(inbox_email or "").strip(),
         mailing_bound=bool(getattr(mail, "mailing_bound", False)),
-        exclude_mail_id=int(mail.id) if getattr(mail, "id", None) else None,
     )
     if not off:
         return None, ""
@@ -1051,9 +1048,6 @@ async def _resolve_and_bind_incoming_mail_offer(
     sl = (snap.get("service_label") or "").strip()
     if sl:
         mail.service_label = sl[:64]
-    os_ = (snap.get("outgoing_mail_subject") or "").strip()
-    if os_:
-        mail.outgoing_mail_subject = os_[:500]
     return off, url
 
 

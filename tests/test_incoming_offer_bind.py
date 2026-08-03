@@ -48,6 +48,9 @@ class ForceBindIncomingTests(unittest.IsolatedAsyncioTestCase):
         ), patch(
             "services.mailing_send_log.list_allowed_offers_for_incoming_contact",
             new=AsyncMock(return_value=[]),
+        ), patch(
+            "services.incoming_offer_bind.find_offer_from_send_log_by_product_context",
+            new=AsyncMock(return_value=(None, "")),
         ):
             off, link, how, snap = await force_bind_incoming_seller_offer(
                 session,

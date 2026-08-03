@@ -19,6 +19,7 @@ def _offer_matches_needle(off: Offer, needle: str) -> bool:
     from services.offer_matching import (
         _distinctive_listing_tokens,
         _offer_title_matches_needle,
+        distinctive_token_in_title,
         incoming_subject_binds_offer,
     )
 
@@ -36,8 +37,9 @@ def _offer_matches_needle(off: Offer, needle: str) -> bool:
     if head and head != n and _offer_title_matches_needle(head.lower(), title.lower()):
         return True
     nt = _distinctive_listing_tokens(n.lower())
+    title_l = title.lower()
     if len(nt) >= 2:
-        hits = sum(1 for t in nt if t in title.lower())
+        hits = sum(1 for t in nt if distinctive_token_in_title(t, title_l))
         if hits >= 2:
             return True
     return False
@@ -90,7 +92,7 @@ async def resolve_strict_seller_inbound_offer(
     if not contact:
         return None, ""
 
-    from services.offer_matching import incoming_subject_binds_offer
+    from services.offer_matching import incoming_subject_binds_offer, subject_is_informative
     from services.subject_offer import (
         inbound_body_product_needle,
         inbound_subject_is_weak_for_bind,
@@ -122,6 +124,8 @@ async def resolve_strict_seller_inbound_offer(
 
     for subj_try in subjects_for_inbound_resolve(subject or "", body_text or ""):
         if inbound_subject_is_weak_for_bind(subj_try):
+            continue
+        if not subject_is_informative(subj_try):
             continue
         for off in pool:
             if incoming_subject_binds_offer(subj_try, off):

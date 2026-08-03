@@ -431,6 +431,20 @@ def _distinctive_listing_tokens(subj: str) -> list[str]:
     ]
 
 
+def distinctive_token_in_title(tok: str, title_l: str) -> bool:
+    """Токен из темы совпадает с названием лота целым словом (не «nes» в «hemnes»)."""
+    tok = (tok or "").strip().lower()
+    title_l = (title_l or "").strip().lower()
+    if not tok or not title_l:
+        return False
+    title_tokens = set(_meaningful_subject_tokens(title_l))
+    if tok in title_tokens:
+        return True
+    if len(tok) >= 5:
+        return bool(re.search(rf"(?<![a-z0-9]){re.escape(tok)}(?![a-z0-9])", title_l))
+    return False
+
+
 def score_offer(
     off: Offer,
     *,
@@ -716,7 +730,7 @@ def subject_match_score(subject: str, off: Offer) -> float:
     title_l = title.lower()
     tok_hits = 0
     for tok in _distinctive_listing_tokens(subj):
-        if tok in title_l:
+        if distinctive_token_in_title(tok, title_l):
             tok_hits += 1
             score += 24.0
     if tok_hits >= 2:

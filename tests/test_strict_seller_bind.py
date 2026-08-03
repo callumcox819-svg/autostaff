@@ -35,6 +35,19 @@ class StrictSellerBindTests(unittest.IsolatedAsyncioTestCase):
         self.assertIs(off, sofa)
         self.assertIn("strict", how)
 
+    def test_sonnen_subject_blocks_wrong_single_lot(self):
+        from types import SimpleNamespace
+
+        from services.strict_seller_bind import _single_lot_allowed
+
+        hemnes = SimpleNamespace(
+            id=91520,
+            title="Frisiertisch Hemnes Ikea",
+            raw_json=None,
+        )
+        subj = "Re: Sonnen Lampe- schönes, warmes Licht - noch aktuell?"
+        self.assertFalse(_single_lot_allowed(hemnes, subject=subj, body_text=""))
+
     async def test_multiple_mailing_requires_subject_not_sofa_word(self):
         a = SimpleNamespace(id=1, title="Micasa 2er Sofa", raw_json="{}", link="https://a", price="", photo="")
         b = SimpleNamespace(id=2, title="IKEA Sofa bed", raw_json="{}", link="https://b", price="", photo="")

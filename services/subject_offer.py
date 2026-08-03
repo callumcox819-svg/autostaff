@@ -194,6 +194,12 @@ def _strip_inbound_subject_trailer(subj: str) -> str:
         s,
         flags=re.IGNORECASE,
     )
+    s = re.sub(
+        r"\s*[-–—]\s*noch aktuell\??\s*$",
+        "",
+        s,
+        flags=re.IGNORECASE,
+    )
     return s.strip()
 
 

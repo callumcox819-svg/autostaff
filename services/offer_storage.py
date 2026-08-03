@@ -397,6 +397,7 @@ async def find_offer_by_product_title_in_subject(
         _pick_best_linked_by_subject,
         incoming_subject_binds_offer,
         is_seller_reply_subject,
+        offer_needle_is_too_generic,
         product_title_from_subject,
         subject_is_informative,
     )
@@ -409,6 +410,25 @@ async def find_offer_by_product_title_in_subject(
 
     needle = product_title_from_subject(subj).strip().lower()
     if len(needle) < 4:
+        return None
+
+    if offer_needle_is_too_generic(needle):
+        if (contact_email or "").strip():
+            from services.mailing_send_log import (
+                bindable_offers_for_mailing_recipient,
+                list_offers_from_mailing_log,
+            )
+
+            mailed = await list_offers_from_mailing_log(
+                session, int(user_id), contact_email, limit=24
+            )
+            if len(mailed) == 1:
+                return mailed[0]
+            bound = await bindable_offers_for_mailing_recipient(
+                session, int(user_id), contact_email
+            )
+            if len(bound) == 1:
+                return bound[0]
         return None
 
     scope: list[Offer] | None = None
@@ -486,14 +506,17 @@ async def find_offer_by_product_title_in_subject(
             return mailed[0]
         if mailed:
             pick2 = _pick_offer_by_subject_in_list(mailed, subj)
-            if pick2:
+            if pick2 and incoming_subject_binds_offer(subj, pick2):
                 return pick2
-            return mailed[0]
+            if not offer_needle_is_too_generic(needle):
+                return mailed[0]
 
     pick3 = _pick_offer_by_subject_in_list(hits, subj)
-    if pick3:
+    if pick3 and incoming_subject_binds_offer(subj, pick3):
         return pick3
-    return hits[0]
+    if offer_needle_is_too_generic(needle):
+        return None
+    return hits[0] if len(hits) == 1 else None
 
 
 def _seller_email_matches(stored: str, contact_email: str) -> bool:

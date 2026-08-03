@@ -9,6 +9,7 @@ from services.offer_matching import (
     _pick_offer_by_subject_in_list,
     canon_seller_email,
     incoming_subject_binds_offer,
+    offer_needle_is_too_generic,
     product_title_from_subject,
     subject_is_informative,
     subject_match_score,
@@ -57,7 +58,7 @@ async def find_offer_from_send_log_by_product_context(
     """
     Переадресация: Reply с другого @, но OFFER в теме/цитате = тема /send в журнале.
     """
-    from services.offer_matching import _offer_title_matches_needle
+    from services.offer_matching import _offer_title_matches_needle, offer_needle_is_too_generic
     from services.subject_offer import inbound_subject_is_weak_for_bind, subjects_for_inbound_resolve
 
     contact = _canon_recipient(from_email)
@@ -69,7 +70,7 @@ async def find_offer_from_send_log_by_product_context(
         if inbound_subject_is_weak_for_bind(subj_try):
             continue
         needle = (product_title_from_subject(subj_try) or "").strip().lower()
-        if len(needle) < 4:
+        if len(needle) < 4 or offer_needle_is_too_generic(needle):
             continue
         logs = (
             await session.execute(
@@ -805,6 +806,17 @@ async def find_offer_from_mailing_log(
     in_norm = _norm_subject(subject).lower()
     in_product = (subj_needle or "").strip().lower()
 
+    from services.offer_matching import offer_needle_is_too_generic
+
+    if in_product and offer_needle_is_too_generic(in_product):
+        unique_early = {int(off.id) for _log, off in rows}
+        if len(unique_early) == 1:
+            _log, off = rows[0]
+            if _mailing_return_offer(off):
+                return off, "mailing_single_recipient_generic"
+        in_product = ""
+        subj_needle = ""
+
     if in_product and rows:
         pool: list[Offer] = []
         seen_oid: set[int] = set()
@@ -864,7 +876,12 @@ async def find_offer_from_mailing_log(
                 if _mailing_return_offer(off):
                     return off, "mailing_sent_subject"
             ot = (offer_effective_title(off) or "").strip()
-            if ot and subj_needle.lower() in ot.lower():
+            if (
+                ot
+                and subj_needle
+                and not offer_needle_is_too_generic(subj_needle)
+                and subj_needle.lower() in ot.lower()
+            ):
                 if _mailing_return_offer(off):
                     return off, "mailing_title"
 

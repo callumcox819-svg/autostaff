@@ -285,6 +285,10 @@ def subjects_for_inbound_resolve(subject: str, body: str) -> list[str]:
             r"guten tag,?\s*(.+?)\s+noch\s+verf[uü]gbar",
             re.IGNORECASE,
         ),
+        re.compile(
+            r"(?:hallo,?\s*)?ist\s+(.+?)\s+(?:momentan\s+)?noch\s+im\s+angebot",
+            re.IGNORECASE,
+        ),
     )
 
     for line in (body or "").replace("\r", "\n").split("\n"):
@@ -405,5 +409,8 @@ def primary_inbound_product_needle(subject: str, body: str) -> str:
         ).strip()
         if len(needle) >= 4 and needle.upper() not in ("OFFER", "ARTIKEL"):
             if len(needle) <= 160:
-                return needle
+                from services.offer_matching import offer_needle_is_too_generic
+
+                if not offer_needle_is_too_generic(needle):
+                    return needle
     return ""

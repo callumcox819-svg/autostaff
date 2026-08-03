@@ -274,7 +274,9 @@ async def force_bind_incoming_seller_offer(
 
     if is_seller_reply_subject(subject or ""):
         needle = (product_title_from_subject(subject or "") or "").strip().lower()
-        if len(needle) >= 4:
+        from services.offer_matching import offer_needle_is_too_generic
+
+        if len(needle) >= 4 and not offer_needle_is_too_generic(needle):
             from sqlalchemy import select as sa_select
 
             from models import Offer
@@ -309,7 +311,9 @@ async def force_bind_incoming_seller_offer(
                             session, int(user_id), int(h.id), contact
                         )
                     ]
-                    off = mailed[0] if len(mailed) == 1 else (mailed[0] if mailed else hits[0])
+                    off = mailed[0] if len(mailed) == 1 else None
+                    if not off and len(hits) == 1:
+                        off = hits[0]
                 link = (offer_effective_link(off) or "").strip()
                 return off, link, "catalog_title", _snapshot_from_mailed_offer(off)
 

@@ -68,10 +68,24 @@ class OfferSubjectMatchTests(unittest.TestCase):
         )
 
     def test_title_matches_short_needle_in_long_title(self):
-        from services.offer_matching import _offer_title_matches_needle
+        from services.offer_matching import _offer_title_matches_needle, offer_needle_is_too_generic
 
-        self.assertTrue(_offer_title_matches_needle("lampe", "Stehlampe schwarz"))
-        self.assertTrue(_offer_title_matches_needle("Lampe", "Lampe"))
+        self.assertTrue(offer_needle_is_too_generic("sofa"))
+        self.assertFalse(_offer_title_matches_needle("sofa", "Micasa 2er Sofa"))
+        self.assertTrue(_offer_title_matches_needle("lampe", "Lampe"))
+        self.assertFalse(_offer_title_matches_needle("lampe", "Stehlampe schwarz"))
+
+    def test_sofa_generic_body_needle(self):
+        from services.offer_matching import offer_needle_is_too_generic
+        from services.subject_offer import primary_inbound_product_needle
+
+        body = "> Hallo, ist Sofa momentan noch im Angebot?"
+        self.assertTrue(offer_needle_is_too_generic("sofa"))
+        self.assertEqual(
+            primary_inbound_product_needle("Re: Kurze Anfrage zu Micasa 2er Sofa", body),
+            "Micasa 2er Sofa",
+        )
+        self.assertEqual(primary_inbound_product_needle("Aw: Noch da?", body), "")
 
     def test_product_title_anfrage_prefix(self):
         self.assertEqual(

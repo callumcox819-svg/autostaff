@@ -132,12 +132,84 @@ def _offer_title_matches_needle(needle: str, title: str) -> bool:
     t = (title or "").strip().lower()
     if len(n) < 4 or len(t) < 4:
         return False
+    if offer_needle_is_too_generic(n):
+        return n == t
     if n == t:
         return True
     if n in t or t in n:
         return True
     if len(n) >= 4 and re.search(rf"(?<![a-z0-9]){re.escape(n)}(?![a-z0-9])", t):
         return True
+    return False
+
+
+_GENERIC_PRODUCT_NEEDLES = frozenset(
+    {
+        "sofa",
+        "couch",
+        "lampe",
+        "leuchte",
+        "tisch",
+        "stuhl",
+        "sessel",
+        "bett",
+        "schrank",
+        "regal",
+        "velo",
+        "fahrrad",
+        "bike",
+        "ebike",
+        "auto",
+        "pkw",
+        "iphone",
+        "handy",
+        "telefon",
+        "uhr",
+        "tasche",
+        "rucksack",
+        "artikel",
+        "inserat",
+        "moebel",
+        "möbel",
+        "spiel",
+        "buch",
+        "buecher",
+        "bücher",
+        "jacke",
+        "hose",
+        "hemd",
+        "schuhe",
+        "schuh",
+        "koffer",
+        "werkzeug",
+        "monitor",
+        "fernseher",
+        "tv",
+        "pc",
+        "laptop",
+        "tablet",
+        "kamera",
+        "box",
+    }
+)
+
+
+def offer_needle_is_too_generic(needle: str) -> bool:
+    """
+    Одно слово «Sofa», «Lampe» — не выбирать лот по fuzzy match по всей БД.
+    Только журнал /send на этот email или полное название в теме.
+    """
+    n = re.sub(r"\s+", " ", (needle or "").strip().lower())
+    if len(n) < 4:
+        return True
+    tokens = _distinctive_listing_tokens(n)
+    if not tokens:
+        return True
+    if len(tokens) == 1:
+        if tokens[0] in _GENERIC_PRODUCT_NEEDLES:
+            return True
+        if len(tokens[0]) <= 5:
+            return True
     return False
 
 

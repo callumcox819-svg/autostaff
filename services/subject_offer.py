@@ -289,6 +289,10 @@ def subjects_for_inbound_resolve(subject: str, body: str) -> list[str]:
             r"(?:hallo,?\s*)?ist\s+(.+?)\s+(?:momentan\s+)?noch\s+im\s+angebot",
             re.IGNORECASE,
         ),
+        re.compile(
+            r"(?:ihre\s+anzeige\s+gesehen\.?\s*)?(?:hallo,?\s*)?ist\s+(.+?)\s+noch\s+verf[uü]gbar",
+            re.IGNORECASE,
+        ),
     )
 
     for line in (body or "").replace("\r", "\n").split("\n"):
@@ -335,6 +339,8 @@ def subjects_for_inbound_resolve(subject: str, body: str) -> list[str]:
                 "waere ",
                 "anfrage:",
                 "frage zu",
+                "ihre anzeige",
+                "anzeige gesehen",
             )
         ):
             continue

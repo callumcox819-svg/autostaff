@@ -2096,7 +2096,9 @@ async def _create_aqua_link_from_db_work(callback: CallbackQuery, mail_id: int) 
         from services.offer_storage import offer_effective_link
 
         if not offer:
-            subj_hint = product_title_from_subject(subj_mail) if subject_is_informative(subj_mail) else subj_mail
+            subj_hint = (subj_mail or "").strip() or (
+                product_title_from_subject(subj_mail) if subject_is_informative(subj_mail) else ""
+            )
             oid_hint = getattr(mail, "resolved_offer_id", None) or _offer_id_from_incoming_card_message(
                 callback.message
             )
@@ -2372,7 +2374,9 @@ async def _create_aqua_link_work(callback: CallbackQuery, acc_id: int, uid: str,
                 url = url_lc
 
         if not url:
-            subj_hint = product_title_from_subject(subj_pre) if subject_is_informative(subj_pre) else subj_pre
+            subj_hint = (subj_pre or "").strip() or (
+                product_title_from_subject(subj_pre) if subject_is_informative(subj_pre) else ""
+            )
             await callback.message.answer(
                 f"{html_emoji('fail')} <b>Не нашёл объявление для этого письма</b>\n\n"
                 f"<b>Тема:</b> <code>{_e(subj_hint or '—')}</code>\n"

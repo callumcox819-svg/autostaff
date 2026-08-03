@@ -254,6 +254,17 @@ class InboundQuotedBodyTests(unittest.TestCase):
         self.assertIn("sidi", needle.lower())
         self.assertIn("rex air", needle.lower())
 
+    def test_anzeige_gesehen_body_extract(self):
+        from services.subject_offer import subjects_for_inbound_resolve
+
+        subj = "Re: Kurze Frage zu Drucker Brother"
+        body = (
+            "> Hallo, ich habe Ihre Anzeige gesehen. Ist Drucker Brother noch verfügbar?"
+        )
+        tries = subjects_for_inbound_resolve(subj, body)
+        self.assertEqual(tries[0], subj)
+        self.assertTrue(any("drucker" in t.lower() for t in tries))
+
     def test_gucci_smart_preset_body_and_subject(self):
         from services.subject_offer import primary_inbound_product_needle, subjects_for_inbound_resolve
 

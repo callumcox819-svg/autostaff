@@ -6,6 +6,7 @@ from models import Offer
 from services.mailing_send_log import (
     find_offer_from_mailing_log,
     has_mailing_send_for_contact,
+    resolve_fi_inbound_offer,
     resolve_inbound_from_send_log,
 )
 from services.offer_matching import (
@@ -183,23 +184,60 @@ async def resolve_offer_for_incoming_lead(
     if not contact_email:
         return None, "", "", empty_snap
 
-    pinned: int | None = int(resolved_offer_id) if resolved_offer_id else None
-    if pinned:
-        stored = await _offer_from_id(session, user_id=int(user_id), offer_id=pinned)
-        if stored and offer_incoming_bindable(stored):
-            link = (offer_effective_link(stored) or "").strip()
+    if await has_mailing_send_for_contact(session, int(user_id), contact_email):
+        off_fi, how_fi = await resolve_fi_inbound_offer(
+            session,
+            int(user_id),
+            contact_email,
+            subject=(subject or "").strip(),
+            body_text=(body_text or "").strip(),
+            inbox_email=(inbox_email or "").strip(),
+        )
+        if off_fi and offer_incoming_bindable(off_fi):
+            link = (offer_effective_link(off_fi) or "").strip()
             out_subj = await _resolve_outgoing_subject(
                 session,
                 user_id=int(user_id),
                 contact_email=contact_email,
                 inbox_email=(inbox_email or "").strip(),
-                pinned_offer_id=pinned,
+                pinned_offer_id=int(off_fi.id),
                 pinned_subj="",
-                offer=stored,
+                offer=off_fi,
                 mail_subject=subject or "",
             )
-            snap = _snapshot_from_mailed_offer(stored, outgoing_mail_subject=out_subj)
-            return stored, link, "stored_resolved_offer_id", snap
+            snap = _snapshot_from_mailed_offer(off_fi, outgoing_mail_subject=out_subj)
+            snap["mailing_bound"] = True
+            return off_fi, link, how_fi or "fi_inbound_send_log", snap
+
+    pinned: int | None = int(resolved_offer_id) if resolved_offer_id else None
+    if pinned:
+        stored = await _offer_from_id(session, user_id=int(user_id), offer_id=pinned)
+        if stored and offer_incoming_bindable(stored):
+            from services.offer_matching import _offer_title_matches_needle, incoming_subject_binds_offer
+            from services.subject_offer import primary_inbound_product_needle
+
+            needle = primary_inbound_product_needle(subject or "", body_text or "")
+            title_st = (offer_effective_title(stored) or "").strip()
+            stale = bool(
+                needle
+                and len(needle) >= 4
+                and not incoming_subject_binds_offer(subject or "", stored)
+                and not _offer_title_matches_needle(needle.lower(), title_st)
+            )
+            if not stale:
+                link = (offer_effective_link(stored) or "").strip()
+                out_subj = await _resolve_outgoing_subject(
+                    session,
+                    user_id=int(user_id),
+                    contact_email=contact_email,
+                    inbox_email=(inbox_email or "").strip(),
+                    pinned_offer_id=pinned,
+                    pinned_subj="",
+                    offer=stored,
+                    mail_subject=subject or "",
+                )
+                snap = _snapshot_from_mailed_offer(stored, outgoing_mail_subject=out_subj)
+                return stored, link, "stored_resolved_offer_id", snap
 
     conv_pin: int | None = None
     pinned_subj = ""

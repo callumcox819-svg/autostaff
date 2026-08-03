@@ -58,7 +58,7 @@ async def find_offer_from_send_log_by_product_context(
     Переадресация: Reply с другого @, но OFFER в теме/цитате = тема /send в журнале.
     """
     from services.offer_matching import _offer_title_matches_needle
-    from services.subject_offer import subjects_for_inbound_resolve
+    from services.subject_offer import inbound_subject_is_weak_for_bind, subjects_for_inbound_resolve
 
     contact = _canon_recipient(from_email)
     local_in = contact.split("@", 1)[0] if "@" in contact else ""
@@ -66,6 +66,8 @@ async def find_offer_from_send_log_by_product_context(
     best: tuple[float, Offer, str] | None = None
 
     for subj_try in subjects_for_inbound_resolve(subject or "", body_text or ""):
+        if inbound_subject_is_weak_for_bind(subj_try):
+            continue
         needle = (product_title_from_subject(subj_try) or "").strip().lower()
         if len(needle) < 4:
             continue
@@ -742,13 +744,15 @@ async def resolve_fi_inbound_offer(
     FI WORKING: лот = строка журнала /send, где OFFER (из любого пресета темы)
     совпадает с Re:/Aw: или цитатой входящего. Не «первый лот на email».
     """
-    from services.subject_offer import subjects_for_inbound_resolve
+    from services.subject_offer import inbound_subject_is_weak_for_bind, subjects_for_inbound_resolve
 
     contact = (contact_email or "").strip()
     if not contact:
         return None, ""
 
     for subj_try in subjects_for_inbound_resolve(subject or "", body_text or ""):
+        if inbound_subject_is_weak_for_bind(subj_try):
+            continue
         off, how = await find_offer_from_mailing_log(
             session, int(user_id), contact, subj_try
         )

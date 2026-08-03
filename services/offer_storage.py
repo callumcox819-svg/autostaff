@@ -760,9 +760,11 @@ def _pick_offer_from_inbound_subjects(
     body_text: str,
 ) -> Offer | None:
     from services.offer_matching import _pick_offer_by_subject_in_list, subject_is_informative
-    from services.subject_offer import subjects_for_inbound_resolve
+    from services.subject_offer import inbound_subject_is_weak_for_bind, subjects_for_inbound_resolve
 
     for subj_try in subjects_for_inbound_resolve(subject, body_text):
+        if inbound_subject_is_weak_for_bind(subj_try):
+            continue
         if not subject_is_informative(subj_try):
             continue
         pick = _pick_offer_by_subject_in_list(pool, subj_try)

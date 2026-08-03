@@ -225,6 +225,28 @@ class InboundQuotedBodyTests(unittest.TestCase):
         joined = " | ".join(tries).lower()
         self.assertIn("sternenschweif", joined)
 
+    def test_sidi_body_exact_user_case(self):
+        from services.subject_offer import primary_inbound_product_needle, subjects_for_inbound_resolve
+
+        body = (
+            "Noch zu haben\n\n"
+            "Anna Kerher <blasterh183@gmail.com> schrieb am Sa. 1. Aug. 2026 um 22:19:\n"
+            "Hallo, ist Sidi racing Schuhe Rex air noch nicht verkauft?"
+        )
+        tries = subjects_for_inbound_resolve("Noch zu haben", body)
+        self.assertFalse(any(t.lower().strip() == "noch zu haben" for t in tries))
+        needle = primary_inbound_product_needle("Noch zu haben", body)
+        self.assertIn("sidi", needle.lower())
+        self.assertIn("rex air", needle.lower())
+
+    def test_weak_subject_skipped_when_body_has_offer(self):
+        from services.subject_offer import subjects_for_inbound_resolve
+
+        body = ">> Hallo, ist Lampe LED noch nicht verkauft?"
+        tries = subjects_for_inbound_resolve("Noch zu haben", body)
+        self.assertTrue(any("lampe" in t.lower() for t in tries))
+        self.assertNotIn("noch zu haben", [t.lower() for t in tries])
+
 
 if __name__ == "__main__":
     unittest.main()

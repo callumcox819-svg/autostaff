@@ -1485,11 +1485,24 @@ async def mail_card_offer_meta(
         contact = normalize_incoming_seller_email(from_email) or (from_email or "").strip().lower()
 
         if resolved_offer_id:
-            off = await _load_offer(
+            from services.offer_matching import _offer_title_matches_needle, incoming_subject_binds_offer
+            from services.subject_offer import primary_inbound_product_needle
+
+            cand = await _load_offer(
                 session, user_id=int(user_id), offer_id=int(resolved_offer_id)
             )
-            if off:
-                offer_id = int(off.id)
+            if cand:
+                needle = primary_inbound_product_needle(subject or "", body_text or "")
+                title_c = (offer_effective_title(cand) or "").strip()
+                stale = bool(
+                    needle
+                    and len(needle) >= 4
+                    and not incoming_subject_binds_offer(subject or "", cand)
+                    and not _offer_title_matches_needle(needle.lower(), title_c)
+                )
+                if not stale:
+                    off = cand
+                    offer_id = int(off.id)
 
         if not off:
             from services.incoming_offer_bind import force_bind_incoming_seller_offer
@@ -1530,11 +1543,20 @@ async def mail_card_offer_meta(
             if not offer_price:
                 offer_price = (offer_effective_price(off, default="") or "").strip() or None
             if not outgoing_subject:
-                from services.subject_offer import pick_mailing_subject
+                from services.incoming_lead_resolve import _resolve_outgoing_subject
 
-                ot = (offer_effective_title(off) or "").strip()
-                if ot:
-                    outgoing_subject = pick_mailing_subject(ot)
+                outgoing_subject = (
+                    await _resolve_outgoing_subject(
+                        session,
+                        user_id=int(user_id),
+                        contact_email=contact,
+                        inbox_email=(inbox_email or "").strip(),
+                        pinned_offer_id=int(off.id),
+                        pinned_subj="",
+                        offer=off,
+                        mail_subject=subject or "",
+                    )
+                ).strip() or None
     except Exception:
         logger.exception("mail_card_offer_meta failed")
 

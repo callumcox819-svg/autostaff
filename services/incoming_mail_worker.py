@@ -2445,7 +2445,8 @@ async def _process_mails_for_account_impl(
                     )
 
             card_subject = (
-                (card_outgoing_subject or saved_outgoing_mail_subject or subject or "").strip()
+                (subject or "").strip()
+                or (card_outgoing_subject or saved_outgoing_mail_subject or "").strip()
             )
 
             if not offer_id:

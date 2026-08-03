@@ -18,10 +18,13 @@ class StrictSellerBindTests(unittest.IsolatedAsyncioTestCase):
         session = AsyncMock()
         with patch(
             "services.strict_seller_bind._offers_from_offer_email_rows",
-            new=AsyncMock(return_value=[sofa]),
+            new=AsyncMock(return_value=[]),
         ), patch(
             "services.strict_seller_bind._mailing_log_rows_for_recipient",
             new=AsyncMock(return_value=[(SimpleNamespace(mail_subject="Kurze Anfrage zu Micasa 2er Sofa"), sofa)]),
+        ), patch(
+            "services.strict_seller_bind.find_offer_from_mailing_log",
+            new=AsyncMock(return_value=(None, "")),
         ):
             off, how = await resolve_strict_seller_inbound_offer(
                 session,

@@ -254,7 +254,30 @@ class InboundQuotedBodyTests(unittest.TestCase):
         self.assertIn("sidi", needle.lower())
         self.assertIn("rex air", needle.lower())
 
-    def test_anzeige_gesehen_body_extract(self):
+    def test_regent_body_beats_metalshirts_re_subject(self):
+        from services.subject_offer import (
+            inbound_body_product_needle,
+            primary_inbound_product_needle,
+            subjects_for_inbound_resolve,
+        )
+
+        subj = "Re: Kurze Anfrage zu Diverse Metalshirts, 22 Stück"
+        body = (
+            "Jop, das Modul ist noch erhältlich.\n"
+            "On 3 Aug 2026 09:54, Anna Kerher <x@gmail.com> wrote:\n"
+            "Guten Tag, ich interessiere mich für Regent MTM Modul für Lightpad. "
+            "Ist das Angebot noch offen?"
+        )
+        tries = subjects_for_inbound_resolve(subj, body)
+        self.assertIn("Regent MTM Modul", tries[0])
+        self.assertIn(
+            "regent",
+            primary_inbound_product_needle(subj, body).lower(),
+        )
+        self.assertNotIn(
+            "metalshirt",
+            primary_inbound_product_needle(subj, body).lower(),
+        )
         from services.subject_offer import subjects_for_inbound_resolve
 
         subj = "Re: Kurze Frage zu Drucker Brother"
@@ -275,8 +298,8 @@ class InboundQuotedBodyTests(unittest.TestCase):
             "> Guten Tag, wäre Gucci Tasche noch erhältlich? Ich freue mich auf Ihre Antwort."
         )
         tries = subjects_for_inbound_resolve(subj, body)
-        self.assertTrue(tries[0].startswith("Re:"))
-        self.assertIn("GUCCI", tries[0])
+        self.assertIn("Gucci Tasche", tries[0])
+        self.assertTrue(any(t.startswith("Re:") for t in tries))
         needle = primary_inbound_product_needle(subj, body)
         self.assertEqual(needle, "GUCCI Tasche")
         self.assertTrue(any("Gucci Tasche" in t or "GUCCI Tasche" in t for t in tries))

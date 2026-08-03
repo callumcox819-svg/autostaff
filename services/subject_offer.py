@@ -293,6 +293,14 @@ def subjects_for_inbound_resolve(subject: str, body: str) -> list[str]:
             r"(?:ihre\s+anzeige\s+gesehen\.?\s*)?(?:hallo,?\s*)?ist\s+(.+?)\s+noch\s+verf[uü]gbar",
             re.IGNORECASE,
         ),
+        re.compile(
+            r"interessiere mich f(?:ü|u)r\s+(.+?)\.\s*Ist das Angebot",
+            re.IGNORECASE,
+        ),
+        re.compile(
+            r"interessiere mich f(?:ü|u)r\s+(.+?)\.\s*Ist\b",
+            re.IGNORECASE,
+        ),
     )
 
     for line in (body or "").replace("\r", "\n").split("\n"):
@@ -311,54 +319,15 @@ def subjects_for_inbound_resolve(subject: str, body: str) -> list[str]:
             if len(extracted) >= 4:
                 _add(extracted)
             break
-        if len(ls) < 12:
-            continue
-        low = ls.lower()
-        if not any(
-            x in low
-            for x in (
-                "noch verfügbar",
-                "noch verfugbar",
-                "noch zu haben",
-                "noch angeboten",
-                "angeboten wird",
-                "nachfragen",
-                "wollte nachfragen",
-                "interesse an",
-                "kurze frage",
-                "kurze anfrage",
-                "kaufinteresse",
-                "guten tag",
-                "haben sie",
-                "noch da",
-                "noch aktuell",
-                "noch nicht verkauft",
-                "noch erhältlich",
-                "noch erhaltlich",
-                "wäre ",
-                "waere ",
-                "anfrage:",
-                "frage zu",
-                "ihre anzeige",
-                "anzeige gesehen",
-            )
-        ):
-            continue
-        if inbound_subject_is_weak_for_bind(ls):
-            continue
-        if re.search(r"\bschrieb\s+am\b", low):
-            continue
-        prod = (product_title_from_subject(ls) or offer_title_from_inbound_subject(ls) or "").strip()
-        if prod and len(prod) >= 4:
-            _add(prod)
 
     header = sanitize_email_subject((subject or "").strip())
     ordered: list[str] = []
-    if len(header) >= 8 and not inbound_subject_is_weak_for_bind(header):
-        ordered.append(header)
+    # Сначала OFFER из цитаты нашего /send в теле (Regent…), потом Re: (может быть другой лот).
     for q in quoted:
-        if q not in ordered:
-            ordered.append(q)
+        ordered.append(q)
+    if len(header) >= 8 and not inbound_subject_is_weak_for_bind(header):
+        if header not in ordered:
+            ordered.append(header)
     if (
         len(header) >= 8
         and inbound_subject_is_weak_for_bind(header)
@@ -366,6 +335,26 @@ def subjects_for_inbound_resolve(subject: str, body: str) -> list[str]:
     ):
         ordered.append(header)
     return ordered
+
+
+def inbound_body_product_needle(body: str) -> str:
+    """OFFER только из цитаты в теле (без темы Re:)."""
+    from services.offer_matching import product_title_from_subject
+
+    for subj_try in subjects_for_inbound_resolve("", body or ""):
+        if inbound_subject_is_weak_for_bind(subj_try):
+            continue
+        needle = (
+            product_title_from_subject(subj_try)
+            or offer_title_from_inbound_subject(subj_try)
+            or subj_try
+        ).strip()
+        if len(needle) >= 4 and needle.upper() not in ("OFFER", "ARTIKEL"):
+            from services.offer_matching import offer_needle_is_too_generic
+
+            if not offer_needle_is_too_generic(needle) and len(needle) <= 160:
+                return needle
+    return ""
 
 
 _WEAK_INBOUND_SUBJECT_RE = re.compile(
@@ -392,8 +381,12 @@ def inbound_subject_is_weak_for_bind(subject: str) -> bool:
 
 
 def primary_inbound_product_needle(subject: str, body: str) -> str:
-    """Первый осмысленный OFFER из темы Re: или цитат тела."""
-    from services.offer_matching import product_title_from_subject
+    """OFFER: цитата исходящего в теле, затем тема Re:."""
+    from services.offer_matching import offer_needle_is_too_generic, product_title_from_subject
+
+    body_needle = inbound_body_product_needle(body or "")
+    if body_needle:
+        return body_needle
 
     header = (subject or "").strip()
     if header and not inbound_subject_is_weak_for_bind(header):
@@ -402,7 +395,11 @@ def primary_inbound_product_needle(subject: str, body: str) -> str:
             or offer_title_from_inbound_subject(header)
             or ""
         ).strip()
-        if len(h_needle) >= 4 and h_needle.upper() not in ("OFFER", "ARTIKEL"):
+        if (
+            len(h_needle) >= 4
+            and h_needle.upper() not in ("OFFER", "ARTIKEL")
+            and not offer_needle_is_too_generic(h_needle)
+        ):
             return h_needle
 
     for subj_try in subjects_for_inbound_resolve(subject or "", body or ""):
@@ -414,9 +411,6 @@ def primary_inbound_product_needle(subject: str, body: str) -> str:
             or subj_try
         ).strip()
         if len(needle) >= 4 and needle.upper() not in ("OFFER", "ARTIKEL"):
-            if len(needle) <= 160:
-                from services.offer_matching import offer_needle_is_too_generic
-
-                if not offer_needle_is_too_generic(needle):
-                    return needle
+            if len(needle) <= 160 and not offer_needle_is_too_generic(needle):
+                return needle
     return ""

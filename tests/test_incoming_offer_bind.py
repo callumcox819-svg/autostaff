@@ -38,7 +38,7 @@ class ForceBindIncomingTests(unittest.IsolatedAsyncioTestCase):
             new=AsyncMock(return_value=None),
         ), patch(
             "services.mailing_send_log.has_mailing_send_for_contact",
-            new=AsyncMock(return_value=False),
+            new=AsyncMock(return_value=True),
         ), patch(
             "services.incoming_offer_bind.list_offers_for_validated_contact_email",
             new=AsyncMock(return_value=[]),

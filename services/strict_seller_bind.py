@@ -137,7 +137,10 @@ async def resolve_strict_seller_inbound_offer(
             continue
         oid = int(off.id)
         if allowed_ids and oid not in allowed_ids:
-            continue
+            binds = incoming_subject_binds_offer(subj_try, off)
+            n_chk = primary_inbound_product_needle(subject or "", body_text or "")
+            if not binds and not (n_chk and _offer_matches_needle(off, n_chk)):
+                continue
         if pool and not incoming_subject_binds_offer(subj_try, off):
             needle = primary_inbound_product_needle(subject or "", body_text or "")
             if needle and not _offer_matches_needle(off, needle):
@@ -146,9 +149,26 @@ async def resolve_strict_seller_inbound_offer(
 
     needle = primary_inbound_product_needle(subject or "", body_text or "")
     if needle:
+        from services.offer_matching import offer_needle_is_too_generic
+
         for off in pool:
             if _offer_matches_needle(off, needle):
                 return off, "strict_inbound_needle"
+        if not offer_needle_is_too_generic(needle):
+            for subj_try in subjects_for_inbound_resolve(subject or "", body_text or ""):
+                if inbound_subject_is_weak_for_bind(subj_try):
+                    continue
+                if not subject_is_informative(subj_try):
+                    continue
+                off, how = await find_offer_from_mailing_log(
+                    session, int(user_id), contact, subj_try
+                )
+                if not off:
+                    continue
+                if incoming_subject_binds_offer(subj_try, off) or _offer_matches_needle(
+                    off, needle
+                ):
+                    return off, how or "strict_mailing_needle"
         return None, ""
 
     body_needle = inbound_body_product_needle(body_text or "")

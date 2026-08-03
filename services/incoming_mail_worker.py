@@ -1576,6 +1576,17 @@ async def mail_card_offer_meta(
 
     if offer_id:
         return offer_id, service_label, product_title, photo_url, offer_price, outgoing_subject
+    if not product_title:
+        try:
+            from services.offer_matching import subject_is_informative
+            from services.subject_offer import offer_title_from_inbound_subject
+
+            if subject_is_informative(subject or ""):
+                subj_title = (offer_title_from_inbound_subject(subject or "") or "").strip()
+                if len(subj_title) >= 4:
+                    product_title = subj_title
+        except Exception:
+            pass
     if product_title or photo_url or offer_price or service_label:
         return None, service_label, product_title, photo_url, offer_price, outgoing_subject
     return None, None, None, None, None, None

@@ -231,4 +231,19 @@ async def force_bind_incoming_seller_offer(
         link = (offer_effective_link(off) or "").strip()
         return off, link, "validated_single", _snapshot_from_mailed_offer(off)
 
+    from services.offer_matching import is_seller_reply_subject, subject_is_informative
+
+    if (await has_mailing_send_for_contact(session, int(user_id), contact) or validated) and (
+        subject_is_informative(subject or "") and is_seller_reply_subject(subject or "")
+    ):
+        off = await find_offer_by_product_title_in_subject(
+            session,
+            user_id=int(user_id),
+            subject=(subject or "").strip(),
+            contact_email=contact,
+        )
+        if off:
+            link = (offer_effective_link(off) or "").strip()
+            return off, link, "product_title_seller_scope", _snapshot_from_mailed_offer(off)
+
     return None, "", "", empty_snap

@@ -751,8 +751,12 @@ async def resolve_fi_inbound_offer(
     if not contact:
         return None, ""
 
+    from services.offer_matching import subject_is_informative
+
     for subj_try in subjects_for_inbound_resolve(subject or "", body_text or ""):
         if inbound_subject_is_weak_for_bind(subj_try):
+            continue
+        if not subject_is_informative(subj_try):
             continue
         off, how = await find_offer_from_mailing_log(
             session, int(user_id), contact, subj_try
@@ -908,5 +912,19 @@ async def find_offer_from_mailing_log(
     )
     if off_latest and len(unique_ids) <= 1:
         return off_latest, "mailing_latest_fallback"
+
+    if in_product and len(unique_ids) > 1:
+        from services.offer_matching import _offer_title_matches_needle
+
+        best_needle: tuple[float, Offer] | None = None
+        for _log, off in rows[:64]:
+            title = (offer_effective_title(off) or "").strip().lower()
+            if not title or not _offer_title_matches_needle(in_product, title):
+                continue
+            sc = subject_match_score(subject, off)
+            if best_needle is None or sc > best_needle[0]:
+                best_needle = (sc, off)
+        if best_needle and _mailing_return_offer(best_needle[1]):
+            return best_needle[1], "mailing_multi_needle_title"
 
     return None, ""

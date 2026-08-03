@@ -234,18 +234,27 @@ class InboundQuotedBodyTests(unittest.TestCase):
             "Hallo, ist Sidi racing Schuhe Rex air noch nicht verkauft?"
         )
         tries = subjects_for_inbound_resolve("Noch zu haben", body)
-        self.assertFalse(any(t.lower().strip() == "noch zu haben" for t in tries))
+        self.assertTrue(any("sidi" in t.lower() for t in tries))
+        self.assertNotEqual(tries[0].lower().strip(), "noch zu haben")
         needle = primary_inbound_product_needle("Noch zu haben", body)
         self.assertIn("sidi", needle.lower())
         self.assertIn("rex air", needle.lower())
 
-    def test_weak_subject_skipped_when_body_has_offer(self):
-        from services.subject_offer import subjects_for_inbound_resolve
+    def test_gucci_smart_preset_body_and_subject(self):
+        from services.subject_offer import primary_inbound_product_needle, subjects_for_inbound_resolve
 
-        body = ">> Hallo, ist Lampe LED noch nicht verkauft?"
-        tries = subjects_for_inbound_resolve("Noch zu haben", body)
-        self.assertTrue(any("lampe" in t.lower() for t in tries))
-        self.assertNotIn("noch zu haben", [t.lower() for t in tries])
+        subj = "Re: Guten Tag, GUCCI Tasche noch verfügbar?"
+        body = (
+            "Ja von wo sind sie?\n"
+            "Am 03.08.2026 um 09:54 schrieb Anna Kerher <srisadewa217@gmail.com>:\n"
+            "> Guten Tag, wäre Gucci Tasche noch erhältlich? Ich freue mich auf Ihre Antwort."
+        )
+        tries = subjects_for_inbound_resolve(subj, body)
+        self.assertTrue(tries[0].startswith("Re:"))
+        self.assertIn("GUCCI", tries[0])
+        needle = primary_inbound_product_needle(subj, body)
+        self.assertEqual(needle, "GUCCI Tasche")
+        self.assertTrue(any("Gucci Tasche" in t or "GUCCI Tasche" in t for t in tries))
 
 
 if __name__ == "__main__":

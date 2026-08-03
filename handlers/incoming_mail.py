@@ -2059,73 +2059,42 @@ async def _create_aqua_link_from_db_work_impl(
             session, mail, tg_message=callback.message
         )
 
-        offer, url = await _bound_offer_from_incoming_mail(
-            session, mail, user_id=int(tg_user.id)
-        )
-        if not offer:
-            offer, url = await _resolve_and_bind_incoming_mail_offer(
-                session,
-                mail=mail,
-                inbox_email=inbox_email,
-            )
-        resolved_id = int(offer.id) if offer else getattr(mail, "resolved_offer_id", None)
-        mailing_bound = bool(getattr(mail, "mailing_bound", False))
-
-        if not url:
-            resolved_id, mailing_bound = await _aqua_resolve_pins_for_mail(
-                session,
-                user_id=int(tg_user.id),
-                subject=subj_mail,
-                resolved_offer_id=resolved_id,
-                mailing_bound=mailing_bound,
-                inbox_email=inbox_email,
-                contact_email=contact_email,
-            )
-            offer, url = await resolve_offer_for_aqua_link(
-                session,
-                user_id=int(tg_user.id),
-                from_email=contact_email,
-                subject=subj_mail,
-                from_name=(getattr(mail, "from_name", "") or ""),
-                body_text=body_mail,
-                resolved_offer_id=resolved_id,
-                mail_ad_url=(getattr(mail, "ad_url", "") or "").strip() or None,
-                inbox_email=inbox_email,
-                mailing_bound=mailing_bound,
-            )
-
-        if not url:
-            from services.offer_matching import _load_offer
-            from services.offer_storage import offer_effective_link
-
-            fallback_oid = getattr(mail, "resolved_offer_id", None) or resolved_id
-            if fallback_oid:
-                off_fb = await _load_offer(
-                    session, user_id=int(tg_user.id), offer_id=int(fallback_oid)
-                )
-                url_fb = (offer_effective_link(off_fb) or "").strip() if off_fb else ""
-                if not url_fb:
-                    url_fb = (getattr(mail, "ad_url", "") or "").strip()
-                if url_fb:
-                    offer = off_fb
-                    url = url_fb
-
-        if not url:
-            offer_lc, url_lc = await _aqua_last_chance_offer_url(
-                session,
-                user_id=int(tg_user.id),
-                mail=mail,
-                inbox_email=inbox_email,
-                contact_email=contact_email,
-                resolved_id=int(resolved_id) if resolved_id else None,
-                subject=subj_mail,
-                body_text=(getattr(mail, "body", "") or "") if mail else "",
-            )
-            if url_lc:
-                offer = offer_lc or offer
-                url = url_lc
-
+        from services.incoming_lead_resolve import resolve_offer_for_incoming_lead
         from services.offer_storage import offer_effective_link
+
+        offer, url, _how, snap = await resolve_offer_for_incoming_lead(
+            session,
+            user_id=int(tg_user.id),
+            contact_email=contact_email,
+            subject=subj_mail,
+            from_name=(getattr(mail, "from_name", "") or "").strip(),
+            body_text=body_mail,
+            resolved_offer_id=getattr(mail, "resolved_offer_id", None),
+            mail_ad_url=(getattr(mail, "ad_url", "") or "").strip() or None,
+            inbox_email=inbox_email,
+            mailing_bound=bool(getattr(mail, "mailing_bound", False)),
+        )
+        url = (url or "").strip() or (
+            (offer_effective_link(offer) or "").strip() if offer else ""
+        )
+        if offer:
+            mail.resolved_offer_id = int(offer.id)
+            mail.mailing_bound = True
+            if url:
+                mail.ad_url = url
+            pt = (snap.get("product_title") or "").strip()
+            if pt:
+                mail.product_title = pt[:500]
+            pr = (snap.get("offer_price") or "").strip()
+            if pr:
+                mail.offer_price = pr[:64]
+            ph = (snap.get("photo_url") or "").strip()
+            if ph:
+                mail.photo_url = ph[:2000]
+            sl = (snap.get("service_label") or "").strip()
+            if sl:
+                mail.service_label = sl[:64]
+            await session.flush()
 
         if not offer:
             subj_hint = (subj_mail or "").strip() or (

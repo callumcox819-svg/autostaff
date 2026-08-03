@@ -47,7 +47,7 @@
 
 `From` = email из `OfferEmail` после валидации → `resolved_offer_id`, в карточке **Лот / Товар / Цена / Сервис**, тема карточки = **item_title**. Заголовок «Получено…» = **Gnimor (имя рассылки)**. Фото — только на **первое** входящее по этому лоту; повторные письма — те же данные + «Создать ссылку».
 
-Код: `services/incoming_validated_offer.py`, привязка в `incoming_mail_worker.py`.
+Код: `services/incoming_validated_offer.py`, **`services/incoming_lead_resolve.py`** (`resolve_offer_for_incoming_lead` — единая точка: OfferEmail + **MailingSendLog** + тема Re:), привязка в `incoming_mail_worker.py`. Кнопка «Создать ссылку» вызывает **тот же** резолвер.
 
 ---
 

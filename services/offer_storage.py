@@ -953,7 +953,11 @@ async def find_offer_for_mailed_seller_reply(
         return None
 
     if len(table) == 1:
-        return table[0]
+        from services.incoming_lead_resolve import inbound_thread_binds_offer
+
+        if inbound_thread_binds_offer(subj, body_text or "", table[0]):
+            return table[0]
+        return None
 
     pool = await inbound_seller_offer_pool(
         session, user_id=int(user_id), contact_email=contact, limit=20
@@ -962,7 +966,11 @@ async def find_offer_for_mailed_seller_reply(
     pool = bindable or pool
 
     if len(pool) == 1:
-        return pool[0]
+        from services.incoming_lead_resolve import inbound_thread_binds_offer
+
+        if inbound_thread_binds_offer(subj, body_text or "", pool[0]):
+            return pool[0]
+        return None
 
     if pool:
         for subj_try in subjects_for_inbound_resolve(subj, body_text or ""):

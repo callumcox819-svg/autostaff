@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from models import Offer
+from services.offer_matching import incoming_subject_binds_offer, subject_is_informative
 from services.offer_storage import (
     normalize_incoming_seller_email,
     offer_effective_link,
@@ -45,7 +46,6 @@ def inbound_thread_binds_offer(
     """Re:/цитата называют другой товар — не показываем лот только по OfferEmail."""
     if not offer:
         return False
-    from services.offer_matching import incoming_subject_binds_offer, subject_is_informative
     from services.subject_offer import inbound_subject_is_weak_for_bind, subjects_for_inbound_resolve
 
     saw_strong = False

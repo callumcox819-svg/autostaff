@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from sqlalchemy import delete as sa_delete, func, select as sa_select
 
-from models import Offer, SellerBlacklist
+from models import Offer, OfferEmail, SellerBlacklist
 from services.seller_name import normalize_seller_name, seller_name_from_item
 
 
@@ -92,6 +92,28 @@ async def add_seller_name_blacklist(
     )
     await session.flush()
     return True
+
+
+async def load_seller_keys_with_validated_email(session, user_id: int) -> set[str]:
+    """Имена продавцов, у которых уже есть OfferEmail — повторно не гоняем API."""
+    keys: set[str] = set()
+    rows = (
+        await session.execute(
+            sa_select(Offer.person_name, Offer.raw_json)
+            .join(OfferEmail, OfferEmail.offer_id == Offer.id)
+            .where(Offer.user_id == int(user_id))
+        )
+    ).all()
+    for pname, raw_json in rows:
+        key = seller_name_key(str(pname or ""))
+        if not key and raw_json:
+            from services.offer_storage import parse_offer_raw
+
+            raw = parse_offer_raw(raw_json)
+            key = seller_name_key_from_item(raw if isinstance(raw, dict) else {})
+        if key:
+            keys.add(key)
+    return keys
 
 
 async def add_seller_name_blacklist_bulk(

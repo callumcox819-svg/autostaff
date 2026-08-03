@@ -65,9 +65,10 @@ async def resolve_inbound_by_validated_email(
     body_text: str = "",
 ) -> tuple[Offer | None, str]:
     """
-    From = validated email продавца → Offer из OfferEmail.
-    Несколько лотов на один email — только если тема Re: однозначно указывает лот (шаг 3).
+    From = validated email → ровно один OfferEmail на этот адрес у user.
+    Дубликаты в БД — не угадываем (чинится на валидации).
     """
+    del subject, body_text
     contact = normalize_incoming_seller_email(seller_email) or (seller_email or "").strip().lower()
     if not contact:
         return None, ""
@@ -77,17 +78,4 @@ async def resolve_inbound_by_validated_email(
     )
     if len(hits) == 1:
         return hits[0], "validated_email_one_lot"
-
-    if len(hits) > 1:
-        from services.offer_storage import _pick_offer_from_inbound_subjects
-
-        pick = _pick_offer_from_inbound_subjects(
-            hits,
-            subject=(subject or "").strip(),
-            body_text=(body_text or "").strip(),
-        )
-        if pick:
-            return pick, "validated_email_subject_pick"
-        return None, ""
-
     return None, ""

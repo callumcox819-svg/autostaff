@@ -584,7 +584,10 @@ async def _run_validation_pipeline_inner(
 
     async with Session() as session:
         user_bl = await get_or_create_user(session, tg_id)
-        from services.seller_blacklist import load_seller_name_keys
+        from services.seller_blacklist import (
+            load_seller_keys_with_validated_email,
+            load_seller_name_keys,
+        )
 
         append_active = await is_user_mailing_active(tg_id)
         name_keys = await load_seller_name_keys(
@@ -592,6 +595,7 @@ async def _run_validation_pipeline_inner(
             int(user_bl.id),
             include_offer_names=bool(append_active),
         )
+        name_keys |= await load_seller_keys_with_validated_email(session, int(user_bl.id))
 
     from services.validemail_keys import validation_traffic_mode
 

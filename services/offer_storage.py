@@ -531,6 +531,23 @@ def _seller_email_matches(stored: str, contact_email: str) -> bool:
     return canon_seller_email(s) == want
 
 
+async def load_user_validated_email_keys(session, user_id: int) -> set[str]:
+    """Канонические email из OfferEmail — один адрес = один лот на user."""
+    rows = (
+        await session.execute(
+            sa_select(OfferEmail.email)
+            .join(Offer, Offer.id == OfferEmail.offer_id)
+            .where(Offer.user_id == int(user_id))
+        )
+    ).all()
+    out: set[str] = set()
+    for (em,) in rows:
+        c = normalize_incoming_seller_email(str(em or ""))
+        if c:
+            out.add(c)
+    return out
+
+
 async def strip_validated_email_from_other_offers(
     session,
     *,
@@ -1216,6 +1233,11 @@ async def save_all_offers_from_import(
     """
     vindex = index_validated_rows(validated_rows)
     skip_q = {e.strip().lower() for e in (skip_queue_emails or set()) if e and str(e).strip()}
+    reserved_emails = await load_user_validated_email_keys(session, int(user_id))
+    for e in skip_q:
+        c = normalize_incoming_seller_email(e) or e
+        if c:
+            reserved_emails.add(c)
     offers_saved = 0
     offers_with_email = 0
     email_rows_saved = 0
@@ -1264,6 +1286,9 @@ async def save_all_offers_from_import(
         )
         if not picked:
             continue
+        canon = normalize_incoming_seller_email(picked[0]) or picked[0].strip().lower()
+        if canon in reserved_emails:
+            continue
 
         payload = dict(it)
         payload.setdefault(
@@ -1308,6 +1333,9 @@ async def save_all_offers_from_import(
 
     for (offer, queued), payload in zip(offer_batch, output_rows):
         for em in queued:
+            canon = normalize_incoming_seller_email(em) or em.strip().lower()
+            if canon in reserved_emails:
+                continue
             await strip_validated_email_from_other_offers(
                 session,
                 user_id=int(user_id),
@@ -1315,6 +1343,7 @@ async def save_all_offers_from_import(
                 email=em,
             )
             session.add(OfferEmail(offer_id=int(offer.id), email=em))
+            reserved_emails.add(canon)
             email_rows_saved += 1
         payload["offer_id"] = int(offer.id)
 

@@ -147,6 +147,7 @@ async def force_bind_incoming_seller_offer(
         bindable_offers_for_mailing_recipient,
         find_latest_mailed_offer_for_recipient,
         find_offer_from_mailing_log,
+        find_offer_from_send_log_by_product_context,
         has_mailing_send_for_contact,
         list_allowed_offers_for_incoming_contact,
         list_offers_from_mailing_log,
@@ -197,6 +198,17 @@ async def force_bind_incoming_seller_offer(
         if off:
             link = (offer_effective_link(off) or "").strip()
             return off, link, "mailing_log_force", _snapshot_from_mailed_offer(off)
+
+    off_ctx, how_ctx = await find_offer_from_send_log_by_product_context(
+        session,
+        int(user_id),
+        subject=(subject or "").strip(),
+        body_text=(body_text or "").strip(),
+        from_email=contact,
+    )
+    if off_ctx:
+        link = (offer_effective_link(off_ctx) or "").strip()
+        return off_ctx, link, how_ctx or "send_log_product_context", _snapshot_from_mailed_offer(off_ctx)
 
     validated = await list_offers_for_validated_contact_email(
         session, user_id=int(user_id), contact_email=contact, limit=12

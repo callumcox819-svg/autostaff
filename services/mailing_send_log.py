@@ -26,6 +26,96 @@ def _canon_recipient(email: str) -> str:
     return canon_seller_email((email or "").strip())
 
 
+_YAHOO_DOMAINS = frozenset({"yahoo.com", "yahoo.de", "ymail.com", "rocketmail.com"})
+
+
+def seller_emails_equivalent(a: str, b: str) -> bool:
+    """Один продавец: переадресация yahoo.de → yahoo.com и т.п."""
+    ca = _canon_recipient(a)
+    cb = _canon_recipient(b)
+    if not ca or not cb:
+        return False
+    if ca == cb:
+        return True
+    if "@" not in ca or "@" not in cb:
+        return False
+    la, da = ca.split("@", 1)
+    lb, db = cb.split("@", 1)
+    if la != lb:
+        return False
+    return da in _YAHOO_DOMAINS and db in _YAHOO_DOMAINS
+
+
+async def find_offer_from_send_log_by_product_context(
+    session,
+    user_id: int,
+    *,
+    subject: str,
+    body_text: str = "",
+    from_email: str = "",
+) -> tuple[Offer | None, str]:
+    """
+    Переадресация: Reply с другого @, но OFFER в теме/цитате = тема /send в журнале.
+    """
+    from services.offer_matching import _offer_title_matches_needle
+    from services.subject_offer import subjects_for_inbound_resolve
+
+    contact = _canon_recipient(from_email)
+    local_in = contact.split("@", 1)[0] if "@" in contact else ""
+
+    best: tuple[float, Offer, str] | None = None
+
+    for subj_try in subjects_for_inbound_resolve(subject or "", body_text or ""):
+        needle = (product_title_from_subject(subj_try) or "").strip().lower()
+        if len(needle) < 4:
+            continue
+        logs = (
+            await session.execute(
+                select(MailingSendLog)
+                .where(MailingSendLog.user_id == int(user_id))
+                .order_by(MailingSendLog.sent_at.desc(), MailingSendLog.id.desc())
+                .limit(600)
+            )
+        ).scalars().all()
+        for log in logs:
+            off = await _offer_for_mailing_log_row(
+                session, int(user_id), log, contact_email=contact or from_email
+            )
+            if not off:
+                continue
+            sent_subj = (log.mail_subject or "").strip()
+            sent_needle = (product_title_from_subject(sent_subj) or sent_subj).strip().lower()
+            title = (offer_effective_title(off) or "").strip().lower()
+            match = False
+            if sent_needle and (
+                needle == sent_needle
+                or needle in sent_needle
+                or sent_needle in needle
+                or _offer_title_matches_needle(needle, sent_needle)
+            ):
+                match = True
+            if not match and title and _offer_title_matches_needle(needle, title):
+                match = True
+            if not match and sent_subj and incoming_subject_binds_offer(subj_try, off):
+                match = True
+            if not match:
+                continue
+            rcpt = (log.recipient_email or "").strip()
+            score = subject_match_score(subj_try, off) if subj_try else 0.0
+            if contact and rcpt and (
+                _canon_recipient(rcpt) == contact or seller_emails_equivalent(rcpt, contact)
+            ):
+                score += 200.0
+            elif local_in and rcpt.split("@", 1)[0].lower() == local_in.lower():
+                score += 120.0
+            if best is None or score > best[0]:
+                best = (score, off, "send_log_product_context")
+
+    if best and best[1]:
+        return best[1], best[2]
+    return None, ""
+
+
 async def _offer_for_mailing_log_row(
     session,
     user_id: int,
@@ -180,7 +270,8 @@ async def _mailing_log_rows_for_recipient(
     out: list[tuple[MailingSendLog, Offer]] = []
     seen_log: set[int] = set()
     for log in broad_logs:
-        if _canon_recipient(log.recipient_email or "") != email:
+        rcpt = log.recipient_email or ""
+        if _canon_recipient(rcpt) != email and not seller_emails_equivalent(rcpt, contact_email):
             continue
         lid = int(log.id)
         if lid in seen_log:
@@ -347,7 +438,10 @@ async def has_mailing_send_for_contact(
             .limit(200)
         )
     ).scalars().all()
-    return any(_canon_recipient(r or "") == email for r in broad)
+    return any(
+        _canon_recipient(r or "") == email or seller_emails_equivalent(r or "", contact_email)
+        for r in broad
+    )
 
 
 async def bindable_offers_for_mailing_recipient(

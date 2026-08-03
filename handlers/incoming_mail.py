@@ -943,16 +943,27 @@ async def _bound_offer_from_incoming_mail(
     uid = int(user_id)
     owner_id = int(getattr(mail, "user_id", 0) or 0)
     oid = getattr(mail, "resolved_offer_id", None)
+    subj_check = (getattr(mail, "subject", "") or "").strip()
     if oid:
         for uid_try in (uid, owner_id):
             if not uid_try:
                 continue
             off = await _load_offer(session, user_id=int(uid_try), offer_id=int(oid))
             if off:
-                url = (offer_effective_link(off) or "").strip()
-                if not url:
-                    url = (getattr(mail, "ad_url", "") or "").strip()
-                return off, url
+                from services.offer_matching import incoming_subject_binds_offer
+                from services.subject_offer import offer_title_from_inbound_subject
+
+                cur_offer = (offer_title_from_inbound_subject(subj_check) or "").strip()
+                stale = (
+                    cur_offer
+                    and len(cur_offer) >= 4
+                    and not incoming_subject_binds_offer(subj_check, off)
+                )
+                if not stale:
+                    url = (offer_effective_link(off) or "").strip()
+                    if not url:
+                        url = (getattr(mail, "ad_url", "") or "").strip()
+                    return off, url
 
     from services.offer_storage import find_offer_for_mailed_seller_reply, normalize_incoming_seller_email
 

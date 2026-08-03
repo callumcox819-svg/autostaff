@@ -237,8 +237,8 @@ class FiMailedSellerReplyTests(unittest.IsolatedAsyncioTestCase):
             "services.mailing_send_log.has_mailing_send_for_contact",
             new=AsyncMock(return_value=True),
         ), patch(
-            "services.mailing_send_log.resolve_primary_mailed_offer",
-            new=AsyncMock(return_value=gewinde),
+            "services.mailing_send_log.resolve_fi_inbound_offer",
+            new=AsyncMock(return_value=(gewinde, "mailing_log_subject")),
         ):
             off = await find_offer_for_mailed_seller_reply(
                 session,

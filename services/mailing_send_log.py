@@ -511,7 +511,8 @@ async def resolve_primary_mailed_offer(
         )
         if off:
             return off
-        return offers[0]
+        # FI: не угадывать offers[0] — другой пресет темы / другой лот на тот же email.
+        return None
     off, _link, _subj, _how = await resolve_inbound_from_send_log(
         session,
         user_id=int(user_id),
@@ -728,6 +729,58 @@ async def _recover_mailing_log_rows(
     return out
 
 
+async def resolve_fi_inbound_offer(
+    session,
+    user_id: int,
+    contact_email: str,
+    *,
+    subject: str = "",
+    body_text: str = "",
+    inbox_email: str = "",
+) -> tuple[Offer | None, str]:
+    """
+    FI WORKING: лот = строка журнала /send, где OFFER (из любого пресета темы)
+    совпадает с Re:/Aw: или цитатой входящего. Не «первый лот на email».
+    """
+    from services.subject_offer import subjects_for_inbound_resolve
+
+    contact = (contact_email or "").strip()
+    if not contact:
+        return None, ""
+
+    for subj_try in subjects_for_inbound_resolve(subject or "", body_text or ""):
+        off, how = await find_offer_from_mailing_log(
+            session, int(user_id), contact, subj_try
+        )
+        if off:
+            return off, how or "mailing_log_subject"
+
+    off_ctx, how_ctx = await find_offer_from_send_log_by_product_context(
+        session,
+        int(user_id),
+        subject=subject or "",
+        body_text=body_text or "",
+        from_email=contact,
+    )
+    if off_ctx:
+        return off_ctx, how_ctx
+
+    off, _link, _subj, how = await resolve_inbound_from_send_log(
+        session,
+        user_id=int(user_id),
+        contact_email=contact,
+        inbox_email=(inbox_email or "").strip(),
+        subject=subject or "",
+    )
+    if off:
+        return off, how or "mailing_send_log"
+
+    offers = await bindable_offers_for_mailing_recipient(session, int(user_id), contact)
+    if len(offers) == 1:
+        return offers[0], "mailing_single_recipient"
+    return None, ""
+
+
 async def find_offer_from_mailing_log(
     session,
     user_id: int,
@@ -832,7 +885,7 @@ async def find_offer_from_mailing_log(
     off_latest = await find_latest_mailed_offer_for_recipient(
         session, int(user_id), contact_email
     )
-    if off_latest:
+    if off_latest and len(unique_ids) <= 1:
         return off_latest, "mailing_latest_fallback"
 
     return None, ""

@@ -891,14 +891,15 @@ async def find_offer_for_mailed_seller_reply(
 
     has_send = await has_mailing_send_for_contact(session, int(user_id), contact)
     if has_send:
-        from services.mailing_send_log import resolve_primary_mailed_offer
+        from services.mailing_send_log import resolve_fi_inbound_offer
 
-        prim = await resolve_primary_mailed_offer(
+        prim, _how_fi = await resolve_fi_inbound_offer(
             session,
             int(user_id),
             contact,
-            inbox_email=(inbox_email or "").strip(),
             subject=subj,
+            body_text=body_text or "",
+            inbox_email=(inbox_email or "").strip(),
         )
         if prim:
             return prim

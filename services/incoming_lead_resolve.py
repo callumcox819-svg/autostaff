@@ -305,16 +305,20 @@ async def resolve_offer_for_incoming_lead(
         pinned_offer_id=pinned,
     )
 
-    if not off and has_send and (subject or "").strip():
-        off, how = await find_offer_from_mailing_log(
-            session,
-            int(user_id),
-            contact_email,
-            subject or "",
-        )
-        if off:
-            link = (offer_effective_link(off) or "").strip()
-            how = how or "mailing_subject"
+    if not off and has_send and (subject or body_text):
+        from services.subject_offer import subjects_for_inbound_resolve
+
+        for subj_try in subjects_for_inbound_resolve(subject or "", body_text or ""):
+            off, how = await find_offer_from_mailing_log(
+                session,
+                int(user_id),
+                contact_email,
+                subj_try,
+            )
+            if off:
+                link = (offer_effective_link(off) or "").strip()
+                how = how or "mailing_subject"
+                break
 
     if not off and has_send:
         off, link, _out_subj, how = await resolve_inbound_from_send_log(

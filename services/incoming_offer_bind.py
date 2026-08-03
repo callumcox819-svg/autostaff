@@ -102,6 +102,21 @@ async def force_bind_incoming_seller_offer(
     if not contact:
         return None, "", "", empty_snap
 
+    from services.mailing_send_log import has_mailing_send_for_contact, resolve_fi_inbound_offer
+
+    if await has_mailing_send_for_contact(session, int(user_id), contact):
+        off_fi, how_fi = await resolve_fi_inbound_offer(
+            session,
+            int(user_id),
+            contact,
+            subject=(subject or "").strip(),
+            body_text=(body_text or "").strip(),
+            inbox_email=(inbox_email or "").strip(),
+        )
+        if off_fi:
+            link = (offer_effective_link(off_fi) or "").strip()
+            return off_fi, link, how_fi or "fi_inbound_send_log", _snapshot_from_mailed_offer(off_fi)
+
     off, link, how, snap = await resolve_offer_for_incoming_lead(
         session,
         user_id=int(user_id),
@@ -128,8 +143,19 @@ async def force_bind_incoming_seller_offer(
         exclude_mail_id=exclude_mail_id,
     )
     if off:
-        link = (offer_effective_link(off) or "").strip()
-        return off, link, "prior_inbound_mail", _snapshot_from_mailed_offer(off)
+        from services.offer_matching import incoming_subject_binds_offer
+        from services.subject_offer import offer_title_from_inbound_subject
+
+        cur_offer = (offer_title_from_inbound_subject(subject or "") or "").strip()
+        if (
+            cur_offer
+            and len(cur_offer) >= 4
+            and not incoming_subject_binds_offer(subject or "", off)
+        ):
+            off = None
+        else:
+            link = (offer_effective_link(off) or "").strip()
+            return off, link, "prior_inbound_mail", _snapshot_from_mailed_offer(off)
 
     off = await find_offer_for_mailed_seller_reply(
         session,
@@ -145,7 +171,6 @@ async def force_bind_incoming_seller_offer(
 
     from services.mailing_send_log import (
         bindable_offers_for_mailing_recipient,
-        find_latest_mailed_offer_for_recipient,
         find_offer_from_mailing_log,
         find_offer_from_send_log_by_product_context,
         has_mailing_send_for_contact,
@@ -168,33 +193,23 @@ async def force_bind_incoming_seller_offer(
             if pick:
                 off = pick
             else:
-                off, _how_ml = await find_offer_from_mailing_log(
-                    session,
-                    int(user_id),
-                    contact,
-                    subject or "",
-                )
-                if not off:
-                    from services.subject_offer import subjects_for_inbound_resolve
+                from services.subject_offer import subjects_for_inbound_resolve
 
-                    for subj_try in subjects_for_inbound_resolve(subject or "", body_text or ""):
-                        off, _ = await find_offer_from_mailing_log(
-                            session, int(user_id), contact, subj_try
-                        )
-                        if off:
-                            break
-                if not off:
-                    off = await find_latest_mailed_offer_for_recipient(
-                        session, int(user_id), contact
+                off = None
+                for subj_try in subjects_for_inbound_resolve(subject or "", body_text or ""):
+                    off, _ = await find_offer_from_mailing_log(
+                        session, int(user_id), contact, subj_try
                     )
+                    if off:
+                        break
         else:
             bound = await bindable_offers_for_mailing_recipient(
                 session, int(user_id), contact
             )
             if len(bound) == 1:
                 off = bound[0]
-            elif bound:
-                off = bound[0]
+            else:
+                off = None
         if off:
             link = (offer_effective_link(off) or "").strip()
             return off, link, "mailing_log_force", _snapshot_from_mailed_offer(off)

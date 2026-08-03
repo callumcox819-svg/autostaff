@@ -8,6 +8,7 @@ from services.offer_matching import (
     _pick_offer_by_subject_in_list,
     gag_link_title_from_mail,
     incoming_subject_binds_offer,
+    is_seller_reply_subject,
     offer_display_title,
     product_title_from_subject,
     subject_match_score,
@@ -195,7 +196,11 @@ class OfferSubjectMatchTests(unittest.TestCase):
         subs = subjects_for_inbound_resolve("AW: Kärcher …", body)
         self.assertTrue(any("Kärcher Akku-Staubsauger" in s for s in subs))
 
-    def test_incoming_subject_binds_rejects_unrelated_lot(self):
+    def test_bracket_re_subject_is_reply(self):
+        subj = "[ Re: Nerf Magazin ]"
+        self.assertTrue(is_seller_reply_subject(subj))
+        self.assertEqual(product_title_from_subject(subj).lower(), "nerf magazin")
+
         book = SimpleNamespace(
             title="Neu erschienen: Tödlicher Rheinfall | Gabriela Kasperski",
             raw_json=None,

@@ -37,6 +37,67 @@ def _snapshot_from_mailed_offer(
     }
 
 
+def inbound_thread_binds_offer(
+    subject: str,
+    body_text: str,
+    offer: Offer | None,
+) -> bool:
+    """Re:/цитата называют другой товар — не показываем лот только по OfferEmail."""
+    if not offer:
+        return False
+    from services.offer_matching import incoming_subject_binds_offer, subject_is_informative
+    from services.subject_offer import inbound_subject_is_weak_for_bind, subjects_for_inbound_resolve
+
+    saw_strong = False
+    for subj_try in subjects_for_inbound_resolve(subject or "", body_text or ""):
+        if inbound_subject_is_weak_for_bind(subj_try):
+            continue
+        if not subject_is_informative(subj_try):
+            continue
+        saw_strong = True
+        if incoming_subject_binds_offer(subj_try, offer):
+            return True
+    if not saw_strong:
+        return True
+    return False
+
+
+async def _resolve_offer_from_mailing_thread(
+    session,
+    *,
+    user_id: int,
+    contact_email: str,
+    subject: str,
+    body_text: str,
+    inbox_email: str | None,
+) -> tuple[Offer | None, str]:
+    from services.mailing_send_log import resolve_fi_inbound_offer
+
+    off, how = await resolve_fi_inbound_offer(
+        session,
+        int(user_id),
+        contact_email,
+        subject=(subject or "").strip(),
+        body_text=(body_text or "").strip(),
+        inbox_email=(inbox_email or "").strip(),
+    )
+    if off and inbound_thread_binds_offer(subject, body_text, off):
+        return off, how or "mailing_log_subject"
+    return None, ""
+
+
+def _finish_lead(
+    off: Offer,
+    how: str,
+    *,
+    outgoing_mail_subject: str = "",
+) -> tuple[Offer, str, str, dict]:
+    link = (offer_effective_link(off) or "").strip()
+    snap = _snapshot_from_mailed_offer(off, outgoing_mail_subject=outgoing_mail_subject)
+    snap["mailing_bound"] = True
+    return off, link, how, snap
+
+
 async def is_incoming_seller_lead(
     session,
     user_id: int,
@@ -143,11 +204,19 @@ async def resolve_offer_for_incoming_lead(
         off = await _load_offer(
             session, user_id=int(user_id), offer_id=int(resolved_offer_id)
         )
-        if off:
-            link = (offer_effective_link(off) or "").strip()
-            snap = _snapshot_from_mailed_offer(off)
-            snap["mailing_bound"] = True
-            return off, link, "stored_offer_id", snap
+        if off and inbound_thread_binds_offer(subject, body_text, off):
+            return _finish_lead(off, "stored_offer_id")
+
+    off_mail, how_mail = await _resolve_offer_from_mailing_thread(
+        session,
+        user_id=int(user_id),
+        contact_email=contact_email,
+        subject=subject,
+        body_text=body_text,
+        inbox_email=inbox_email,
+    )
+    if off_mail:
+        return _finish_lead(off_mail, how_mail)
 
     from services.incoming_validated_offer import resolve_inbound_by_validated_email
 
@@ -158,11 +227,8 @@ async def resolve_offer_for_incoming_lead(
         subject=(subject or "").strip(),
         body_text=(body_text or "").strip(),
     )
-    if off:
-        link = (offer_effective_link(off) or "").strip()
-        snap = _snapshot_from_mailed_offer(off)
-        snap["mailing_bound"] = True
-        return off, link, how or "validated_email", snap
+    if off and inbound_thread_binds_offer(subject, body_text, off):
+        return _finish_lead(off, how or "validated_email")
 
     prior_oid = await prior_resolved_offer_id_for_seller(
         session,
@@ -175,10 +241,20 @@ async def resolve_offer_for_incoming_lead(
         off_p = await _load_offer(
             session, user_id=int(user_id), offer_id=int(prior_oid)
         )
-        if off_p:
-            link = (offer_effective_link(off_p) or "").strip()
-            snap = _snapshot_from_mailed_offer(off_p)
-            snap["mailing_bound"] = True
-            return off_p, link, "prior_inbound_same_seller", snap
+        if off_p and inbound_thread_binds_offer(subject, body_text, off_p):
+            return _finish_lead(off_p, "prior_inbound_same_seller")
+
+    from services.offer_storage import find_offer_for_mailed_seller_reply
+
+    off_fb = await find_offer_for_mailed_seller_reply(
+        session,
+        user_id=int(user_id),
+        contact_email=contact_email,
+        subject=(subject or "").strip(),
+        body_text=(body_text or "").strip(),
+        inbox_email=(inbox_email or "").strip(),
+    )
+    if off_fb and inbound_thread_binds_offer(subject, body_text, off_fb):
+        return _finish_lead(off_fb, "mailed_seller_reply")
 
     return None, "", "", empty_snap

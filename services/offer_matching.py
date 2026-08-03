@@ -27,6 +27,12 @@ _SUBJECT_EDGE_QUOTES_RE = re.compile(r'^["\'\s]+|["\'\s]+$', re.UNICODE)
 
 def _strip_subject_edges(s: str) -> str:
     t = (s or "").strip()
+    for _ in range(2):
+        n = re.sub(r"^\[\s*", "", t)
+        n = re.sub(r"\s*\]\s*$", "", n).strip()
+        if n == t:
+            break
+        t = n
     for _ in range(3):
         n = _SUBJECT_EDGE_QUOTES_RE.sub("", t).strip()
         if n == t:
@@ -53,7 +59,11 @@ def product_title_from_subject(subject: str) -> str:
 
     extracted = offer_title_from_inbound_subject(subject)
     if extracted:
-        return extracted
+        norm_x = _norm_subject(extracted)
+        if len(norm_x) >= 4:
+            return norm_x
+        if len(extracted) >= 4 and "[" not in extracted:
+            return extracted
 
     subj = _norm_subject(subject)
     subj = re.sub(
@@ -692,7 +702,8 @@ async def resolve_offer_for_incoming(
 
 def is_seller_reply_subject(subject: str) -> bool:
     """Ответ продавца на рассылку (Re:/Aw: в теме)."""
-    return bool(re.match(r"^\s*(re|aw)\s*:", (subject or "").strip(), re.I))
+    s = _strip_subject_edges((subject or "").strip())
+    return bool(re.match(r"^\s*(re|aw)\s*:", s, re.I))
 
 
 def subject_is_informative(subject: str) -> bool:

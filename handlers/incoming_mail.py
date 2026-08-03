@@ -951,12 +951,18 @@ async def _bound_offer_from_incoming_mail(
     uid = int(user_id)
     owner_id = int(getattr(mail, "user_id", 0) or 0)
     oid = getattr(mail, "resolved_offer_id", None)
+    subj = (getattr(mail, "subject", "") or "").strip()
+    body = (getattr(mail, "body", "") or "").strip()
     if oid:
         for uid_try in (owner_id, uid):
             if not uid_try:
                 continue
             off = await _load_offer(session, user_id=int(uid_try), offer_id=int(oid))
             if off:
+                from services.incoming_lead_resolve import inbound_thread_binds_offer
+
+                if not inbound_thread_binds_offer(subj, body, off):
+                    break
                 url = (offer_effective_link(off) or "").strip()
                 if not url:
                     url = (getattr(mail, "ad_url", "") or "").strip()
@@ -966,37 +972,22 @@ async def _bound_offer_from_incoming_mail(
         getattr(mail, "from_email", "") or ""
     ).strip()
     if contact and owner_id:
-        from services.incoming_validated_offer import resolve_inbound_by_validated_email
+        from services.incoming_lead_resolve import resolve_offer_for_incoming_lead
 
-        off_v, _ = await resolve_inbound_by_validated_email(
-            session,
-            int(owner_id),
-            contact,
-            subject=(getattr(mail, "subject", "") or "").strip(),
-            body_text=(getattr(mail, "body", "") or "").strip(),
-        )
-        if off_v:
-            url = (offer_effective_link(off_v) or "").strip() or (
-                getattr(mail, "ad_url", "") or ""
-            ).strip()
-            return off_v, url
-
-    if contact and owner_id:
-        from services.incoming_lead_resolve import prior_resolved_offer_id_for_seller
-
-        prior_oid = await prior_resolved_offer_id_for_seller(
+        off_r, url_r, _how, _snap = await resolve_offer_for_incoming_lead(
             session,
             user_id=int(owner_id),
             contact_email=contact,
-            exclude_mail_id=int(getattr(mail, "id", 0) or 0) or None,
+            subject=subj,
+            body_text=body,
+            inbox_email=(getattr(mail, "account_email", "") or "").strip() or None,
+            resolved_offer_id=None,
         )
-        if prior_oid:
-            off = await _load_offer(session, user_id=int(owner_id), offer_id=int(prior_oid))
-            if off:
-                url = (offer_effective_link(off) or "").strip() or (
-                    getattr(mail, "ad_url", "") or ""
-                ).strip()
-                return off, url
+        if off_r:
+            url = (url_r or offer_effective_link(off_r) or "").strip() or (
+                getattr(mail, "ad_url", "") or ""
+            ).strip()
+            return off_r, url
 
     if contact and owner_id:
         from services.mailing_send_log import has_mailing_send_for_contact

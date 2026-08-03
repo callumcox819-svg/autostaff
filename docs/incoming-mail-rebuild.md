@@ -51,13 +51,15 @@
 
 ---
 
-## Шаг 3 — тема Re: = товар (план)
+## Шаг 3 — тема Re: = товар (**частично**)
 
 Несколько лотов на один seller email:
 
 - из темы (`Re: … OFFER …`) достаём название (те же пресеты, что `/send`),
-- ищем лот **только** среди лотов этого продавца (validated + journal),
-- совпадение по title / sent subject, без подстрок типа `nes` в `hemnes`.
+- если validated `OfferEmail` указывает на **другой** title — берём лот из **журнала `/send`** по теме/цитате,
+- иначе не подставляем «единственный validated» лот (GTA vs Arbeitsleuchte).
+
+Код: `inbound_thread_binds_offer`, `resolve_offer_for_incoming_lead` (mailing log **до** blind validated).
 
 ---
 

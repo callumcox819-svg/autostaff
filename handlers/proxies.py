@@ -30,7 +30,7 @@ from services.proxy_verify import (
     test_proxy_for_add,
     refresh_proxies_status,
 )
-from proxy_manager import normalize_proxy_type
+from services.residential_proxy import is_residential_gateway_host
 from utils.bg_jobs import is_running as bg_is_running, start as bg_start
 from utils.ui_emoji import html_emoji, inline_button, icon_button, menu_path, msg_fail, msg_ok, msg_wait, msg_warn, toast
 
@@ -589,7 +589,8 @@ async def proxy_add_menu(callback: CallbackQuery, state: FSMContext):
         "<code>8PlwM16nj5ZDjKnE:8PlwM16nj5ZDjKnE@185.90.61.65:14439</code>\n\n"
         "<b>Или так (карточкой):</b>\n"
         "<code>Тип прокси: http\nХост: 109.104.153.100\nПорт: 8080\nЛогин: user\nПароль: pass</code>\n\n"
-        "Каждый прокси: быстрая проверка туннеля (~5 с). Полный SMTP — кнопка «Проверить прокси».\n",
+        "Каждый прокси: туннель + SMTP-check (Gmail :587). "
+        "Loma/residential (<code>lomaproxy</code> и т.п.) — только туннель, 🟡.\n",
         parse_mode="HTML",
     )
 
@@ -711,9 +712,18 @@ async def _proxy_add_work(
                     continue
 
                 try:
-                    ok, info = await test_proxy_for_add(parsed)
+                    if is_residential_gateway_host(parsed.get("host") or ""):
+                        ok, info = await test_proxy_for_add(parsed, smtp=False)
+                    else:
+                        ok, info = await asyncio.wait_for(
+                            test_proxy(parsed, timeout=28, retries=1),
+                            timeout=95,
+                        )
                 except asyncio.TimeoutError:
-                    ok, info = await recover_tunnel_only_after_check_timeout(parsed)
+                    if is_residential_gateway_host(parsed.get("host") or ""):
+                        ok, info = await recover_tunnel_only_after_check_timeout(parsed)
+                    else:
+                        ok, info = False, "Timeout: проверка прокси заняла слишком долго"
                 except Exception as e:
                     ok, info = False, f"{type(e).__name__}: {e}"
 

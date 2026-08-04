@@ -27,7 +27,7 @@ PROXY_CHECK_RETRY_PAUSE_SEC = max(
     0.5, min(5.0, float(os.getenv("PROXY_CHECK_RETRY_PAUSE_SEC", "2")))
 )
 
-PROXY_ADD_SMTP_CHECK = (os.getenv("PROXY_ADD_SMTP_CHECK", "0") or "").strip().lower() in (
+PROXY_ADD_SMTP_CHECK = (os.getenv("PROXY_ADD_SMTP_CHECK", "1") or "").strip().lower() in (
     "1",
     "true",
     "yes",
@@ -211,7 +211,7 @@ async def test_proxy_for_add(
         return False, tunnel_info
 
     if not do_smtp:
-        return False, f"Туннель OK ({tunnel_info}) · без SMTP-check (быстро)"
+        return False, f"Туннель OK ({tunnel_info}) · residential: без Gmail SMTP-check"
 
     smtp_ok, smtp_info = await test_smtp_tunnel(proxy, timeout=max(20, int(smtp_timeout)))
     if not smtp_ok and ptype == "socks5" and check_error_worth_retry(smtp_info or ""):

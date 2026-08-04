@@ -24,14 +24,14 @@ MAIL_PROXY_PREFLIGHT_TIMEOUT = max(18, min(45, int(os.getenv("MAIL_PROXY_PREFLIG
 MAIL_FAST_PREFLIGHT_TIMEOUT = max(
     18, min(55, int(os.getenv("MAIL_FAST_PREFLIGHT_TIMEOUT", "42")))
 )
-MAIL_FAST_PREFLIGHT_SKIP = (os.getenv("MAIL_FAST_PREFLIGHT_SKIP", "1") or "").strip().lower() in (
+MAIL_FAST_PREFLIGHT_SKIP = (os.getenv("MAIL_FAST_PREFLIGHT_SKIP", "0") or "").strip().lower() in (
     "1",
     "true",
     "yes",
     "on",
 )
-# skip | tunnel | full — перед фаст-/send (по умолчанию skip: не ждать Gmail SMTP)
-MAIL_FAST_PREFLIGHT = (os.getenv("MAIL_FAST_PREFLIGHT", "skip") or "skip").strip().lower()
+# full | tunnel | skip — для обычных прокси перед фаст-/send (full по умолчанию)
+MAIL_FAST_PREFLIGHT = (os.getenv("MAIL_FAST_PREFLIGHT", "full") or "full").strip().lower()
 MAIL_PROXY_PREFLIGHT_CONCURRENCY = max(
     1, min(4, int(os.getenv("MAIL_PROXY_PREFLIGHT_CONCURRENCY", "2")))
 )
@@ -129,19 +129,21 @@ async def preflight_proxies_for_mailing(
                 ok, detail = mailing_may_start(summary, fast=fast)
                 return ok, summary, detail
 
-            if MAIL_FAST_PREFLIGHT_SKIP or MAIL_FAST_PREFLIGHT == "skip":
+            if MAIL_FAST_PREFLIGHT_SKIP:
                 ok, detail = mailing_may_start(summary, fast=fast)
                 if ok:
                     detail = (
                         summary.format_lines()
-                        + f"\n<i>{html_emoji('burst')} Фаст: без ожидания SMTP-check (Loma/residential).</i>"
+                        + f"\n<i>{html_emoji('burst')} Фаст: preflight пропущен (MAIL_FAST_PREFLIGHT_SKIP).</i>"
                     )
                 return ok, summary, detail
 
+            from services.residential_proxy import is_residential_gateway
             from services.smtp_proxy_send import pick_sticky_proxy_for_fast_mailing
             from services.proxy_verify import (
                 apply_proxy_check_to_row,
                 is_tunnel_only_smtp_check_failure,
+                test_proxy,
                 test_proxy_for_add,
                 test_proxy_tunnel_only,
             )
@@ -164,7 +166,38 @@ async def preflight_proxies_for_mailing(
                 ok, detail = mailing_may_start(summary, fast=fast)
                 return ok, summary, detail
 
-            if MAIL_FAST_PREFLIGHT == "tunnel":
+            residential = is_residential_gateway(px)
+            preflight_note = ""
+            if residential:
+                res_mode = (
+                    os.getenv("RESIDENTIAL_FAST_PREFLIGHT") or "tunnel"
+                ).strip().lower()
+                if res_mode == "skip":
+                    ok, detail = mailing_may_start(summary, fast=fast)
+                    if ok:
+                        detail = (
+                            summary.format_lines()
+                            + f"\n<i>{html_emoji('burst')} Loma/residential: preflight пропущен.</i>"
+                        )
+                    return ok, summary, detail
+                if res_mode == "tunnel":
+                    ok_px, info = await test_proxy_tunnel_only(px, timeout=12)
+                    tunnel_only = is_tunnel_only_smtp_check_failure(info or "")
+                    if not tunnel_only:
+                        apply_proxy_check_to_row(px, ok_px, info or "")
+                        await session.commit()
+                        summary = await summarize_proxy_health(session, db_user_id)
+                    preflight_note = "Loma/residential: проверен туннель (~5 с)"
+                else:
+                    ok_px, info = await test_proxy_for_add(
+                        px, smtp_timeout=MAIL_FAST_PREFLIGHT_TIMEOUT, smtp=True
+                    )
+                    apply_proxy_check_to_row(px, ok_px, info)
+                    await session.commit()
+                    summary = await summarize_proxy_health(session, db_user_id)
+                    tunnel_only = is_tunnel_only_smtp_check_failure(info or "")
+                    preflight_note = "Loma/residential: полный SMTP-check"
+            elif MAIL_FAST_PREFLIGHT == "tunnel":
                 ok_px, info = await test_proxy_tunnel_only(px, timeout=10)
                 tunnel_only = is_tunnel_only_smtp_check_failure(info or "")
                 if not tunnel_only:
@@ -173,28 +206,37 @@ async def preflight_proxies_for_mailing(
                     summary = await summarize_proxy_health(session, db_user_id)
                 else:
                     tunnel_only = True
+                preflight_note = "Проверен туннель"
             else:
-                ok_px, info = await test_proxy_for_add(
-                    px, smtp_timeout=MAIL_FAST_PREFLIGHT_TIMEOUT, smtp=True
+                ok_px, info = await test_proxy(
+                    px, timeout=MAIL_FAST_PREFLIGHT_TIMEOUT, retries=1
                 )
-                apply_proxy_check_to_row(px, ok_px, info)
+                apply_proxy_check_to_row(px, ok_px, info or "")
                 await session.commit()
                 summary = await summarize_proxy_health(session, db_user_id)
                 tunnel_only = is_tunnel_only_smtp_check_failure(info or "")
+                preflight_note = "SMTP+STARTTLS OK" if ok_px else "SMTP-check"
 
         else:
             summary = await run_proxy_health_check(session, db_user_id)
             tunnel_only = False
+            preflight_note = ""
 
     ok, detail = mailing_may_start(summary, fast=fast)
     if fast and not ok and tunnel_only:
         ok = True
         detail = (
             summary.format_lines()
-            + f"\n<i>{html_emoji('burst')} Фаст: туннель OK, SMTP-check к Gmail не прошёл — "
-            f"рассылка через этот прокси всё равно стартует.</i>"
+            + f"\n<i>{html_emoji('burst')} Фаст: туннель OK (Loma/residential), SMTP к Gmail не подтвердил — стартую.</i>"
         )
-    if fast and ok and not MAIL_FAST_PREFLIGHT_SKIP and sticky_proxy_id is not None:
+    if fast and ok and preflight_note and sticky_proxy_id is not None:
+        detail = (
+            summary.format_lines()
+            + f"\n<i>{html_emoji('burst')} Фаст: {preflight_note} · proxy id=<b>{sticky_proxy_id}</b></i>"
+        )
+    elif fast and ok and preflight_note:
+        detail = summary.format_lines() + f"\n<i>{html_emoji('burst')} Фаст: {preflight_note}</i>"
+    elif fast and ok and not MAIL_FAST_PREFLIGHT_SKIP and sticky_proxy_id is not None:
         detail = (
             summary.format_lines()
             + f"\n<i>{html_emoji('burst')} Фаст: проверен 1 ротирующий прокси (id=<b>{sticky_proxy_id}</b>), "

@@ -13,13 +13,17 @@ _RESIDENTIAL_HOST_MARKERS = tuple(
 )
 
 
-def is_residential_gateway(proxy: Proxy | None) -> bool:
-    if not proxy:
-        return False
-    h = (getattr(proxy, "host", None) or "").strip().lower()
+def is_residential_gateway_host(host: str | None) -> bool:
+    h = (host or "").strip().lower()
     if not h:
         return False
     return any(m in h for m in _RESIDENTIAL_HOST_MARKERS)
+
+
+def is_residential_gateway(proxy: Proxy | None) -> bool:
+    if not proxy:
+        return False
+    return is_residential_gateway_host(getattr(proxy, "host", None))
 
 
 def residential_smtp_timeout_sec() -> int:

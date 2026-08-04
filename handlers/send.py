@@ -304,7 +304,7 @@ async def _start_sending_inner(
     try:
         await _edit_status_text(
             status_msg,
-            f"{html_emoji('wait')} Запуск рассылки…",
+            f"{html_emoji('wait')} Проверяю прокси перед рассылкой…\n<i>~10–40 с (Loma — только туннель).</i>",
             parse_mode="HTML",
         )
     except Exception:

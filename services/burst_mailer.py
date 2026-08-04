@@ -20,8 +20,17 @@ from services.mailing_rotation import (
     pair_targets_with_accounts,
 )
 from services.mailing_send import send_mailing_one_parallel
+from services.residential_proxy import (
+    is_residential_gateway,
+    residential_burst_inflight,
+    residential_smtp_timeout_sec,
+)
 from services.sender import normalize_send_error
-from services.smtp_proxy_send import pick_sticky_proxy_for_fast_mailing
+from services.smtp_proxy_send import (
+    MAIL_FAST_SMTP_TIMEOUT_SEC,
+    pick_sticky_proxy_for_fast_mailing,
+)
+from services.mailing_send import MAIL_FAST_SEND_RETRIES
 
 logger = logging.getLogger(__name__)
 
@@ -29,12 +38,29 @@ BURST_SMTP_RETRIES = max(1, min(4, int(os.getenv("BURST_SMTP_RETRIES", "2"))))
 BURST_RETRY_PAUSE_SEC = max(
     0.0, min(1.0, float(os.getenv("BURST_RETRY_PAUSE_SEC", "0.06")))
 )
-BURST_PER_LETTER_TIMEOUT_SEC = max(
-    12, min(60, int(os.getenv("BURST_PER_LETTER_TIMEOUT_SEC", "24")))
-)
 BURST_MAX_INFLIGHT = max(
-    4, min(120, int(os.getenv("BURST_MAX_INFLIGHT", "36")))
+    4, min(120, int(os.getenv("BURST_MAX_INFLIGHT", "12")))
 )
+
+
+def burst_per_letter_timeout_sec(sticky_proxy=None) -> int:
+    """Должен быть ≥ SMTP×ретраи; иначе asyncio обрежет Loma на 24 с."""
+    raw_env = (os.getenv("BURST_PER_LETTER_TIMEOUT_SEC") or "").strip()
+    if raw_env.isdigit():
+        return max(30, min(240, int(raw_env)))
+    smtp_t = int(MAIL_FAST_SMTP_TIMEOUT_SEC)
+    if sticky_proxy is not None and is_residential_gateway(sticky_proxy):
+        smtp_t = max(smtp_t, residential_smtp_timeout_sec())
+    inner = smtp_t * max(1, MAIL_FAST_SEND_RETRIES)
+    outer = inner * BURST_SMTP_RETRIES + 20
+    return max(60, min(240, outer))
+
+
+def burst_wave_size_for_proxy(proxy, num_accounts: int) -> int:
+    cap = BURST_MAX_INFLIGHT
+    if is_residential_gateway(proxy):
+        cap = min(cap, residential_burst_inflight())
+    return max(1, min(int(num_accounts), cap))
 
 
 def shuffle_accounts(accounts: Sequence[EmailAccount]) -> List[EmailAccount]:
@@ -62,6 +88,7 @@ async def _send_one_with_retry(
     body: str,
     sender_name: str | None,
     sticky_proxy_id: int,
+    per_letter_timeout_sec: int,
 ) -> Tuple[bool, str]:
     last_err = ""
     for attempt in range(1, BURST_SMTP_RETRIES + 1):
@@ -78,14 +105,14 @@ async def _send_one_with_retry(
                         sender_name=sender_name,
                         sticky_proxy_id=sticky_proxy_id,
                     ),
-                    timeout=BURST_PER_LETTER_TIMEOUT_SEC,
+                    timeout=float(per_letter_timeout_sec),
                 )
             if ok:
                 return True, ""
             last_err = normalize_send_error(err)
         except asyncio.TimeoutError:
             last_err = normalize_send_error(
-                f"SMTP_TIMEOUT|timeout|exceeded {BURST_PER_LETTER_TIMEOUT_SEC}s"
+                f"SMTP_TIMEOUT|timeout|exceeded {per_letter_timeout_sec}s"
             )
         except Exception as ex:
             last_err = normalize_send_error(str(ex))
@@ -108,6 +135,7 @@ async def _send_pair(
     on_success: Callable[[OfferEmail, str, str], Awaitable[None]],
     on_failure: Callable[[OfferEmail, str, EmailAccount], Awaitable[bool]],
     start_delay_sec: float = 0.0,
+    per_letter_timeout_sec: int = 90,
 ) -> Tuple[int, int]:
     if start_delay_sec > 0:
         await asyncio.sleep(start_delay_sec)
@@ -124,6 +152,7 @@ async def _send_pair(
             body=body,
             sender_name=sender_name,
             sticky_proxy_id=sticky_proxy_id,
+            per_letter_timeout_sec=per_letter_timeout_sec,
         )
         if ok:
             await on_success(tgt, subject, (account.email or "").strip())
@@ -186,12 +215,22 @@ async def run_burst_mailing(
 
     sticky_proxy_id = int(sticky_px.id)
     acc_ordered = order_accounts_for_burst(list(accounts), last_sent=last_sent)
+    per_letter_tmo = burst_per_letter_timeout_sec(sticky_px)
+    wave_size = burst_wave_size_for_proxy(sticky_px, len(acc_ordered))
+    if is_residential_gateway(sticky_px):
+        logger.info(
+            "residential proxy %s:%s — wave=%s smtp_tmo~%ss letter_cap=%ss",
+            sticky_px.host,
+            sticky_px.port,
+            wave_size,
+            max(MAIL_FAST_SMTP_TIMEOUT_SEC, residential_smtp_timeout_sec()),
+            per_letter_tmo,
+        )
     pairs = pair_targets_with_accounts(targets, acc_ordered)
-    wave_size = max(1, min(len(acc_ordered), BURST_MAX_INFLIGHT))
     waves = split_into_waves(pairs, wave_size=wave_size)
     est_wave = min(
-        float(BURST_PER_LETTER_TIMEOUT_SEC) * 0.45,
-        8.0,
+        float(per_letter_tmo) * 0.45,
+        25.0,
     )
     wave_gap = burst_wave_gap_sec(len(waves), estimated_wave_sec=est_wave)
     stagger_s = inbox_stagger_ms() / 1000.0
@@ -216,6 +255,7 @@ async def run_burst_mailing(
                     on_success=on_success,
                     on_failure=on_failure,
                     start_delay_sec=(stagger_s * j) + random.uniform(0, stagger_s * 0.25),
+                    per_letter_timeout_sec=per_letter_tmo,
                 )
                 for j, (tgt, acc) in enumerate(wave)
             ],

@@ -56,8 +56,8 @@ def mailing_send_overall_timeout_sec(*, fast_mailing: bool = False) -> int:
         raw = per * retries + retries * MAIL_FAST_SEND_RETRY_PAUSE_SEC + 10
         fast_override = (os.getenv("SEND_ONE_TIMEOUT_FAST") or "").strip()
         if fast_override.isdigit():
-            return max(25, min(120, int(fast_override)))
-        return max(35, min(90, int(raw)))
+            return max(45, min(240, int(fast_override)))
+        return max(60, min(240, int(raw)))
 
     retries = MAIL_SEND_RETRIES
     proxy_tries = MAIL_SMTP_MAX_PROXIES

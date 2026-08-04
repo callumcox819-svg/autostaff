@@ -970,6 +970,14 @@ async def find_offer_for_mailed_seller_reply(
 
         if inbound_thread_binds_offer(subj, body_text or "", pool[0]):
             return pool[0]
+        off_t = await find_offer_by_product_title_in_subject(
+            session,
+            user_id=int(user_id),
+            subject=subj,
+            contact_email=contact,
+        )
+        if off_t:
+            return off_t
         return None
 
     if pool:
@@ -1023,6 +1031,18 @@ async def find_offer_for_mailed_seller_reply(
         )
         if off_out:
             return off_out
+
+    from services.offer_matching import subject_is_informative
+
+    if is_seller_reply_subject(subj) or subject_is_informative(subj):
+        off_any = await find_offer_by_product_title_in_subject(
+            session,
+            user_id=int(user_id),
+            subject=subj,
+            contact_email=contact,
+        )
+        if off_any:
+            return off_any
     return None
 
 

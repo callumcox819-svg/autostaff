@@ -257,4 +257,17 @@ async def resolve_offer_for_incoming_lead(
     if off_fb and inbound_thread_binds_offer(subject, body_text, off_fb):
         return _finish_lead(off_fb, "mailed_seller_reply")
 
+    from services.offer_matching import is_seller_reply_subject, subject_is_informative
+    from services.offer_storage import find_offer_by_product_title_in_subject
+
+    if is_seller_reply_subject(subject) or subject_is_informative(subject):
+        off_subj = await find_offer_by_product_title_in_subject(
+            session,
+            user_id=int(user_id),
+            subject=(subject or "").strip(),
+            contact_email=contact_email,
+        )
+        if off_subj and inbound_thread_binds_offer(subject, body_text, off_subj):
+            return _finish_lead(off_subj, "subject_title_db")
+
     return None, "", "", empty_snap

@@ -1553,6 +1553,108 @@ async def seller_offer_photo_sent_recently(
     return int(prior) > 0
 
 
+async def repair_unbound_inbound_telegram_card(
+    bot: Bot,
+    *,
+    chat_id: int,
+    mail_id: int,
+    inbox_label: str | None = None,
+) -> bool:
+    """
+    Письмо уже ушло в TG без лота (старый деплой / резолв без inbox_email) — пересобрать карточку.
+    """
+    try:
+        async with _imap_db_session() as session:
+            mail = (
+                await session.execute(
+                    sa_select(IncomingMail).where(IncomingMail.id == int(mail_id)).limit(1)
+                )
+            ).scalars().first()
+            if not mail:
+                return False
+            if getattr(mail, "resolved_offer_id", None):
+                return False
+            tid = getattr(mail, "telegram_message_id", None)
+            if not tid or int(tid) <= 0:
+                return False
+
+            from services.incoming_lead_resolve import resolve_offer_for_incoming_lead
+            from services.offer_storage import normalize_incoming_seller_email
+
+            contact = normalize_incoming_seller_email(getattr(mail, "from_email", "") or "") or (
+                getattr(mail, "from_email", "") or ""
+            ).strip()
+            off, listing_url, _how, snap = await resolve_offer_for_incoming_lead(
+                session,
+                user_id=int(mail.user_id),
+                contact_email=contact,
+                subject=(getattr(mail, "subject", "") or "").strip(),
+                from_name=(getattr(mail, "from_name", "") or "").strip(),
+                body_text=(getattr(mail, "body", "") or "").strip(),
+                inbox_email=(getattr(mail, "account_email", "") or "").strip() or None,
+                resolved_offer_id=None,
+            )
+            if off:
+                mail.resolved_offer_id = int(off.id)
+                mail.mailing_bound = True
+                if (listing_url or "").strip():
+                    mail.ad_url = listing_url.strip()
+                pt = (snap.get("product_title") or "").strip()
+                if pt:
+                    mail.product_title = pt[:500]
+                pr = (snap.get("offer_price") or "").strip()
+                if pr:
+                    mail.offer_price = pr[:64]
+                ph = (snap.get("photo_url") or "").strip()
+                if ph:
+                    mail.photo_url = ph[:2000]
+                sl = (snap.get("service_label") or "").strip()
+                if sl:
+                    mail.service_label = sl[:64]
+                await session.flush()
+
+            text, kb = await build_mail_card_from_mail(
+                session, mail, inbox_label=inbox_label
+            )
+            oid = getattr(mail, "resolved_offer_id", None)
+            photo_url = (getattr(mail, "photo_url", None) or "").strip()
+            product_title = (getattr(mail, "product_title", None) or "").strip() or None
+            offer_price = (getattr(mail, "offer_price", None) or "").strip() or None
+            await _db_commit_retry(session)
+
+        if not oid:
+            return False
+
+        await bot.edit_message_text(
+            chat_id=int(chat_id),
+            message_id=int(tid),
+            text=text,
+            reply_markup=kb,
+            parse_mode="HTML",
+            disable_web_page_preview=True,
+        )
+        photo_url = (getattr(mail, "photo_url", None) or "").strip()
+        if photo_url:
+            cap = format_first_incoming_photo_caption(
+                product_title=product_title,
+                offer_price=offer_price,
+            )
+            try:
+                await bot.send_photo(
+                    chat_id=int(chat_id),
+                    photo=photo_url,
+                    caption=cap,
+                    parse_mode="HTML",
+                    reply_to_message_id=int(tid),
+                )
+            except Exception:
+                logger.exception("repair inbound photo mail_id=%s", mail_id)
+        return True
+    except Exception:
+        logger.exception("repair_unbound_inbound_telegram_card mail_id=%s", mail_id)
+        return False
+
+
 async def build_mail_card_from_mail(
     session,
     mail: IncomingMail,
@@ -1860,12 +1962,24 @@ async def _process_mails_for_account_impl(
                                 user_id=int(user_id),
                                 contact_email=contact,
                                 subject=subject or "",
+                                from_name=(from_name or "").strip(),
                                 body_text=body_clean or "",
                                 resolved_offer_id=getattr(
                                     existing, "resolved_offer_id", None
                                 ),
+                                mail_ad_url=(getattr(existing, "ad_url", "") or "").strip()
+                                or None,
+                                inbox_email=inbox_email_clean,
                             )
                         )
+                        if off_b and _how_b:
+                            logger.info(
+                                "inbound bind mail_id=%s from=%s how=%s offer_id=%s",
+                                mail_db_id,
+                                contact,
+                                _how_b,
+                                int(off_b.id),
+                            )
                         if off_b:
                             bound_offer = off_b
                             resolved_offer_id = int(off_b.id)
@@ -1932,6 +2046,13 @@ async def _process_mails_for_account_impl(
                 continue
 
             if already_notified_tg:
+                if not resolved_offer_id and mail_db_id:
+                    await repair_unbound_inbound_telegram_card(
+                        bot,
+                        chat_id=int(tg_id),
+                        mail_id=int(mail_db_id),
+                        inbox_label=inbox_label,
+                    )
                 forwarded += 1
                 continue
 

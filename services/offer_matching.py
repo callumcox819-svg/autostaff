@@ -38,6 +38,8 @@ def _strip_subject_edges(s: str) -> str:
         if n == t:
             break
         t = n
+    t = re.sub(r'"\s*(?=[-–—])', " ", t)
+    t = re.sub(r"\s{2,}", " ", t).strip()
     return t
 
 

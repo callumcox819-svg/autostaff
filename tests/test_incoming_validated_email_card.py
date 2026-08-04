@@ -21,7 +21,7 @@ class ValidatedEmailInboundTests(unittest.IsolatedAsyncioTestCase):
         )
         session = AsyncMock()
         with patch(
-            "services.incoming_validated_offer._offers_from_offer_email_rows",
+            "services.offer_storage.list_offers_for_validated_contact_email",
             new=AsyncMock(return_value=[adidas]),
         ):
             off, how = await resolve_inbound_by_validated_email(

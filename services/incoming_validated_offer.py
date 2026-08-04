@@ -65,12 +65,33 @@ async def resolve_inbound_by_validated_email(
     body_text: str = "",
 ) -> tuple[Offer | None, str]:
     """
-    From = validated email → ровно один OfferEmail на этот адрес у user.
-    Дубликаты в БД — не угадываем (чинится на валидации).
+    From = email продавца → лот(ы) из OfferEmail и validated_emails в offers.raw_json.
+    Один лot — сразу; несколько — по теме Re:/цитате.
     """
-    del subject, body_text
+    from services.offer_storage import (
+        find_single_offer_for_seller_contact_email,
+        list_offers_for_validated_contact_email,
+    )
+
     contact = normalize_incoming_seller_email(seller_email) or (seller_email or "").strip().lower()
     if not contact:
+        return None, ""
+
+    hits = await list_offers_for_validated_contact_email(
+        session, user_id=int(user_id), contact_email=contact, limit=40
+    )
+    if len(hits) == 1:
+        return hits[0], "validated_email_one_lot"
+    if len(hits) > 1:
+        pick = await find_single_offer_for_seller_contact_email(
+            session,
+            user_id=int(user_id),
+            contact_email=contact,
+            subject=(subject or "").strip(),
+            body_text=(body_text or "").strip(),
+        )
+        if pick:
+            return pick, "validated_email_multi_subject"
         return None, ""
 
     hits = await _offers_from_offer_email_rows(

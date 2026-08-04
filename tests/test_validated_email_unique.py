@@ -10,8 +10,11 @@ class StrictOneEmailOneLotTests(unittest.IsolatedAsyncioTestCase):
         b = object()
         session = AsyncMock()
         with patch(
-            "services.incoming_validated_offer._offers_from_offer_email_rows",
+            "services.offer_storage.list_offers_for_validated_contact_email",
             new=AsyncMock(return_value=[a, b]),
+        ), patch(
+            "services.offer_storage.find_single_offer_for_seller_contact_email",
+            new=AsyncMock(return_value=None),
         ):
             off, how = await resolve_inbound_by_validated_email(
                 session, 1, "gnimor@gmx.ch", subject="Re: Adidas"

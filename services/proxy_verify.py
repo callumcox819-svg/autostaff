@@ -27,6 +27,16 @@ PROXY_CHECK_RETRY_PAUSE_SEC = max(
     0.5, min(5.0, float(os.getenv("PROXY_CHECK_RETRY_PAUSE_SEC", "2")))
 )
 
+PROXY_ADD_SMTP_CHECK = (os.getenv("PROXY_ADD_SMTP_CHECK", "0") or "").strip().lower() in (
+    "1",
+    "true",
+    "yes",
+    "on",
+)
+PROXY_TUNNEL_CHECK_TIMEOUT = max(
+    5, min(25, int(os.getenv("PROXY_TUNNEL_CHECK_TIMEOUT", "12")))
+)
+
 
 def proxy_to_dict(proxy: Proxy | dict[str, Any]) -> dict[str, Any]:
     if isinstance(proxy, dict):
@@ -125,7 +135,7 @@ def is_mailing_marked_dead(last_error: str | None) -> bool:
 def is_tunnel_only_smtp_check_failure(info: str) -> bool:
     """Туннель до :587 есть, полный SMTP-handshake не успел (часто residential / Loma)."""
     t = info or ""
-    if "Туннель OK" in t and "SMTP" in t:
+    if "Туннель OK" in t:
         return True
     return "туннель ok" in t.lower() and "smtp-check не успел" in t.lower()
 
@@ -164,21 +174,44 @@ def heal_proxy_rows_from_stale_check_markers(proxies: list[Proxy]) -> None:
             row.is_active = None
 
 
-async def test_proxy_for_add(
-    proxy: Proxy | dict[str, Any], *, smtp_timeout: int = 42
+async def test_proxy_tunnel_only(
+    proxy: Proxy | dict[str, Any], *, timeout: int | None = None
 ) -> Tuple[bool, str]:
     """
-    Добавление прокси: туннель обязателен; SMTP — одна попытка (без долгих ретраев).
-    Возвращает (ok, info) как test_proxy; ok=False + «Туннель OK…» = 🟡 добавлен.
+    Быстро: только CONNECT до smtp.gmail.com:587 (~1–5 с на Loma).
+    (False, «Туннель OK…») = 🟡, годится для рассылки.
     """
     d = proxy_to_dict(proxy)
     ptype = normalize_proxy_type(d.get("type"))
     if ptype not in MAILING_PROXY_TYPES:
         return False, "Нужен socks5, socks4 или http прокси."
-
-    tunnel_ok, tunnel_info = await _test_proxy_tunnel_handshake(proxy, timeout=20)
+    tmo = PROXY_TUNNEL_CHECK_TIMEOUT if timeout is None else max(5, min(25, int(timeout)))
+    tunnel_ok, tunnel_info = await _test_proxy_tunnel_handshake(proxy, timeout=tmo)
     if not tunnel_ok:
         return False, tunnel_info
+    return False, f"Туннель OK ({tunnel_info})"
+
+
+async def test_proxy_for_add(
+    proxy: Proxy | dict[str, Any], *, smtp_timeout: int = 42, smtp: bool | None = None
+) -> Tuple[bool, str]:
+    """
+    Добавление прокси: по умолчанию только туннель (PROXY_ADD_SMTP_CHECK=1 — полный SMTP).
+    """
+    do_smtp = PROXY_ADD_SMTP_CHECK if smtp is None else bool(smtp)
+    d = proxy_to_dict(proxy)
+    ptype = normalize_proxy_type(d.get("type"))
+    if ptype not in MAILING_PROXY_TYPES:
+        return False, "Нужен socks5, socks4 или http прокси."
+
+    tunnel_ok, tunnel_info = await _test_proxy_tunnel_handshake(
+        proxy, timeout=PROXY_TUNNEL_CHECK_TIMEOUT
+    )
+    if not tunnel_ok:
+        return False, tunnel_info
+
+    if not do_smtp:
+        return False, f"Туннель OK ({tunnel_info}) · без SMTP-check (быстро)"
 
     smtp_ok, smtp_info = await test_smtp_tunnel(proxy, timeout=max(20, int(smtp_timeout)))
     if not smtp_ok and ptype == "socks5" and check_error_worth_retry(smtp_info or ""):

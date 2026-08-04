@@ -24,12 +24,14 @@ MAIL_PROXY_PREFLIGHT_TIMEOUT = max(18, min(45, int(os.getenv("MAIL_PROXY_PREFLIG
 MAIL_FAST_PREFLIGHT_TIMEOUT = max(
     18, min(55, int(os.getenv("MAIL_FAST_PREFLIGHT_TIMEOUT", "42")))
 )
-MAIL_FAST_PREFLIGHT_SKIP = (os.getenv("MAIL_FAST_PREFLIGHT_SKIP", "0") or "").strip().lower() in (
+MAIL_FAST_PREFLIGHT_SKIP = (os.getenv("MAIL_FAST_PREFLIGHT_SKIP", "1") or "").strip().lower() in (
     "1",
     "true",
     "yes",
     "on",
 )
+# skip | tunnel | full — перед фаст-/send (по умолчанию skip: не ждать Gmail SMTP)
+MAIL_FAST_PREFLIGHT = (os.getenv("MAIL_FAST_PREFLIGHT", "skip") or "skip").strip().lower()
 MAIL_PROXY_PREFLIGHT_CONCURRENCY = max(
     1, min(4, int(os.getenv("MAIL_PROXY_PREFLIGHT_CONCURRENCY", "2")))
 )
@@ -127,12 +129,12 @@ async def preflight_proxies_for_mailing(
                 ok, detail = mailing_may_start(summary, fast=fast)
                 return ok, summary, detail
 
-            if MAIL_FAST_PREFLIGHT_SKIP:
+            if MAIL_FAST_PREFLIGHT_SKIP or MAIL_FAST_PREFLIGHT == "skip":
                 ok, detail = mailing_may_start(summary, fast=fast)
                 if ok:
                     detail = (
                         summary.format_lines()
-                        + f"\n<i>{html_emoji('burst')} Фаст: preflight пропущен (MAIL_FAST_PREFLIGHT_SKIP).</i>"
+                        + f"\n<i>{html_emoji('burst')} Фаст: без ожидания SMTP-check (Loma/residential).</i>"
                     )
                 return ok, summary, detail
 
@@ -141,6 +143,7 @@ async def preflight_proxies_for_mailing(
                 apply_proxy_check_to_row,
                 is_tunnel_only_smtp_check_failure,
                 test_proxy_for_add,
+                test_proxy_tunnel_only,
             )
             from sqlalchemy import select as sa_select
 
@@ -161,11 +164,23 @@ async def preflight_proxies_for_mailing(
                 ok, detail = mailing_may_start(summary, fast=fast)
                 return ok, summary, detail
 
-            ok_px, info = await test_proxy_for_add(px, smtp_timeout=MAIL_FAST_PREFLIGHT_TIMEOUT)
-            apply_proxy_check_to_row(px, ok_px, info)
-            await session.commit()
-            summary = await summarize_proxy_health(session, db_user_id)
-            tunnel_only = is_tunnel_only_smtp_check_failure(info or "")
+            if MAIL_FAST_PREFLIGHT == "tunnel":
+                ok_px, info = await test_proxy_tunnel_only(px, timeout=10)
+                tunnel_only = is_tunnel_only_smtp_check_failure(info or "")
+                if not tunnel_only:
+                    apply_proxy_check_to_row(px, ok_px, info or "")
+                    await session.commit()
+                    summary = await summarize_proxy_health(session, db_user_id)
+                else:
+                    tunnel_only = True
+            else:
+                ok_px, info = await test_proxy_for_add(
+                    px, smtp_timeout=MAIL_FAST_PREFLIGHT_TIMEOUT, smtp=True
+                )
+                apply_proxy_check_to_row(px, ok_px, info)
+                await session.commit()
+                summary = await summarize_proxy_health(session, db_user_id)
+                tunnel_only = is_tunnel_only_smtp_check_failure(info or "")
 
         else:
             summary = await run_proxy_health_check(session, db_user_id)

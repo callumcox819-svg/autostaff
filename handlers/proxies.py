@@ -589,7 +589,7 @@ async def proxy_add_menu(callback: CallbackQuery, state: FSMContext):
         "<code>8PlwM16nj5ZDjKnE:8PlwM16nj5ZDjKnE@185.90.61.65:14439</code>\n\n"
         "<b>Или так (карточкой):</b>\n"
         "<code>Тип прокси: http\nХост: 109.104.153.100\nПорт: 8080\nЛогин: user\nПароль: pass</code>\n\n"
-        "Каждый прокси будет проверен.\n",
+        "Каждый прокси: быстрая проверка туннеля (~5 с). Полный SMTP — кнопка «Проверить прокси».\n",
         parse_mode="HTML",
     )
 
@@ -711,7 +711,7 @@ async def _proxy_add_work(
                     continue
 
                 try:
-                    ok, info = await test_proxy_for_add(parsed, smtp_timeout=42)
+                    ok, info = await test_proxy_for_add(parsed)
                 except asyncio.TimeoutError:
                     ok, info = await recover_tunnel_only_after_check_timeout(parsed)
                 except Exception as e:

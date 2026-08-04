@@ -122,6 +122,12 @@ def is_mailing_marked_dead(last_error: str | None) -> bool:
     return (last_error or "").strip().startswith(MAILING_PROXY_DEAD_PREFIX)
 
 
+def is_tunnel_only_smtp_check_failure(info: str) -> bool:
+    """Туннель до :587 есть, полный SMTP-handshake не успел (часто residential / Loma)."""
+    t = info or ""
+    return "Туннель OK" in t and "SMTP" in t
+
+
 def check_error_worth_retry(info: str) -> bool:
     t = (info or "").lower()
     return any(
@@ -168,8 +174,12 @@ async def _test_proxy_once(proxy: Proxy | dict[str, Any], *, timeout: int = 20) 
     if not tunnel_ok:
         return False, tunnel_info
 
-    smtp_timeout = max(20, min(int(timeout), 45))
+    smtp_timeout = max(25, min(int(timeout), 50))
     smtp_ok, smtp_info = await test_smtp_tunnel(proxy, timeout=smtp_timeout)
+    if not smtp_ok and ptype == "socks5" and check_error_worth_retry(smtp_info or ""):
+        alt = dict(d)
+        alt["type"] = "socks5h"
+        smtp_ok, smtp_info = await test_smtp_tunnel(alt, timeout=smtp_timeout)
     if smtp_ok:
         return True, smtp_info
     if "занят" in (smtp_info or "").lower():

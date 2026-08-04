@@ -23,6 +23,7 @@ from database import Session
 from models import User, Proxy
 from services.proxy_verify import (
     apply_proxy_check_to_row,
+    is_tunnel_only_smtp_check_failure,
     is_mailing_marked_dead,
     test_proxy,
     refresh_proxies_status,
@@ -671,6 +672,7 @@ async def _proxy_add_work(
     status_msg: Message,
 ) -> None:
     ok_count = 0
+    tunnel_count = 0
     fail_count = 0
     details: List[str] = []
     total = len(parsed_items)
@@ -708,8 +710,8 @@ async def _proxy_add_work(
 
                 try:
                     ok, info = await asyncio.wait_for(
-                        test_proxy(parsed, timeout=16, retries=1),
-                        timeout=38,
+                        test_proxy(parsed, timeout=28, retries=2),
+                        timeout=75,
                     )
                 except asyncio.TimeoutError:
                     ok, info = False, "Timeout: проверка прокси заняла слишком долго"
@@ -736,6 +738,14 @@ async def _proxy_add_work(
                         details.append(
                             f"{html_emoji('ok')} <code>{preview}</code> — {_e(str(info or '')[:200])}"
                         )
+                    elif is_tunnel_only_smtp_check_failure(info or ""):
+                        tunnel_count += 1
+                        details.append(
+                            f"{html_emoji('yellow')} <code>{preview}</code> — добавлен 🟡, "
+                            f"туннель OK (SMTP-check не прошёл — у residential так бывает, "
+                            f"в рассылке попробует этот прокси)\n"
+                            f"<i>{_e(str(info or '')[:180])}</i>"
+                        )
                     else:
                         fail_count += 1
                         details.append(
@@ -748,9 +758,14 @@ async def _proxy_add_work(
                         f"{html_emoji('fail')} <code>{preview}</code> — ошибка сохранения: {_e(str(e)[:120])}"
                     )
 
+        parts = [f"{html_emoji('green')} SMTP OK: <b>{ok_count}</b>"]
+        if tunnel_count:
+            parts.append(f"{html_emoji('yellow')} туннель OK: <b>{tunnel_count}</b>")
+        parts.append(f"{html_emoji('fail')} ошибок: <b>{fail_count}</b>")
         summary = (
             f"{html_emoji('ok')} <b>Готово</b>\n\n"
-            f"Успешно: <b>{ok_count}</b> · Ошибок: <b>{fail_count}</b>\n\n"
+            + " · ".join(parts)
+            + "\n\n"
             + "\n".join(details[:50])
         )
         if len(details) > 50:
@@ -1020,14 +1035,19 @@ async def proxy_test(callback: CallbackQuery):
                 apply_proxy_check_to_row(proxy_db, ok, info or "")
                 await session2.commit()
 
-        status_text = (
-            f"{html_emoji('ok')} SMTP+STARTTLS OK\n<code>{info}</code>"
-            if ok
-            else (
+        if ok:
+            status_text = f"{html_emoji('ok')} SMTP+STARTTLS OK\n<code>{info}</code>"
+        elif is_tunnel_only_smtp_check_failure(info or ""):
+            status_text = (
+                f"{html_emoji('yellow')} Туннель OK — прокси 🟡, в рассылке используется\n"
+                f"<code>{info}</code>\n"
+                f"<i>SMTP-check не прошёл (таймаут/обрыв). У Loma/residential это часто норма.</i>"
+            )
+        else:
+            status_text = (
                 f"{html_emoji('fail')} Проверка не прошла\n<code>{info}</code>\n"
                 f"<i>{html_emoji('red')} будет только если при рассылке туннель реально мёртв.</i>"
             )
-        )
         try:
             await callback.bot.send_message(
                 callback.message.chat.id,

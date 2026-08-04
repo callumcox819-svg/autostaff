@@ -137,7 +137,7 @@ async def _record_successful_send(
     tgt: OfferEmail,
     subject: str,
     from_account_email: str,
-) -> None:
+) -> bool:
     from services.mailing_send_log import record_mailing_send
 
     try:
@@ -158,9 +158,11 @@ async def _record_successful_send(
             email=(tgt.email or "").strip(),
         )
         await _safe_commit(session)
+        return True
     except Exception:
         await _safe_rollback(session)
         logger.exception("record_mailing_send failed offer_id=%s", getattr(tgt, "offer_id", None))
+        return False
 
 
 async def _build_message_for_target(
@@ -506,14 +508,21 @@ async def _burst_sending_loop(*, bot: Bot, chat_id: int, tg_user_id: int) -> Non
         state.sent_count += 1
         set_sending_state(tg_user_id, state=state)
         async with db_session() as ws:
-            await _record_successful_send(
+            logged = await _record_successful_send(
                 ws,
                 user_id=db_user_id,
                 tgt=tgt,
                 subject=subject,
                 from_account_email=from_email,
             )
-            await _purge_target(ws, db_user_id, int(tgt.id))
+            if logged:
+                await _purge_target(ws, db_user_id, int(tgt.id))
+            else:
+                logger.error(
+                    "OfferEmail id=%s kept: mailing_send_log commit failed for %s",
+                    int(tgt.id),
+                    (tgt.email or "").strip(),
+                )
 
     async def on_failure(tgt: OfferEmail, err: str, acc: EmailAccount) -> bool:
         async with db_session() as ws:

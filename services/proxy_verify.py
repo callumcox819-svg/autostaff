@@ -125,7 +125,9 @@ def is_mailing_marked_dead(last_error: str | None) -> bool:
 def is_tunnel_only_smtp_check_failure(info: str) -> bool:
     """Туннель до :587 есть, полный SMTP-handshake не успел (часто residential / Loma)."""
     t = info or ""
-    return "Туннель OK" in t and "SMTP" in t
+    if "Туннель OK" in t and "SMTP" in t:
+        return True
+    return "туннель ok" in t.lower() and "smtp-check не успел" in t.lower()
 
 
 def check_error_worth_retry(info: str) -> bool:
@@ -160,6 +162,47 @@ def heal_proxy_rows_from_stale_check_markers(proxies: list[Proxy]) -> None:
     for row in proxies:
         if row.is_active is False and not is_mailing_marked_dead(row.last_error):
             row.is_active = None
+
+
+async def test_proxy_for_add(
+    proxy: Proxy | dict[str, Any], *, smtp_timeout: int = 42
+) -> Tuple[bool, str]:
+    """
+    Добавление прокси: туннель обязателен; SMTP — одна попытка (без долгих ретраев).
+    Возвращает (ok, info) как test_proxy; ok=False + «Туннель OK…» = 🟡 добавлен.
+    """
+    d = proxy_to_dict(proxy)
+    ptype = normalize_proxy_type(d.get("type"))
+    if ptype not in MAILING_PROXY_TYPES:
+        return False, "Нужен socks5, socks4 или http прокси."
+
+    tunnel_ok, tunnel_info = await _test_proxy_tunnel_handshake(proxy, timeout=20)
+    if not tunnel_ok:
+        return False, tunnel_info
+
+    smtp_ok, smtp_info = await test_smtp_tunnel(proxy, timeout=max(20, int(smtp_timeout)))
+    if not smtp_ok and ptype == "socks5" and check_error_worth_retry(smtp_info or ""):
+        alt = dict(d)
+        alt["type"] = "socks5h"
+        smtp_ok, smtp_info = await test_smtp_tunnel(alt, timeout=max(20, int(smtp_timeout)))
+    if smtp_ok:
+        return True, smtp_info
+    if "занят" in (smtp_info or "").lower():
+        return False, f"Туннель OK ({tunnel_info}). SMTP занят: {smtp_info}"
+    return False, f"Туннель OK, но SMTP+STARTTLS не прошёл: {smtp_info}"
+
+
+async def recover_tunnel_only_after_check_timeout(
+    proxy: Proxy | dict[str, Any],
+) -> Tuple[bool, str]:
+    """Если общий wait_for оборвал проверку — быстрый туннель, чтобы не отклонять рабочий Loma."""
+    tunnel_ok, tunnel_info = await _test_proxy_tunnel_handshake(proxy, timeout=18)
+    if not tunnel_ok:
+        return False, "Timeout: проверка прокси заняла слишком долго"
+    return (
+        False,
+        f"Туннель OK ({tunnel_info}). SMTP-check не успел — прокси 🟡, в рассылке попробует",
+    )
 
 
 async def _test_proxy_once(proxy: Proxy | dict[str, Any], *, timeout: int = 20) -> Tuple[bool, str]:

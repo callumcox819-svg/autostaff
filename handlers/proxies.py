@@ -25,7 +25,9 @@ from services.proxy_verify import (
     apply_proxy_check_to_row,
     is_tunnel_only_smtp_check_failure,
     is_mailing_marked_dead,
+    recover_tunnel_only_after_check_timeout,
     test_proxy,
+    test_proxy_for_add,
     refresh_proxies_status,
 )
 from proxy_manager import normalize_proxy_type
@@ -709,12 +711,9 @@ async def _proxy_add_work(
                     continue
 
                 try:
-                    ok, info = await asyncio.wait_for(
-                        test_proxy(parsed, timeout=28, retries=2),
-                        timeout=75,
-                    )
+                    ok, info = await test_proxy_for_add(parsed, smtp_timeout=42)
                 except asyncio.TimeoutError:
-                    ok, info = False, "Timeout: проверка прокси заняла слишком долго"
+                    ok, info = await recover_tunnel_only_after_check_timeout(parsed)
                 except Exception as e:
                     ok, info = False, f"{type(e).__name__}: {e}"
 

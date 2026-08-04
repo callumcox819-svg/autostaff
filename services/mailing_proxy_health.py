@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 MAIL_PROXY_RECHECK_SEC = max(60, min(600, int(os.getenv("MAIL_PROXY_RECHECK_SEC", "120"))))
 MAIL_PROXY_PREFLIGHT_TIMEOUT = max(18, min(45, int(os.getenv("MAIL_PROXY_PREFLIGHT_TIMEOUT", "28"))))
 MAIL_FAST_PREFLIGHT_TIMEOUT = max(
-    8, min(25, int(os.getenv("MAIL_FAST_PREFLIGHT_TIMEOUT", "12")))
+    18, min(55, int(os.getenv("MAIL_FAST_PREFLIGHT_TIMEOUT", "42")))
 )
 MAIL_FAST_PREFLIGHT_SKIP = (os.getenv("MAIL_FAST_PREFLIGHT_SKIP", "0") or "").strip().lower() in (
     "1",
@@ -84,13 +84,19 @@ def mailing_may_start(summary: ProxyHealthSummary, *, fast: bool = False) -> Tup
             return (
                 True,
                 summary.format_lines()
-                + f"\n<i>{html_emoji('burst')} Фаст: один {html_emoji('green')} прокси на всю рассылку (полный SMTP-таймаут).</i>",
+                + f"\n<i>{html_emoji('burst')} Фаст: один {html_emoji('green')} прокси на всю рассылку.</i>",
+            )
+        if summary.unknown >= 1:
+            return (
+                True,
+                summary.format_lines()
+                + f"\n<i>{html_emoji('burst')} Фаст: {html_emoji('yellow')} прокси (туннель OK / SMTP-check не подтвердил) — стартую.</i>",
             )
         return (
             False,
             summary.format_lines()
-            + f"\n\n{html_emoji('fail')} <b>Фаст рассыл</b> требует хотя бы один {html_emoji('green')} прокси (SMTP+STARTTLS OK). "
-            f"Сейчас только {html_emoji('yellow')}/{html_emoji('red')} — выключите фаст или замените прокси.",
+            + f"\n\n{html_emoji('fail')} <b>Фаст рассыл</b> требует хотя бы один SOCKS5/HTTP прокси (🟢 или 🟡). "
+            f"Сейчас все {html_emoji('red')} — замените прокси или нажмите «Проверить прокси».",
         )
     if summary.ok >= 1:
         return True, summary.format_lines()
@@ -131,7 +137,11 @@ async def preflight_proxies_for_mailing(
                 return ok, summary, detail
 
             from services.smtp_proxy_send import pick_sticky_proxy_for_fast_mailing
-            from services.proxy_verify import apply_proxy_check_to_row, test_proxy
+            from services.proxy_verify import (
+                apply_proxy_check_to_row,
+                is_tunnel_only_smtp_check_failure,
+                test_proxy_for_add,
+            )
             from sqlalchemy import select as sa_select
 
             px = None
@@ -151,15 +161,24 @@ async def preflight_proxies_for_mailing(
                 ok, detail = mailing_may_start(summary, fast=fast)
                 return ok, summary, detail
 
-            ok_px, info = await test_proxy(px, timeout=MAIL_FAST_PREFLIGHT_TIMEOUT, retries=1)
+            ok_px, info = await test_proxy_for_add(px, smtp_timeout=MAIL_FAST_PREFLIGHT_TIMEOUT)
             apply_proxy_check_to_row(px, ok_px, info)
             await session.commit()
             summary = await summarize_proxy_health(session, db_user_id)
+            tunnel_only = is_tunnel_only_smtp_check_failure(info or "")
 
         else:
             summary = await run_proxy_health_check(session, db_user_id)
+            tunnel_only = False
 
     ok, detail = mailing_may_start(summary, fast=fast)
+    if fast and not ok and tunnel_only:
+        ok = True
+        detail = (
+            summary.format_lines()
+            + f"\n<i>{html_emoji('burst')} Фаст: туннель OK, SMTP-check к Gmail не прошёл — "
+            f"рассылка через этот прокси всё равно стартует.</i>"
+        )
     if fast and ok and not MAIL_FAST_PREFLIGHT_SKIP and sticky_proxy_id is not None:
         detail = (
             summary.format_lines()

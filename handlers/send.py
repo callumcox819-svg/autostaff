@@ -343,7 +343,7 @@ async def _start_sending_inner(
     if not sticky_proxy_id:
         await _edit_status_text(
             status_msg,
-            f"{html_emoji('fail')} Нет {html_emoji('green')} ротирующего прокси. Проверь «Прокси».",
+            f"{html_emoji('fail')} Нет прокси для рассылки (🟢/🟡). Добавь SOCKS5 в «Прокси».",
             parse_mode="HTML",
         )
         return

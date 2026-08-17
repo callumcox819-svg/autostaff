@@ -4,6 +4,8 @@ import logging
 import os
 import pkgutil
 import sys
+import threading
+import time
 from pathlib import Path
 from typing import List, Tuple
 
@@ -21,6 +23,7 @@ from database import init_db
 logger = logging.getLogger(__name__)
 
 _PID_FILE = Path(__file__).resolve().parent / ".gag_bot.pid"
+_LOOP_BEAT = time.monotonic()
 
 _ROUTER_BOOT_ORDER: Tuple[str, ...] = (
     "handlers.start",
@@ -307,9 +310,11 @@ async def _on_startup(bot: Bot) -> None:
 
 
 async def _polling_heartbeat(bot: Bot) -> None:
+    global _LOOP_BEAT
     n = 0
     while True:
-        await asyncio.sleep(30)
+        _LOOP_BEAT = time.monotonic()
+        await asyncio.sleep(15)
         n += 1
         extra = ""
         try:
@@ -317,16 +322,35 @@ async def _polling_heartbeat(bot: Bot) -> None:
         except TelegramConflictError:
             extra = " | ⚠️ CONFLICT: второй процесс с тем же BOT_TOKEN!"
             logger.critical(extra)
+            os._exit(1)
         except Exception as e:
             extra = f" | getMe failed: {e}"
             logger.warning("heartbeat getMe: %s", e)
         logger.info("💓 polling alive #%d%s", n, extra)
 
 
+def _start_event_loop_watchdog() -> None:
+    """Если event loop завис (синхронный скан БД) — процесс падает, Railway поднимает заново."""
+
+    def _watch() -> None:
+        while True:
+            time.sleep(20)
+            stalled = time.monotonic() - _LOOP_BEAT
+            if stalled > 90:
+                logger.critical(
+                    "event loop stalled %.0fs — exit so Railway restarts the bot",
+                    stalled,
+                )
+                os._exit(1)
+
+    threading.Thread(target=_watch, daemon=True, name="loop-watchdog").start()
+
+
 async def _on_error(event: ErrorEvent) -> None:
     exc = event.exception
     if isinstance(exc, TelegramConflictError):
-        logger.critical("⚠️ TELEGRAM CONFLICT: два процесса на одном BOT_TOKEN")
+        logger.critical("⚠️ TELEGRAM CONFLICT: два процесса на одном BOT_TOKEN — exit")
+        os._exit(1)
     logger.exception("Необработанная ошибка апдейта: %s", exc)
 
 
@@ -412,6 +436,7 @@ async def main() -> None:
     logger.info("✅ Bot @%s (id=%s) · GAG / CH. Polling…", me.username, me.id)
 
     asyncio.create_task(_polling_heartbeat(bot))
+    _start_event_loop_watchdog()
 
     drop_pending = os.getenv("DROP_PENDING_UPDATES", "").strip() in {"1", "true", "yes"}
 

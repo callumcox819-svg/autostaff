@@ -116,18 +116,13 @@ async def load_seller_keys_with_validated_email(session, user_id: int) -> set[st
     keys: set[str] = set()
     rows = (
         await session.execute(
-            sa_select(Offer.person_name, Offer.raw_json)
+            sa_select(Offer.person_name)
             .join(OfferEmail, OfferEmail.offer_id == Offer.id)
             .where(Offer.user_id == int(user_id))
         )
     ).all()
-    for pname, raw_json in rows:
+    for (pname,) in rows:
         key = seller_name_key(str(pname or ""))
-        if not key and raw_json:
-            from services.offer_storage import parse_offer_raw
-
-            raw = parse_offer_raw(raw_json)
-            key = seller_name_key_from_item(raw if isinstance(raw, dict) else {})
         if key:
             keys.add(key)
     return keys

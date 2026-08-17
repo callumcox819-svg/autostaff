@@ -450,19 +450,16 @@ async def validation_handler(message: Message):
 
     tg_id = message.from_user.id
     if bg_is_running(tg_id, "validation"):
-        hint = _running_validation_hint(tg_id)
-        if status_msg:
-            try:
-                await status_msg.edit_text(hint, parse_mode="HTML")
-            except Exception:
-                pass
-            return
-        return await message.answer(hint, parse_mode="HTML")
+        bg_cancel(tg_id, "validation")
+        _validation_snapshots.pop(int(tg_id), None)
+        await asyncio.sleep(0.4)
 
     if status_msg:
         try:
             await status_msg.edit_text(
-                f"{html_emoji('wait')} Файл принят. Подготавливаю данные…",
+                f"{html_emoji('search')} <b>Подбор email…</b>\n"
+                f"{_validation_user_line(message)}\n"
+                f"В JSON: <b>{len(items)}</b> объявлений — запускаю API.",
                 parse_mode="HTML",
             )
         except Exception:

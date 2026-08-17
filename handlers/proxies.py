@@ -30,6 +30,7 @@ from services.proxy_verify import (
     test_proxy_for_add,
     refresh_proxies_status,
 )
+from proxy_manager import normalize_proxy_type
 from services.residential_proxy import is_residential_gateway_host
 from utils.bg_jobs import is_running as bg_is_running, start as bg_start
 from utils.ui_emoji import html_emoji, inline_button, icon_button, menu_path, msg_fail, msg_ok, msg_wait, msg_warn, toast

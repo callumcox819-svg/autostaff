@@ -13,7 +13,7 @@ from aiogram.types import Message, FSInputFile
 
 from sqlalchemy import select
 
-from database import Session
+from database import db_session
 from models import Offer, OfferEmail, Domain
 from services.users import get_or_create_user
 from config import config
@@ -531,7 +531,7 @@ async def _run_validation_pipeline_inner(
     except Exception:
         pass
 
-    async with Session() as session:
+    async with db_session() as session:
         user = await get_or_create_user(session, tg_id)
 
         api_keys = resolve_validemail_api_keys()
@@ -590,28 +590,21 @@ async def _run_validation_pipeline_inner(
                 parse_mode="HTML",
             )
 
-    async with Session() as session:
+    async with db_session() as session:
         user_bl = await get_or_create_user(session, tg_id)
         from services.seller_blacklist import (
             load_seller_keys_with_validated_email,
             load_seller_name_keys,
-            prune_seller_blacklist_without_email,
         )
 
         append_active = await is_user_mailing_active(tg_id)
         already_keys = await load_seller_keys_with_validated_email(session, int(user_bl.id))
-        await prune_seller_blacklist_without_email(
-            session,
-            int(user_bl.id),
-            keep_keys=already_keys,
-        )
-        await session.commit()
         chs_keys = await load_seller_name_keys(
             session,
             int(user_bl.id),
             include_offer_names=False,
         )
-        # ЧС без живого email не стопает API (старые прогоны писали ЧС раньше, чем лот в БД).
+        # ЧС без живого email не стопает API.
         chs_keys &= already_keys
         if append_active:
             with_offers = await load_seller_name_keys(
@@ -755,11 +748,9 @@ async def _run_validation_pipeline_inner(
     validated_count = len(validated or [])
     eligible = int(live_stats.get("offers_eligible") or 0)
 
-    eligible = int(live_stats.get("offers_eligible") or 0)
-
     append_to_active_mailing = False
 
-    async with Session() as session:
+    async with db_session() as session:
         user = await get_or_create_user(session, tg_id)
 
         append_to_active_mailing = await is_user_mailing_active(tg_id)

@@ -232,6 +232,13 @@ def _emails_in_raw_value(val: Any, *, depth: int = 0) -> list[str]:
     return found
 
 
+def offer_raw_has_validated_email(raw_json: str | None) -> bool:
+    """В raw_json уже есть почта продавца — даже если OfferEmail сняли /reset."""
+    from types import SimpleNamespace
+
+    return bool(offer_contact_emails(SimpleNamespace(raw_json=raw_json)))
+
+
 def offer_contact_emails(offer: Offer | None) -> list[str]:
     """Email продавца: validated_emails + любые @ в raw_json (старые импорты)."""
     if not offer:
@@ -1331,12 +1338,7 @@ async def save_all_offers_from_import(
     Returns: (offers_saved, offers_with_email, email_rows_saved, output_json_rows)
     """
     vindex = index_validated_rows(validated_rows)
-    skip_q = {e.strip().lower() for e in (skip_queue_emails or set()) if e and str(e).strip()}
     reserved_emails = await load_user_validated_email_keys(session, int(user_id))
-    for e in skip_q:
-        c = normalize_incoming_seller_email(e) or e
-        if c:
-            reserved_emails.add(c)
     offers_saved = 0
     offers_with_email = 0
     email_rows_saved = 0
@@ -1358,6 +1360,20 @@ async def save_all_offers_from_import(
             c = normalize_incoming_seller_email(em)
             if c and c not in by_email:
                 by_email[c] = off
+
+    # /reset снимает OfferEmail, raw_json почту оставляет — вернуть в БД до новой волны API.
+    for off in existing_rows:
+        if getattr(off, "id", None) is None:
+            continue
+        for em in offer_contact_emails(off):
+            canon = normalize_incoming_seller_email(em) or str(em or "").strip().lower()
+            if not canon or canon in reserved_emails:
+                continue
+            session.add(OfferEmail(offer_id=int(off.id), email=em))
+            reserved_emails.add(canon)
+            by_email.setdefault(canon, off)
+            email_rows_saved += 1
+            offers_with_email += 1
 
     work: list[tuple[dict[str, Any], dict[str, Any] | None]] = []
     for row in validated_rows or []:
@@ -1431,7 +1447,8 @@ async def save_all_offers_from_import(
                 output_rows.append(payload)
                 if lk_save:
                     seen_link_keys.add(lk_save)
-            continue
+                continue
+            # reserved без лота (старый skip после /reset) — не выкидываем находку
 
         raw_dump = json.dumps(payload, ensure_ascii=False)
         if offer is not None:
@@ -1458,7 +1475,7 @@ async def save_all_offers_from_import(
             ensure_offer_link_column(offer, fields["link"])
         offers_saved += 1
 
-        queued = [em for em in picked[:max_emails_per_offer] if em.lower() not in skip_q]
+        queued = list(picked[:max_emails_per_offer])
         if queued:
             offers_with_email += 1
         offer_batch.append((offer, queued, payload))

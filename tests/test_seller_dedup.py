@@ -76,6 +76,29 @@ class SellerDedupTests(unittest.TestCase):
         self.assertIn("ЧС: <b>2</b>", text)
         self.assertIn("Новых email", text)
 
+    def test_retry_phase_does_not_count_all_as_no_email(self):
+        from handlers.validation import _format_validation_status
+
+        text = _format_validation_status(
+            finished=False,
+            user_line="",
+            processed=0,
+            total=600,
+            added=0,
+            duplicates=0,
+            in_blacklist=0,
+            added_blacklist=166,
+            short_nicks=17,
+            no_email=423,
+            errors=176,
+            phase="api_retry",
+            api_retry_queued=176,
+            api_retry_done=0,
+        )
+        self.assertIn("Повтор после сбоев API", text)
+        self.assertIn("Без email (API): <b>0</b>", text)
+        self.assertIn("Ошибок API", text)
+
 
 if __name__ == "__main__":
     unittest.main()

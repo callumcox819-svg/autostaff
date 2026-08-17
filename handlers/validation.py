@@ -177,6 +177,8 @@ def _format_validation_status(
     nick_total = int(short_nicks or 0) + int(no_name or 0)
     already_n = int(already_in_db or 0)
     not_found = int(no_email_smtp if finished else no_email)
+    if not finished and ph == "api_retry":
+        not_found = 0
     if finished and int(listings_in_file or 0) > 0:
         lines.append("")
         lines.append(
@@ -198,7 +200,7 @@ def _format_validation_status(
             f"{html_emoji('warn')} API не дожали: <b>{int(sellers_api_unresolved)}</b> "
             f"(не в «Без email» — можно повторить файл)"
         )
-    if finished and int(errors or 0) > 0:
+    if int(errors or 0) > 0:
         lines.append(f"{html_emoji('fail')} Ошибок API: <b>{int(errors)}</b>")
     return "\n".join(lines)
 
@@ -586,15 +588,24 @@ async def _run_validation_pipeline_inner(
         from services.seller_blacklist import (
             load_seller_keys_with_validated_email,
             load_seller_name_keys,
+            prune_seller_blacklist_without_email,
         )
 
         append_active = await is_user_mailing_active(tg_id)
+        already_keys = await load_seller_keys_with_validated_email(session, int(user_bl.id))
+        await prune_seller_blacklist_without_email(
+            session,
+            int(user_bl.id),
+            keep_keys=already_keys,
+        )
+        await session.commit()
         chs_keys = await load_seller_name_keys(
             session,
             int(user_bl.id),
             include_offer_names=False,
         )
-        already_keys = await load_seller_keys_with_validated_email(session, int(user_bl.id))
+        # ЧС без живого email не стопает API — иначе после /reset лоты не восстанавливаются.
+        chs_keys &= already_keys
         if append_active:
             with_offers = await load_seller_name_keys(
                 session,
@@ -805,10 +816,6 @@ async def _run_validation_pipeline_inner(
         else ""
     )
     skip_note = ""
-    if skip_queue_emails:
-        skip_note = (
-            f" · {html_emoji('key')} не в очередь (после /reset): {len(skip_queue_emails)}"
-        )
 
     live_stats["phase"] = "export"
     try:

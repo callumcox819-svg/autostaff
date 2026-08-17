@@ -325,33 +325,46 @@ async def refresh_proxies_status(
 
         if any(heal_misparsed_proxy_row(p) for p in proxies):
             await session.commit()
+            for p in proxies:
+                try:
+                    await session.refresh(p)
+                except Exception:
+                    pass
     except Exception:
         logger.exception("heal_misparsed_proxy_row failed")
 
+    snapshots: list[tuple[int, dict[str, Any]]] = []
+    for p in proxies:
+        try:
+            snapshots.append((int(p.id), proxy_to_dict(p)))
+        except Exception:
+            logger.exception("proxy snapshot failed id=%s", getattr(p, "id", None))
+            continue
+
     sem = asyncio.Semaphore(max(1, concurrency))
-    results: list[tuple[Proxy, bool, str]] = []
+    results: list[tuple[int, bool, str]] = []
 
     per_proxy_timeout = max(12, int(timeout))
 
-    async def _one(p: Proxy) -> None:
+    async def _one(pid: int, d: dict[str, Any]) -> None:
         async with sem:
             try:
                 ok, info = await asyncio.wait_for(
-                    test_proxy(p, timeout=per_proxy_timeout),
+                    test_proxy(d, timeout=per_proxy_timeout),
                     timeout=per_proxy_timeout * 2 + 10,
                 )
             except asyncio.TimeoutError:
                 ok, info = False, "Timeout: проверка прокси заняла слишком долго"
             except Exception as e:
                 ok, info = False, f"{type(e).__name__}: {e}"
-        results.append((p, ok, info))
+        results.append((pid, ok, info))
 
-    await asyncio.gather(*[_one(p) for p in proxies])
+    await asyncio.gather(*[_one(pid, d) for pid, d in snapshots])
 
     ok_n = 0
     fail_n = 0
-    for p, ok, info in results:
-        row = await session.get(Proxy, int(p.id))
+    for pid, ok, info in results:
+        row = await session.get(Proxy, int(pid))
         if not row:
             continue
         apply_proxy_check_to_row(row, ok, info or "")

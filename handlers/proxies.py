@@ -523,8 +523,14 @@ async def render_proxy_menu(message_or_cb, telegram_id: int):
 
     if isinstance(message_or_cb, Message):
         await message_or_cb.answer(text, reply_markup=kb, parse_mode="HTML")
-    else:
+        return
+    try:
         await message_or_cb.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
+    except TelegramBadRequest:
+        try:
+            await message_or_cb.message.answer(text, reply_markup=kb, parse_mode="HTML")
+        except Exception:
+            logger.exception("render_proxy_menu answer failed tg=%s", telegram_id)
 
 
 # ======================
@@ -606,6 +612,15 @@ async def proxy_add_process(message: Message, state: FSMContext):
     if not raw_text:
         await message.answer(f"{html_emoji('fail')} Пусто. Пришли прокси строками или карточкой.")
         return
+
+    from handlers.settings import match_settings_menu_text, open_settings_menu
+    from keyboards.main_menu import TEXT_SETTINGS
+    t = raw_text.casefold()
+    if match_settings_menu_text(raw_text) or t in {"назад", "меню", "/start"}:
+        await state.clear()
+        if match_settings_menu_text(raw_text) or TEXT_SETTINGS.casefold() in t:
+            return await open_settings_menu(message, state)
+        return await message.answer("Ок. Снова «Настройки → Прокси», если надо добавить.")
 
     telegram_id = message.from_user.id
 
@@ -884,7 +899,7 @@ async def _auto_check_all_proxies(callback: CallbackQuery, telegram_id: int) -> 
         return
 
     async def _run_bulk_check() -> None:
-        concurrency = max(1, min(3, int(os.getenv("PROXY_CHECK_CONCURRENCY", "2"))))
+        concurrency = max(1, min(2, int(os.getenv("PROXY_CHECK_CONCURRENCY", "1"))))
         check_timeout = max(18, min(40, int(os.getenv("PROXY_CHECK_TIMEOUT", "30"))))
         try:
             async with Session() as session:
@@ -958,7 +973,7 @@ async def proxies_check_all(callback: CallbackQuery) -> None:
         pass
 
     async def _run_bulk_check() -> None:
-        concurrency = max(1, min(3, int(os.getenv("PROXY_CHECK_CONCURRENCY", "2"))))
+        concurrency = max(1, min(2, int(os.getenv("PROXY_CHECK_CONCURRENCY", "1"))))
         check_timeout = max(18, min(40, int(os.getenv("PROXY_CHECK_TIMEOUT", "30"))))
         ok_n = fail_n = 0
         try:
@@ -986,14 +1001,25 @@ async def proxies_check_all(callback: CallbackQuery) -> None:
                 pass
 
             await render_proxy_menu(callback, telegram_id)
+        except TelegramBadRequest:
+            logger.warning("bulk proxy check telegram ui failed for user %s", telegram_id)
+            try:
+                await render_proxy_menu(callback, telegram_id)
+            except Exception:
+                logger.exception("bulk proxy menu after telegram fail user %s", telegram_id)
         except Exception:
             logger.exception("bulk proxy check failed for user %s", telegram_id)
             try:
-                await callback.message.edit_text(
-                    f"{html_emoji('fail')} Ошибка при проверке прокси. Попробуйте позже или проверьте один прокси кнопкой {html_emoji('refresh')}.",
+                await callback.message.answer(
+                    f"{html_emoji('fail')} Ошибка при проверке прокси. Нажми «Прокси» ещё раз "
+                    f"или проверь один прокси кнопкой {html_emoji('refresh')}.",
                     parse_mode="HTML",
                 )
             except TelegramBadRequest:
+                pass
+            try:
+                await render_proxy_menu(callback, telegram_id)
+            except Exception:
                 pass
         finally:
             _proxy_bulk_check_tasks.pop(telegram_id, None)

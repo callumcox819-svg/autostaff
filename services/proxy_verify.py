@@ -17,6 +17,7 @@ from proxy_manager import (
     normalize_proxy_type,
     proxy_type_name,
 )
+from services.residential_proxy import is_residential_gateway_host
 
 logger = logging.getLogger(__name__)
 
@@ -105,6 +106,37 @@ async def _test_proxy_tunnel_handshake(
     return await asyncio.to_thread(_test_proxy_tunnel_sync, d, timeout=timeout)
 
 
+def _tunnel_types_to_try(d: dict[str, Any]) -> list[str]:
+    primary = normalize_proxy_type(d.get("type")) or "socks5"
+    types: list[str] = []
+    for t in (primary, "socks5", "socks5h"):
+        if t not in types:
+            types.append(t)
+    if is_residential_gateway_host(str(d.get("host") or "")):
+        if "http" not in types:
+            types.append("http")
+    return types
+
+
+async def _test_proxy_tunnel_handshake_fallback(
+    proxy: Proxy | dict[str, Any], *, timeout: int = 12
+) -> Tuple[bool, str, str]:
+    """SOCKS5 → socks5h; Loma ещё HTTP CONNECT, если SOCKS-гейт лежит."""
+    d = proxy_to_dict(proxy)
+    last = "Нужен socks5, socks4 или http прокси."
+    for t in _tunnel_types_to_try(d):
+        alt = dict(d)
+        alt["type"] = t
+        tmo = timeout
+        if is_residential_gateway_host(str(d.get("host") or "")):
+            tmo = max(timeout, 20)
+        ok, info = await _test_proxy_tunnel_handshake(alt, timeout=tmo)
+        if ok:
+            return True, info, t
+        last = info
+    return False, last, normalize_proxy_type(d.get("type"))
+
+
 def _proxy_row_from_dict(d: dict[str, Any]) -> Proxy:
     return Proxy(
         host=str(d["host"]),
@@ -186,7 +218,12 @@ async def test_proxy_tunnel_only(
     if ptype not in MAILING_PROXY_TYPES:
         return False, "Нужен socks5, socks4 или http прокси."
     tmo = PROXY_TUNNEL_CHECK_TIMEOUT if timeout is None else max(5, min(25, int(timeout)))
-    tunnel_ok, tunnel_info = await _test_proxy_tunnel_handshake(proxy, timeout=tmo)
+    tunnel_ok, tunnel_info, resolved_type = await _test_proxy_tunnel_handshake_fallback(
+        proxy, timeout=tmo
+    )
+    if isinstance(proxy, dict) and resolved_type:
+        proxy["type"] = resolved_type
+    d["type"] = resolved_type
     if not tunnel_ok:
         return False, tunnel_info
     return False, f"Туннель OK ({tunnel_info})"
@@ -204,9 +241,16 @@ async def test_proxy_for_add(
     if ptype not in MAILING_PROXY_TYPES:
         return False, "Нужен socks5, socks4 или http прокси."
 
-    tunnel_ok, tunnel_info = await _test_proxy_tunnel_handshake(
-        proxy, timeout=PROXY_TUNNEL_CHECK_TIMEOUT
+    tmo = PROXY_TUNNEL_CHECK_TIMEOUT
+    if is_residential_gateway_host(str(d.get("host") or "")):
+        tmo = max(tmo, 20)
+    tunnel_ok, tunnel_info, resolved_type = await _test_proxy_tunnel_handshake_fallback(
+        proxy, timeout=tmo
     )
+    if isinstance(proxy, dict):
+        proxy["type"] = resolved_type
+    d["type"] = resolved_type
+    ptype = resolved_type
     if not tunnel_ok:
         return False, tunnel_info
 
@@ -229,7 +273,11 @@ async def recover_tunnel_only_after_check_timeout(
     proxy: Proxy | dict[str, Any],
 ) -> Tuple[bool, str]:
     """Если общий wait_for оборвал проверку — быстрый туннель, чтобы не отклонять рабочий Loma."""
-    tunnel_ok, tunnel_info = await _test_proxy_tunnel_handshake(proxy, timeout=18)
+    tunnel_ok, tunnel_info, resolved = await _test_proxy_tunnel_handshake_fallback(
+        proxy, timeout=18
+    )
+    if isinstance(proxy, dict):
+        proxy["type"] = resolved
     if not tunnel_ok:
         return False, "Timeout: проверка прокси заняла слишком долго"
     return (
@@ -246,7 +294,13 @@ async def _test_proxy_once(proxy: Proxy | dict[str, Any], *, timeout: int = 20) 
         return False, "Нужен socks5, socks4 или http прокси."
 
     tunnel_timeout = max(8, min(int(timeout), 16))
-    tunnel_ok, tunnel_info = await _test_proxy_tunnel_handshake(proxy, timeout=tunnel_timeout)
+    tunnel_ok, tunnel_info, resolved_type = await _test_proxy_tunnel_handshake_fallback(
+        proxy, timeout=tunnel_timeout
+    )
+    if isinstance(proxy, dict):
+        proxy["type"] = resolved_type
+    d["type"] = resolved_type
+    ptype = resolved_type
     if not tunnel_ok:
         return False, tunnel_info
 

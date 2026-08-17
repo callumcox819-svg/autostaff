@@ -260,7 +260,7 @@ def connect_via_mailing_proxy(
     kind = socks_proxy_type_for(proxy)
     rdns = socks_proxy_rdns(proxy)
 
-    sock = socks.socksocket()
+    sock = socks.socksocket(_stdlib_socket.AF_INET, _stdlib_socket.SOCK_STREAM)
     sock.set_proxy(
         kind,
         px_host,

@@ -19,7 +19,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.exceptions import TelegramBadRequest
 from sqlalchemy import select
 
-from database import Session
+from database import db_session
 from models import User, Proxy
 from services.proxy_verify import (
     apply_proxy_check_to_row,
@@ -488,7 +488,7 @@ def proxies_menu(proxies: List[Proxy]) -> InlineKeyboardMarkup:
 # ======================
 
 async def render_proxy_menu(message_or_cb, telegram_id: int):
-    async with Session() as session:
+    async with db_session() as session:
         res_user = await session.execute(
             select(User).where(User.telegram_id == telegram_id)
         )
@@ -546,7 +546,7 @@ async def open_proxies(callback: CallbackQuery):
     telegram_id = callback.from_user.id
     await render_proxy_menu(callback, telegram_id)
 
-    async with Session() as session:
+    async with db_session() as session:
         user = (
             await session.execute(select(User).where(User.telegram_id == telegram_id))
         ).scalar_one_or_none()
@@ -587,6 +587,8 @@ async def proxy_add_menu(callback: CallbackQuery, state: FSMContext):
         "Пришли список прокси (по одному на строку) ИЛИ карточкой.\n\n"
         "<b>Примеры:</b>\n"
         "<code>socks5://user:pass@109.104.153.100:10811</code>\n"
+        "<code>proxy.lomaproxy.com:48176:login:pass</code>\n"
+        "<code>host:port:login:pass</code> — SOCKS5 (доменом тоже)\n"
         "<code>http://user:pass@185.90.61.65:8080</code>\n"
         "<code>http://proxy.example.com:8080:user:pass</code>\n"
         "<code>http:proxy.example.com:8080:user:pass</code>\n"
@@ -697,7 +699,7 @@ async def _proxy_add_work(
     total = len(parsed_items)
 
     try:
-        async with Session() as session:
+        async with db_session() as session:
             res_user = await session.execute(
                 select(User).where(User.telegram_id == telegram_id)
             )
@@ -831,7 +833,7 @@ async def proxy_info(callback: CallbackQuery):
     except TelegramBadRequest:
         pass
 
-    async with Session() as session:
+    async with db_session() as session:
         proxy = await session.get(Proxy, proxy_id)
 
     if not proxy:
@@ -879,7 +881,7 @@ async def proxy_delete(callback: CallbackQuery):
     except TelegramBadRequest:
         pass
 
-    async with Session() as session:
+    async with db_session() as session:
         proxy = await session.get(Proxy, proxy_id)
         if proxy:
             await session.delete(proxy)
@@ -902,7 +904,7 @@ async def _auto_check_all_proxies(callback: CallbackQuery, telegram_id: int) -> 
         concurrency = max(1, min(2, int(os.getenv("PROXY_CHECK_CONCURRENCY", "1"))))
         check_timeout = max(18, min(40, int(os.getenv("PROXY_CHECK_TIMEOUT", "30"))))
         try:
-            async with Session() as session:
+            async with db_session() as session:
                 user = (
                     await session.execute(select(User).where(User.telegram_id == telegram_id))
                 ).scalar_one_or_none()
@@ -941,7 +943,7 @@ async def proxies_check_all(callback: CallbackQuery) -> None:
     except TelegramBadRequest:
         pass
 
-    async with Session() as session:
+    async with db_session() as session:
         user = (
             await session.execute(select(User).where(User.telegram_id == telegram_id))
         ).scalar_one_or_none()
@@ -977,7 +979,7 @@ async def proxies_check_all(callback: CallbackQuery) -> None:
         check_timeout = max(18, min(40, int(os.getenv("PROXY_CHECK_TIMEOUT", "30"))))
         ok_n = fail_n = 0
         try:
-            async with Session() as session:
+            async with db_session() as session:
                 user = (
                     await session.execute(select(User).where(User.telegram_id == telegram_id))
                 ).scalar_one_or_none()
@@ -1046,7 +1048,7 @@ async def proxy_test(callback: CallbackQuery):
             pass
         return
 
-    async with Session() as session:
+    async with db_session() as session:
         proxy = await session.get(Proxy, proxy_id)
 
     if not proxy:
@@ -1065,7 +1067,7 @@ async def proxy_test(callback: CallbackQuery):
         except Exception as e:
             ok, info = False, f"{type(e).__name__}: {e}"
 
-        async with Session() as session2:
+        async with db_session() as session2:
             proxy_db = await session2.get(Proxy, proxy_id)
             if proxy_db:
                 apply_proxy_check_to_row(proxy_db, ok, info or "")

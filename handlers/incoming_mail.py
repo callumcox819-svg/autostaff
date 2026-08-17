@@ -14,6 +14,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import StatesGroup, State
 
 from sqlalchemy import select as sa_select, func, select, update as sa_update
+from sqlalchemy.exc import IntegrityError
 
 from database import Session
 from models import (
@@ -71,6 +72,21 @@ router = Router()
 logger = logging.getLogger(__name__)
 
 
+def _aqua_link_user_error(e: Exception) -> str:
+    raw = str(e) or type(e).__name__
+    blob = f"{type(e).__name__} {raw}".lower()
+    if (
+        "foreignkey" in blob
+        or "integrityerror" in blob
+        or "resolved_offer_id" in blob
+    ):
+        return (
+            "Лот с карточки уже удалён из базы. "
+            "Загрузите JSON, провалидируйте email и снова нажмите «Создать ссылку»."
+        )
+    return raw[:350]
+
+
 async def _run_aqua_link_bg(callback: CallbackQuery, work) -> None:
     """Фоновая AQUA-ссылка: при падении — сообщение в чат (не молчим)."""
     try:
@@ -79,7 +95,7 @@ async def _run_aqua_link_bg(callback: CallbackQuery, work) -> None:
         logger.exception("aqua_link background failed tg=%s", callback.from_user.id)
         try:
             await callback.message.answer(
-                f"{html_emoji('fail')} <b>Ошибка создания ссылки</b>\n<code>{_e(str(e)[:300])}</code>",
+                f"{html_emoji('fail')} <b>Ошибка создания ссылки</b>\n<code>{_e(_aqua_link_user_error(e))}</code>",
                 parse_mode="HTML",
             )
         except Exception:
@@ -647,12 +663,6 @@ async def _open_mail_reply_menu(
             if mail_row:
                 acc_id = int(mail_row.account_id)
                 uid_key = str(mail_row.imap_uid)
-                await _rebind_mail_card_for_reply(
-                    session,
-                    mail_row,
-                    tg_user_id=int(callback.from_user.id),
-                    tg_message=callback.message,
-                )
 
         inbox_label = ""
         try:
@@ -882,12 +892,17 @@ async def _sync_incoming_mail_offer_with_card(
 ) -> None:
     """Подтянуть лот как на карточке (meta + «Лот:» в тексте), записать в IncomingMail."""
     from services.incoming_mail_worker import mail_card_offer_meta
-    from services.offer_storage import normalize_incoming_seller_email
+    from services.offer_storage import live_user_offer, normalize_incoming_seller_email
 
+    uid = int(getattr(mail, "user_id", 0) or 0)
     card_oid = _offer_id_from_incoming_card_message(tg_message)
     if card_oid:
-        mail.resolved_offer_id = int(card_oid)
-        mail.mailing_bound = True
+        live = await live_user_offer(session, user_id=uid, offer_id=int(card_oid))
+        if live:
+            mail.resolved_offer_id = int(live.id)
+            mail.mailing_bound = True
+        elif getattr(mail, "resolved_offer_id", None) and int(mail.resolved_offer_id) == int(card_oid):
+            mail.resolved_offer_id = None
 
     contact = normalize_incoming_seller_email(getattr(mail, "from_email", "") or "") or (
         getattr(mail, "from_email", "") or ""
@@ -929,8 +944,12 @@ async def _sync_incoming_mail_offer_with_card(
         return
 
     if offer_id:
-        mail.resolved_offer_id = int(offer_id)
-        mail.mailing_bound = True
+        live_meta = await live_user_offer(session, user_id=uid, offer_id=int(offer_id))
+        if live_meta:
+            mail.resolved_offer_id = int(live_meta.id)
+            mail.mailing_bound = True
+        else:
+            mail.resolved_offer_id = None
     if product_title:
         mail.product_title = (product_title or "")[:500]
     if offer_price:
@@ -941,54 +960,31 @@ async def _sync_incoming_mail_offer_with_card(
         mail.service_label = (service_label or "")[:80]
     if outgoing_subj:
         mail.outgoing_mail_subject = (outgoing_subj or "")[:500]
-    await session.flush()
+    await _flush_incoming_mail_bind(session, mail, user_id=uid)
 
 
-async def _rebind_mail_card_for_reply(
-    session,
-    mail: IncomingMail,
-    *,
-    tg_user_id: int,
-    tg_message: Message | None,
-) -> None:
-    """На «Написать ещё»: если лота нет — найти по теме и перерисовать карточку."""
-    if getattr(mail, "resolved_offer_id", None):
-        return
+async def _flush_incoming_mail_bind(session, mail: IncomingMail, *, user_id: int) -> None:
+    """Не ронять сессию FK на удалённый лот: сначала проверить, иначе обнулить."""
+    from services.offer_storage import live_user_offer
+
+    oid = getattr(mail, "resolved_offer_id", None)
+    if oid:
+        live = await live_user_offer(session, user_id=int(user_id), offer_id=int(oid))
+        if not live:
+            mail.resolved_offer_id = None
     try:
-        await _sync_incoming_mail_offer_with_card(session, mail, tg_message=tg_message)
-        if not getattr(mail, "resolved_offer_id", None):
-            return
-        await session.commit()
-        if not tg_message:
-            return
-        text, kb = await build_mail_card_from_mail(session, mail)
-        try:
-            await tg_message.edit_text(text, reply_markup=kb, parse_mode="HTML")
-        except TelegramBadRequest:
-            pass
-        photo = (getattr(mail, "photo_url", None) or "").strip()
-        if photo:
-            from services.incoming_mail_worker import format_first_incoming_photo_caption
-
-            try:
-                await tg_message.bot.send_photo(
-                    chat_id=tg_message.chat.id,
-                    photo=photo,
-                    caption=format_first_incoming_photo_caption(
-                        product_title=(getattr(mail, "product_title", None) or "").strip() or None,
-                        offer_price=(getattr(mail, "offer_price", None) or "").strip() or None,
-                    ),
-                    parse_mode="HTML",
-                    reply_to_message_id=int(tg_message.message_id),
-                )
-            except Exception:
-                logger.exception("rebind photo failed mail_id=%s", getattr(mail, "id", None))
-    except Exception:
-        logger.exception("rebind mail card failed mail_id=%s", getattr(mail, "id", None))
+        await session.flush()
+    except IntegrityError:
+        logger.warning(
+            "incoming_mail FK flush mail_id=%s oid=%s — drop bind",
+            getattr(mail, "id", None),
+            oid,
+        )
         try:
             await session.rollback()
         except Exception:
             pass
+        mail.resolved_offer_id = None
 
 
 async def _bound_offer_from_incoming_mail(
@@ -2076,7 +2072,7 @@ async def _create_aqua_link_from_db_work(callback: CallbackQuery, mail_id: int) 
             except Exception:
                 pass
             await callback.message.answer(
-                f"{html_emoji('fail')} <b>Ошибка создания ссылки</b>\n<code>{_e(str(e)[:350])}</code>",
+                f"{html_emoji('fail')} <b>Ошибка создания ссылки</b>\n<code>{_e(_aqua_link_user_error(e))}</code>",
                 parse_mode="HTML",
             )
             await callback.answer()
@@ -2105,7 +2101,7 @@ async def _create_aqua_link_from_db_work_impl(
         acc_id = int(mail.account_id)
         inbox_email = _canon_email(mail.account_email or "")
         contact_email = _canon_email(mail.from_email or "")
-        from services.offer_storage import normalize_incoming_seller_email
+        from services.offer_storage import live_user_offer, normalize_incoming_seller_email
 
         contact_email = normalize_incoming_seller_email(contact_email) or contact_email
 
@@ -2135,23 +2131,29 @@ async def _create_aqua_link_from_db_work_impl(
             (offer_effective_link(offer) or "").strip() if offer else ""
         )
         if offer:
-            mail.resolved_offer_id = int(offer.id)
-            mail.mailing_bound = True
-            if url:
-                mail.ad_url = url
-            pt = (snap.get("product_title") or "").strip()
-            if pt:
-                mail.product_title = pt[:500]
-            pr = (snap.get("offer_price") or "").strip()
-            if pr:
-                mail.offer_price = pr[:64]
-            ph = (snap.get("photo_url") or "").strip()
-            if ph:
-                mail.photo_url = ph[:2000]
-            sl = (snap.get("service_label") or "").strip()
-            if sl:
-                mail.service_label = sl[:64]
-            await session.flush()
+            live_off = await live_user_offer(
+                session, user_id=int(tg_user.id), offer_id=int(offer.id)
+            )
+            if live_off:
+                mail.resolved_offer_id = int(live_off.id)
+                mail.mailing_bound = True
+                if url:
+                    mail.ad_url = url
+                pt = (snap.get("product_title") or "").strip()
+                if pt:
+                    mail.product_title = pt[:500]
+                pr = (snap.get("offer_price") or "").strip()
+                if pr:
+                    mail.offer_price = pr[:64]
+                ph = (snap.get("photo_url") or "").strip()
+                if ph:
+                    mail.photo_url = ph[:2000]
+                sl = (snap.get("service_label") or "").strip()
+                if sl:
+                    mail.service_label = sl[:64]
+                await _flush_incoming_mail_bind(session, mail, user_id=int(tg_user.id))
+            else:
+                mail.resolved_offer_id = None
 
         if not offer:
             subj_hint = (subj_mail or "").strip() or (
@@ -2162,7 +2164,19 @@ async def _create_aqua_link_from_db_work_impl(
             )
             extra = ""
             if oid_hint:
-                extra = f"\n<b>Лот в письме:</b> <code>{int(oid_hint)}</code> — перезагрузите JSON или нажмите «Создать ссылку» после деплоя."
+                live_hint = await live_user_offer(
+                    session, user_id=int(tg_user.id), offer_id=int(oid_hint)
+                )
+                if live_hint:
+                    extra = (
+                        f"\n<b>Лот в письме:</b> <code>{int(oid_hint)}</code> — "
+                        "проверьте валидацию email и снова «Создать ссылку»."
+                    )
+                else:
+                    extra = (
+                        f"\n<b>Лот на карточке:</b> <code>{int(oid_hint)}</code> уже нет в базе. "
+                        "Загрузите JSON заново и провалидируйте email продавца."
+                    )
             await callback.message.answer(
                 f"{html_emoji('fail')} <b>Не нашёл объявление для этого письма</b>\n\n"
                 f"<b>Тема:</b> <code>{_e(subj_hint or '—')}</code>\n"
@@ -2189,8 +2203,15 @@ async def _create_aqua_link_from_db_work_impl(
             return
 
         if offer:
-            mail.resolved_offer_id = int(offer.id)
-            mail.mailing_bound = True
+            live_keep = await live_user_offer(
+                session, user_id=int(tg_user.id), offer_id=int(offer.id)
+            )
+            if live_keep:
+                mail.resolved_offer_id = int(live_keep.id)
+                mail.mailing_bound = True
+            else:
+                mail.resolved_offer_id = None
+                mail.mailing_bound = False
         offer, url, title, price, offer_image = await finalize_aqua_listing_context(
             session,
             user_id=int(tg_user.id),
@@ -2231,7 +2252,14 @@ async def _create_aqua_link_from_db_work_impl(
         )
         mail.generated_link = aqua_url
         if offer_id:
-            mail.resolved_offer_id = int(offer_id)
+            live_final = await live_user_offer(
+                session, user_id=int(tg_user.id), offer_id=int(offer_id)
+            )
+            if live_final:
+                mail.resolved_offer_id = int(live_final.id)
+            else:
+                mail.resolved_offer_id = None
+                offer_id = None
         mail.ad_url = url
         if title:
             mail.product_title = title[:500]
@@ -2239,6 +2267,7 @@ async def _create_aqua_link_from_db_work_impl(
             mail.offer_price = str(price)[:64]
         if offer_image:
             mail.photo_url = str(offer_image)[:2000]
+        await _flush_incoming_mail_bind(session, mail, user_id=int(tg_user.id))
         await session.commit()
 
         mail_uid = str(getattr(mail, "imap_uid", "") or "")

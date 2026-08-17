@@ -1463,14 +1463,20 @@ async def mail_card_offer_meta(
     from services.offer_storage import normalize_incoming_seller_email
 
     if (stored_product_title or "").strip() and resolved_offer_id:
-        return (
-            int(resolved_offer_id),
-            (stored_service_label or "").strip() or None,
-            (stored_product_title or "").strip() or None,
-            (stored_photo_url or "").strip() or None,
-            (stored_offer_price or "").strip() or None,
-            (stored_outgoing_subject or "").strip() or None,
+        from services.offer_storage import live_user_offer
+
+        live = await live_user_offer(
+            session, user_id=int(user_id), offer_id=int(resolved_offer_id)
         )
+        if live:
+            return (
+                int(live.id),
+                (stored_service_label or "").strip() or None,
+                (stored_product_title or "").strip() or None,
+                (stored_photo_url or "").strip() or None,
+                (stored_offer_price or "").strip() or None,
+                (stored_outgoing_subject or "").strip() or None,
+            )
 
     contact = normalize_incoming_seller_email(from_email) or (from_email or "").strip().lower()
     off, _url, _how, snap = await resolve_offer_for_incoming_lead(
@@ -2302,8 +2308,16 @@ async def _process_mails_for_account_impl(
                         if mail_row:
                             mail_row.telegram_message_id = int(m.message_id)
                             if offer_id:
-                                mail_row.resolved_offer_id = int(offer_id)
-                                mail_row.mailing_bound = True
+                                from services.offer_storage import live_user_offer
+
+                                live = await live_user_offer(
+                                    session,
+                                    user_id=int(mail_row.user_id),
+                                    offer_id=int(offer_id),
+                                )
+                                if live:
+                                    mail_row.resolved_offer_id = int(live.id)
+                                    mail_row.mailing_bound = True
                             await _db_commit_retry(session)
                 except Exception:
                     logger.exception(

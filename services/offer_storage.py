@@ -10,6 +10,23 @@ from sqlalchemy import func, or_, select as sa_select
 
 from models import Offer, OfferEmail
 
+
+async def live_user_offer(session, *, user_id: int, offer_id: int | None) -> Offer | None:
+    """Offer из БД для этого user. Удалённый / чужой id — None (не писать FK)."""
+    if not offer_id:
+        return None
+    try:
+        oid = int(offer_id)
+    except (TypeError, ValueError):
+        return None
+    off = await session.get(Offer, oid)
+    if not off:
+        return None
+    if int(getattr(off, "user_id", 0) or 0) != int(user_id):
+        return None
+    return off
+
+
 _LINK_QS_RE = re.compile(r"\?.*$")
 _RAW_EMAIL_RE = re.compile(r"[\w.+-]+@[\w.-]+\.[a-z]{2,}", re.I)
 

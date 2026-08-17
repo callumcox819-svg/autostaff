@@ -14,12 +14,9 @@ from services.offer_storage import (
 
 
 def _service_label_from_link(link: str) -> str | None:
-    u = (link or "").lower()
-    if "ricardo.ch" in u:
-        return "ricardo.ch"
-    if "tutti.ch" in u:
-        return "tutti.ch"
-    return None
+    from services.offer_storage import marketplace_service_label_from_link
+
+    return marketplace_service_label_from_link(link) or None
 
 
 def _snapshot_from_mailed_offer(
@@ -197,6 +194,19 @@ async def resolve_offer_for_incoming_lead(
     contact_email = normalize_incoming_seller_email(contact_email)
     if not contact_email:
         return None, "", "", empty_snap
+
+    from services.offer_storage import pick_offer_for_incoming_reply
+
+    off_pick = await pick_offer_for_incoming_reply(
+        session,
+        user_id=int(user_id),
+        from_email=contact_email,
+        subject=subject,
+        from_name=from_name,
+        inbox_email=inbox_email,
+    )
+    if off_pick:
+        return _finish_lead(off_pick, "validated_email_pick")
 
     if resolved_offer_id:
         from services.offer_matching import _load_offer

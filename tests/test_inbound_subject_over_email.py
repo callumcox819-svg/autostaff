@@ -38,6 +38,9 @@ class InboundSubjectOverEmailTests(unittest.IsolatedAsyncioTestCase):
         subj = "RE: Guten Tag, Arbeitsleuchte 360° LED 12000 Lumen noch verfügbar?"
 
         with patch(
+            "services.offer_storage.pick_offer_for_incoming_reply",
+            new=AsyncMock(return_value=None),
+        ), patch(
             "services.incoming_validated_offer.resolve_inbound_by_validated_email",
             new=AsyncMock(return_value=(gta, "validated_email_one_lot")),
         ), patch(

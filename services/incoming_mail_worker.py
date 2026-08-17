@@ -978,14 +978,9 @@ def _extract_reply_only_preview(raw: str) -> str:
 
 
 def _service_label_from_link(link: str) -> str:
-    l = (link or "").lower()
-    if "ricardo.ch" in l:
-        return "ricardo.ch"
-    if "tutti.ch" in l:
-        return "tutti.ch"
-    if "facebook.com" in l:
-        return "facebook.com"
-    return ""
+    from services.offer_storage import marketplace_service_label_from_link
+
+    return marketplace_service_label_from_link(link)
 
 
 def _service_display_label(label: str | None) -> str:
@@ -1286,11 +1281,6 @@ def render_mail_text_chunks(
     translation: str | None = None,
 ) -> list[str]:
     shown = _ensure_multiline_for_expandable(_clean_mail_body_for_card((body or "").strip()))
-
-    if not offer_id:
-        product_title = None
-        offer_price = None
-        service_label = None
 
     extra = ""
     lid = (link_id or "").strip()

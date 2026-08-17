@@ -11,7 +11,7 @@ from aiogram import Router, F
 from aiogram.filters import Command
 from aiogram.types import Message, FSInputFile
 
-from sqlalchemy import select, delete
+from sqlalchemy import select
 
 from database import Session
 from models import Offer, OfferEmail, Domain
@@ -47,7 +47,7 @@ router = Router()
 
 logger = logging.getLogger(__name__)
 
-REPLACE_OLD_FOR_USER = True
+REPLACE_OLD_FOR_USER = False
 REQUIRE_FIRST_AND_LAST = False
 PROGRESS_UPDATE_INTERVAL = 3  # seconds
 # Одна валидная почта на продавца → один OfferEmail, без путаницы при AQUA и входящих.
@@ -741,10 +741,7 @@ async def _run_validation_pipeline_inner(
             await session.commit()
 
         append_to_active_mailing = await is_user_mailing_active(tg_id)
-        if REPLACE_OLD_FOR_USER and not append_to_active_mailing:
-            uid = int(user.id)
-            await session.execute(delete(Offer).where(Offer.user_id == uid))
-            await session.commit()
+        # Не сносим offers: тот же item_link = тот же id (фото/ссылка после деплоя).
 
         from services.mailing_reset import get_mailing_reset_skip_emails
 

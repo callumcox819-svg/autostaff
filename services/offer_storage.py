@@ -740,6 +740,62 @@ async def list_offers_for_validated_contact_email(
     return out
 
 
+async def pick_offer_for_incoming_reply(
+    session,
+    *,
+    user_id: int,
+    from_email: str,
+    subject: str = "",
+    from_name: str = "",
+    inbox_email: str | None = None,
+) -> Offer | None:
+    """Как work88work: 1 validated email → 1 лот. Несколько → тема Re: / журнал /send."""
+    del from_name
+    bound = await list_offers_for_validated_contact_email(
+        session,
+        user_id=int(user_id),
+        contact_email=from_email,
+        limit=40,
+    )
+    if not bound:
+        bound = await _offers_from_offer_email_rows(
+            session, user_id=int(user_id), contact_email=from_email
+        )
+    if not bound:
+        return None
+    if len(bound) == 1:
+        return bound[0]
+
+    from services.subject_offer import offer_title_from_inbound_subject
+
+    core = (offer_title_from_inbound_subject(subject) or "").strip().lower()
+    if core and len(core) >= 4:
+        hits: list[Offer] = []
+        for off in bound:
+            title = (offer_effective_title(off) or "").strip().lower()
+            if title and (title == core or title in core or core in title):
+                hits.append(off)
+        if len(hits) == 1:
+            return hits[0]
+
+    if (inbox_email or "").strip():
+        from services.mailing_send_log import resolve_mailing_reply_context
+
+        ctx = await resolve_mailing_reply_context(
+            session,
+            user_id=int(user_id),
+            inbox_email=inbox_email or "",
+            subject=subject,
+            from_email=from_email,
+            from_name="",
+        )
+        if ctx:
+            for off in bound:
+                if int(off.id) == int(ctx.offer_id):
+                    return off
+    return None
+
+
 async def _offers_from_offer_email_rows(
     session,
     *,
@@ -970,11 +1026,7 @@ async def find_offer_for_mailed_seller_reply(
         return None
 
     if len(table) == 1:
-        from services.incoming_lead_resolve import inbound_thread_binds_offer
-
-        if inbound_thread_binds_offer(subj, body_text or "", table[0]):
-            return table[0]
-        return None
+        return table[0]
 
     pool = await inbound_seller_offer_pool(
         session, user_id=int(user_id), contact_email=contact, limit=20
@@ -983,19 +1035,7 @@ async def find_offer_for_mailed_seller_reply(
     pool = bindable or pool
 
     if len(pool) == 1:
-        from services.incoming_lead_resolve import inbound_thread_binds_offer
-
-        if inbound_thread_binds_offer(subj, body_text or "", pool[0]):
-            return pool[0]
-        off_t = await find_offer_by_product_title_in_subject(
-            session,
-            user_id=int(user_id),
-            subject=subj,
-            contact_email=contact,
-        )
-        if off_t:
-            return off_t
-        return None
+        return pool[0]
 
     if pool:
         for subj_try in subjects_for_inbound_resolve(subj, body_text or ""):
@@ -1163,6 +1203,20 @@ def marketplace_service_label_from_link(link: str) -> str:
         return "ricardo.ch"
     if "tutti.ch" in u:
         return "tutti.ch"
+    if "kleinanzeigen.de" in u or "ebay-kleinanzeigen" in u:
+        return "Kleinanzeigen"
+    if "2dehands.be" in u or "2ememain.be" in u:
+        return "2dehands.be"
+    if "marktplaats.nl" in u:
+        return "marktplaats.nl"
+    if "anibis.ch" in u:
+        return "anibis.ch"
+    if "post.ch" in u or "posta.ch" in u:
+        return "post.ch"
+    if "ebay." in u:
+        return "ebay"
+    if "facebook.com" in u or "fb.com" in u:
+        return "Facebook.com"
     return ""
 
 
@@ -1289,6 +1343,16 @@ async def save_all_offers_from_import(
     output_rows: list[dict[str, Any]] = []
     offer_batch: list[tuple[Offer, list[str]]] = []
     seen_link_keys: set[str] = set()
+    existing_rows = (
+        await session.execute(
+            sa_select(Offer).where(Offer.user_id == int(user_id))
+        )
+    ).scalars().all()
+    by_link: dict[str, Offer] = {}
+    for off in existing_rows:
+        lk_ex = link_key(offer_effective_link(off))
+        if lk_ex and lk_ex not in by_link:
+            by_link[lk_ex] = off
 
     work: list[tuple[dict[str, Any], dict[str, Any] | None]] = []
     for row in validated_rows or []:
@@ -1332,8 +1396,6 @@ async def save_all_offers_from_import(
         if not picked:
             continue
         canon = normalize_incoming_seller_email(picked[0]) or picked[0].strip().lower()
-        if canon in reserved_emails:
-            continue
 
         payload = dict(it)
         payload.setdefault(
@@ -1354,16 +1416,32 @@ async def save_all_offers_from_import(
         if picked:
             payload["validated_emails"] = list(picked)
 
-        offer = Offer(
-            user_id=int(user_id),
-            person_name=fields["person_name"] or None,
-            title=fields["title"] or None,
-            price=fields["price"] or None,
-            link=fields["link"] or None,
-            photo=fields["photo"] or None,
-            raw_json=json.dumps(payload, ensure_ascii=False),
-        )
-        session.add(offer)
+        lk_save = link_key(fields["link"] or void_link)
+        offer = by_link.get(lk_save) if lk_save else None
+        if offer is None and canon in reserved_emails:
+            continue
+
+        raw_dump = json.dumps(payload, ensure_ascii=False)
+        if offer is not None:
+            offer.person_name = fields["person_name"] or offer.person_name
+            offer.title = fields["title"] or offer.title
+            offer.price = fields["price"] or offer.price
+            offer.link = fields["link"] or offer.link
+            offer.photo = fields["photo"] or offer.photo
+            offer.raw_json = raw_dump
+        else:
+            offer = Offer(
+                user_id=int(user_id),
+                person_name=fields["person_name"] or None,
+                title=fields["title"] or None,
+                price=fields["price"] or None,
+                link=fields["link"] or None,
+                photo=fields["photo"] or None,
+                raw_json=raw_dump,
+            )
+            session.add(offer)
+            if lk_save:
+                by_link[lk_save] = offer
         if fields["link"]:
             ensure_offer_link_column(offer, fields["link"])
         offers_saved += 1

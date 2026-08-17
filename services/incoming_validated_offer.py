@@ -41,17 +41,14 @@ def inbound_card_inbox_label(
 
 
 def offer_inbound_snapshot(offer: Offer) -> dict:
+    from services.offer_storage import marketplace_service_label_from_link
+
     link = (offer_effective_link(offer) or "").strip()
-    svc = ""
-    if "ricardo.ch" in link.lower():
-        svc = "ricardo.ch"
-    elif "tutti.ch" in link.lower():
-        svc = "tutti.ch"
     return {
         "product_title": (offer_effective_title(offer) or "").strip(),
         "offer_price": (offer_effective_price(offer, default="") or "").strip(),
         "photo_url": (offer_effective_photo(offer) or "").strip(),
-        "service_label": svc,
+        "service_label": marketplace_service_label_from_link(link),
         "listing_url": link,
     }
 
@@ -80,15 +77,9 @@ async def resolve_inbound_by_validated_email(
     hits = await list_offers_for_validated_contact_email(
         session, user_id=int(user_id), contact_email=contact, limit=40
     )
-    from services.incoming_lead_resolve import inbound_thread_binds_offer
-    from services.offer_matching import subject_is_informative
 
     if len(hits) == 1:
-        only = hits[0]
-        if inbound_thread_binds_offer(subject, body_text, only):
-            return only, "validated_email_one_lot"
-        if not subject_is_informative(subject):
-            return only, "validated_email_one_lot"
+        return hits[0], "validated_email_one_lot"
     if len(hits) > 1:
         pick = await find_single_offer_for_seller_contact_email(
             session,
@@ -105,9 +96,5 @@ async def resolve_inbound_by_validated_email(
         session, user_id=int(user_id), contact_email=contact
     )
     if len(hits) == 1:
-        only = hits[0]
-        if inbound_thread_binds_offer(subject, body_text, only):
-            return only, "validated_email_one_lot"
-        if not subject_is_informative(subject):
-            return only, "validated_email_one_lot"
+        return hits[0], "validated_email_one_lot"
     return None, ""

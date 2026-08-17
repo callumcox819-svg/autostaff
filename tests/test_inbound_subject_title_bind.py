@@ -19,6 +19,9 @@ class SubjectTitleInboundBindTests(unittest.IsolatedAsyncioTestCase):
         subj = "RE: Interesse an Kinderbett Massivholz, Qualitätsmatratze, abziehbar wie neu"
 
         with patch(
+            "services.offer_storage.pick_offer_for_incoming_reply",
+            new=AsyncMock(return_value=None),
+        ), patch(
             "services.incoming_lead_resolve._resolve_offer_from_mailing_thread",
             new=AsyncMock(return_value=(None, "")),
         ), patch(

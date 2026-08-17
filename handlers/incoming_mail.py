@@ -526,7 +526,7 @@ async def _bg_incoming_smtp(
             else:
                 await bot.send_message(chat_id, f"{html_emoji('ok')} Отправлено.", parse_mode="HTML")
         else:
-            err_s = _e(err or "unknown")
+            err_s = _e(_smtp_user_error(err or "unknown"))
             await bot.send_message(chat_id, f"{html_emoji('fail')} Ошибка SMTP:\n<code>{err_s}</code>", parse_mode="HTML")
 
     if not bg_start(user_id, "smtp", _job()):
@@ -580,7 +580,7 @@ async def _bg_message_smtp(
             else:
                 await bot.send_message(chat_id, f"{html_emoji('ok')} Отправлено.", parse_mode="HTML")
         else:
-            err_s = _e(err or "unknown")
+            err_s = _e(_smtp_user_error(err or "unknown"))
             await bot.send_message(chat_id, f"{html_emoji('fail')} Ошибка SMTP:\n<code>{err_s}</code>", parse_mode="HTML")
 
     if not bg_start(user_id, "smtp", _job()):
@@ -1421,6 +1421,22 @@ async def _resolve_reply_recipient(
 
 def _e(s: str) -> str:
     return html.escape(s or "", quote=False)
+
+
+def _smtp_user_error(err: str | None) -> str:
+    raw = (err or "unknown").strip()
+    blob = raw.lower()
+    if (
+        "smtpserverdisconnected" in blob
+        or "connection unexpectedly closed" in blob
+        or ":disconnect:" in blob
+        or "disconnect|" in blob
+    ):
+        return (
+            "Gmail оборвал SMTP через прокси. "
+            "Проверьте прокси и нажмите пресет ещё раз."
+        )
+    return raw[:350]
 
 
 def _clean(v: str | None) -> str:

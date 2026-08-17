@@ -200,6 +200,35 @@ def _ensure_smtp_http_connect_patch() -> None:
     _SMTP_GETSOCKET_PATCHED = True
 
 
+def mailing_socket_as_stdlib(sock, timeout: float):
+    """
+    SSL/STARTTLS на PySocks socksocket часто рвёт сессию
+    (SMTPServerDisconnected). После SOCKS handshake берём обычный TCP fd.
+    """
+    import socket as stdlib
+
+    if type(sock) is stdlib.socket:
+        try:
+            sock.settimeout(float(timeout))
+        except Exception:
+            pass
+        return sock
+    try:
+        family = getattr(sock, "family", stdlib.AF_INET)
+        sock_type = getattr(sock, "type", stdlib.SOCK_STREAM)
+        proto = getattr(sock, "proto", 0)
+        fd = sock.detach()
+        out = stdlib.socket(family, sock_type, proto, fileno=fd)
+        out.settimeout(float(timeout))
+        return out
+    except Exception:
+        try:
+            sock.settimeout(float(timeout))
+        except Exception:
+            pass
+        return sock
+
+
 def connect_via_mailing_proxy(
     proxy: Proxy,
     dest_host: str,
@@ -217,12 +246,13 @@ def connect_via_mailing_proxy(
         )
 
     if is_http_proxy(proxy):
-        return _http_proxy_tunnel_socket(
+        sock = _http_proxy_tunnel_socket(
             proxy,
             str(dest_host).strip(),
             int(dest_port),
             timeout=float(timeout),
         )
+        return mailing_socket_as_stdlib(sock, timeout)
 
     import socks
 
@@ -241,7 +271,7 @@ def connect_via_mailing_proxy(
     )
     sock.settimeout(float(timeout))
     sock.connect((str(dest_host).strip(), int(dest_port)))
-    return sock
+    return mailing_socket_as_stdlib(sock, timeout)
 
 
 async def choose_proxy_for_user(

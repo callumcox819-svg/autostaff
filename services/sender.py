@@ -484,6 +484,8 @@ def normalize_send_error(err: str | None) -> str:
     t = s.lower()
     if _is_smtp_timeout_text(s):
         return _marker("SMTP_TIMEOUT", "timeout", s)
+    if is_transient_connection_error(s):
+        return _marker("SMTP_TIMEOUT", "disconnect", s)
     if any(re.search(p, t) for p in _PROXY_PATTERNS_STRICT):
         return _marker("PROXY_ERROR", "socks", s)
     if _is_hard_bounce(None, t):
@@ -574,6 +576,39 @@ def _marker(kind: str, code: Optional[str], text: str) -> str:
     if text_s:
         return f"{kind}:{text_s}"
     return kind
+
+
+def smtp_send_endpoints(host: str, port: int) -> list[tuple[str, int, bool]]:
+    """(host, port, implicit_tls). :587 STARTTLS, затем :465 если Gmail рвёт сессию."""
+    host_s = (host or "").strip()
+    port_i = int(port or 0)
+    implicit = port_i == 465
+    out = [(host_s, port_i, implicit)]
+    if port_i == 587:
+        out.append((host_s, 465, True))
+    elif port_i == 465:
+        out.append((host_s, 587, False))
+    return out
+
+
+def _result_from_smtp_exception(e: Exception) -> Tuple[bool, Optional[str], Optional[str]]:
+    code, text = _extract_code_text_from_exception(e)
+    blob = f"{type(e).__name__}: {text or e}"
+    if _is_proxy_error(e, text):
+        return False, _marker("PROXY_ERROR", code or "socks", text or str(e)), None
+    if _is_smtp_timeout_text(text or str(e)) or is_transient_connection_error(blob):
+        return False, _marker("SMTP_TIMEOUT", code or "disconnect", text or str(e)), None
+    if _is_invalid_creds(code, text):
+        return False, _marker("ACCOUNT_INVALID_CREDENTIALS", code, text), None
+    if _is_web_login_required(text):
+        return False, _marker("ACCOUNT_WEB_LOGIN_REQUIRED", code, text), None
+    if _is_rate_limit(code, text):
+        return False, _marker("ACCOUNT_RATE_LIMIT", code, text), None
+    if _is_blocked(code, text):
+        return False, _marker("ACCOUNT_BLOCKED", code, text), None
+    if _is_hard_bounce(code, text):
+        return False, _marker("RECIPIENT_DEAD", code, text), None
+    return False, f"{type(e).__name__}: {code or ''} {text}".strip() or str(e), None
 
 
 def _send_plain_sync(
@@ -679,6 +714,8 @@ def _send_plain_sync_via_isolated_proxy(
     for_mailing: bool = False,
 ) -> Tuple[bool, Optional[str], Optional[str]]:
     """SMTP через свой SOCKS/HTTP-сокет (без глобального PySocks) — можно параллелить ящики."""
+    import ssl as _ssl
+
     from services.smtp_account_check import _connect_smtp_via_socks
 
     if "{{" in (body or ""):
@@ -694,56 +731,78 @@ def _send_plain_sync_via_isolated_proxy(
         for_mailing=for_mailing,
     )
     tmo = float(smtp_timeout_sec if smtp_timeout_sec is not None else SMTP_TIMEOUT_SEC)
-    s: smtplib.SMTP | None = None
-    try:
-        s = _connect_smtp_via_socks(proxy, host, port, timeout=tmo)
-        _smtp_ehlo(s)
-        s.starttls()
-        _smtp_ehlo(s)
-        s.login(account.email, (account.password or "").strip())
+    last: Tuple[bool, Optional[str], Optional[str]] = (False, None, None)
 
-        refused = s.send_message(msg, from_addr=account.email, to_addrs=[to_email])
-        if refused:
-            logger.warning("[SMTP isolated] Recipient refused: %s", refused)
-            return False, "RECIPIENT_REFUSED", None
-        if not _confirm_smtp_session(s):
-            return False, _marker("SMTP_SESSION_LOST", None, "connection lost after DATA"), None
+    for dest_host, dest_port, implicit_tls in smtp_send_endpoints(host, port):
+        s: smtplib.SMTP | None = None
+        try:
+            s = _connect_smtp_via_socks(
+                proxy,
+                dest_host,
+                dest_port,
+                timeout=tmo,
+                implicit_tls=implicit_tls,
+            )
+            _smtp_ehlo(s)
+            if not implicit_tls:
+                s.starttls(context=_ssl.create_default_context())
+                _smtp_ehlo(s)
+            s.login(account.email, (account.password or "").strip())
 
-        msgid = msg.get("Message-ID")
-        logger.info(
-            "[SMTP isolated] %s -> %s via proxy_id=%s subject=%r",
-            account.email,
-            to_email,
-            getattr(proxy, "id", "?"),
-            (subject or "")[:60],
-        )
-        return True, None, msgid
-    except Exception as e:
-        code, text = _extract_code_text_from_exception(e)
-        if _is_proxy_error(e, text):
-            return False, _marker("PROXY_ERROR", code or "socks", text or str(e)), None
-        if _is_smtp_timeout_text(text or str(e)):
-            return False, _marker("SMTP_TIMEOUT", code or "timeout", text or str(e)), None
-        if _is_invalid_creds(code, text):
-            return False, _marker("ACCOUNT_INVALID_CREDENTIALS", code, text), None
-        if _is_web_login_required(text):
-            return False, _marker("ACCOUNT_WEB_LOGIN_REQUIRED", code, text), None
-        if _is_rate_limit(code, text):
-            return False, _marker("ACCOUNT_RATE_LIMIT", code, text), None
-        if _is_blocked(code, text):
-            return False, _marker("ACCOUNT_BLOCKED", code, text), None
-        if _is_hard_bounce(code, text):
-            return False, _marker("RECIPIENT_DEAD", code, text), None
-        return False, f"{type(e).__name__}: {code or ''} {text}".strip() or str(e), None
-    finally:
-        if s is not None:
-            try:
-                s.quit()
-            except Exception:
+            refused = s.send_message(msg, from_addr=account.email, to_addrs=[to_email])
+            if refused:
+                logger.warning("[SMTP isolated] Recipient refused: %s", refused)
+                return False, "RECIPIENT_REFUSED", None
+            if for_mailing and not _confirm_smtp_session(s):
+                last = (
+                    False,
+                    _marker("SMTP_SESSION_LOST", None, "connection lost after DATA"),
+                    None,
+                )
+                if should_retry_send_with_other_proxy(last[1]):
+                    logger.warning(
+                        "[SMTP isolated] %s:%s tls=%s session lost — next endpoint",
+                        dest_host,
+                        dest_port,
+                        implicit_tls,
+                    )
+                    continue
+                return last
+
+            msgid = msg.get("Message-ID")
+            logger.info(
+                "[SMTP isolated] %s -> %s via proxy_id=%s %s:%s tls=%s subject=%r",
+                account.email,
+                to_email,
+                getattr(proxy, "id", "?"),
+                dest_host,
+                dest_port,
+                implicit_tls,
+                (subject or "")[:60],
+            )
+            return True, None, msgid
+        except Exception as e:
+            last = _result_from_smtp_exception(e)
+            logger.warning(
+                "[SMTP isolated] fail %s:%s tls=%s err=%s",
+                dest_host,
+                dest_port,
+                implicit_tls,
+                (last[1] or "")[:180],
+            )
+            if not should_retry_send_with_other_proxy(last[1]):
+                return last
+        finally:
+            if s is not None:
                 try:
-                    s.close()
+                    s.quit()
                 except Exception:
-                    pass
+                    try:
+                        s.close()
+                    except Exception:
+                        pass
+
+    return last
 
 
 async def send_email_via_account(

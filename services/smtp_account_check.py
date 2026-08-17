@@ -6,6 +6,7 @@ import asyncio
 import logging
 import os
 import smtplib
+import ssl
 from dataclasses import dataclass
 from typing import Callable, Awaitable, List, Optional, Tuple
 
@@ -173,25 +174,72 @@ def _smtp_check_on_client(
     return "active", None
 
 
-def _connect_smtp_via_socks(proxy: Proxy, host: str, port: int, *, timeout: float) -> smtplib.SMTP:
+class _MailingProxySMTP(smtplib.SMTP):
+    """SMTP через изолированный SOCKS/HTTP-сокет (без глобального PySocks)."""
+
+    def __init__(self, mailing_proxy: Proxy, *args, **kwargs):
+        self._mailing_proxy = mailing_proxy
+        super().__init__(*args, **kwargs)
+
+    def _get_socket(self, host, port, timeout):  # type: ignore[override]
+        from proxy_manager import connect_via_mailing_proxy, mailing_socket_as_stdlib
+
+        sock = connect_via_mailing_proxy(
+            self._mailing_proxy, str(host), int(port), timeout=float(timeout)
+        )
+        return mailing_socket_as_stdlib(sock, timeout)
+
+
+class _MailingProxySMTP_SSL(smtplib.SMTP_SSL):
+    """SMTPS :465 через тот же изолированный прокси."""
+
+    def __init__(self, mailing_proxy: Proxy, *args, **kwargs):
+        self._mailing_proxy = mailing_proxy
+        super().__init__(*args, **kwargs)
+
+    def _get_socket(self, host, port, timeout):  # type: ignore[override]
+        from proxy_manager import connect_via_mailing_proxy, mailing_socket_as_stdlib
+
+        sock = connect_via_mailing_proxy(
+            self._mailing_proxy, str(host), int(port), timeout=float(timeout)
+        )
+        sock = mailing_socket_as_stdlib(sock, timeout)
+        ctx = self.context or ssl.create_default_context()
+        return ctx.wrap_socket(sock, server_hostname=self._host or host)
+
+
+def _connect_smtp_via_socks(
+    proxy: Proxy,
+    host: str,
+    port: int,
+    *,
+    timeout: float,
+    implicit_tls: bool = False,
+) -> smtplib.SMTP:
     """Отдельное соединение через SOCKS/HTTP без глобального PySocks-патча."""
-    from proxy_manager import connect_via_mailing_proxy, is_mailing_proxy
+    from proxy_manager import is_mailing_proxy
 
     if not is_mailing_proxy(proxy):
         raise ValueError(f"Unsupported proxy type: {(proxy.type or '?')!r}")
 
-    sock = connect_via_mailing_proxy(proxy, host, int(port), timeout=float(timeout))
-
-    client = smtplib.SMTP(timeout=timeout)
-    client.sock = sock
-    client.file = sock.makefile("rb")
-    client.host = host
-    # starttls() передаёт server_hostname=self._host (не .host) — иначе ValueError при фаст-рассылке
-    client._host = host
-    client.port = int(port)
-    code, _msg = client.getreply()
+    host_s = str(host).strip()
+    port_i = int(port)
+    if implicit_tls:
+        client: smtplib.SMTP = _MailingProxySMTP_SSL(
+            proxy,
+            timeout=timeout,
+            context=ssl.create_default_context(),
+        )
+    else:
+        client = _MailingProxySMTP(proxy, timeout=timeout)
+    client._host = host_s
+    code, msg = client.connect(host_s, port_i)
     if code != 220:
-        raise smtplib.SMTPConnectError(code, repr(_msg))
+        try:
+            client.close()
+        except Exception:
+            pass
+        raise smtplib.SMTPConnectError(code, repr(msg))
     return client
 
 

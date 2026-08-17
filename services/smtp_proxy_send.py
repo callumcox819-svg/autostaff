@@ -4,6 +4,7 @@ from __future__ import annotations
 import logging
 import os
 import random
+import time
 from typing import List, Optional, Tuple
 
 from sqlalchemy import or_ as sa_or
@@ -285,6 +286,7 @@ async def send_email_via_account_with_proxy(
             if not should_retry_send_with_other_proxy(err):
                 break
             if attempt < attempts:
+                time.sleep(1.2)
                 continue
             break
 

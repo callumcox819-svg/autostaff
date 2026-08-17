@@ -1341,7 +1341,7 @@ async def save_all_offers_from_import(
     offers_with_email = 0
     email_rows_saved = 0
     output_rows: list[dict[str, Any]] = []
-    offer_batch: list[tuple[Offer, list[str]]] = []
+    offer_batch: list[tuple[Offer, list[str], dict[str, Any]]] = []
     seen_link_keys: set[str] = set()
     existing_rows = (
         await session.execute(
@@ -1349,10 +1349,15 @@ async def save_all_offers_from_import(
         )
     ).scalars().all()
     by_link: dict[str, Offer] = {}
+    by_email: dict[str, Offer] = {}
     for off in existing_rows:
         lk_ex = link_key(offer_effective_link(off))
         if lk_ex and lk_ex not in by_link:
             by_link[lk_ex] = off
+        for em in offer_contact_emails(off):
+            c = normalize_incoming_seller_email(em)
+            if c and c not in by_email:
+                by_email[c] = off
 
     work: list[tuple[dict[str, Any], dict[str, Any] | None]] = []
     for row in validated_rows or []:
@@ -1419,6 +1424,13 @@ async def save_all_offers_from_import(
         lk_save = link_key(fields["link"] or void_link)
         offer = by_link.get(lk_save) if lk_save else None
         if offer is None and canon in reserved_emails:
+            prev = by_email.get(canon)
+            if prev is not None:
+                payload["offer_id"] = int(prev.id)
+                payload["validated_emails"] = list(picked)
+                output_rows.append(payload)
+                if lk_save:
+                    seen_link_keys.add(lk_save)
             continue
 
         raw_dump = json.dumps(payload, ensure_ascii=False)
@@ -1449,12 +1461,12 @@ async def save_all_offers_from_import(
         queued = [em for em in picked[:max_emails_per_offer] if em.lower() not in skip_q]
         if queued:
             offers_with_email += 1
-        offer_batch.append((offer, queued))
+        offer_batch.append((offer, queued, payload))
         output_rows.append(payload)
 
     await session.flush()
 
-    for (offer, queued), payload in zip(offer_batch, output_rows):
+    for offer, queued, payload in offer_batch:
         for em in queued:
             canon = normalize_incoming_seller_email(em) or em.strip().lower()
             if canon in reserved_emails:
@@ -1469,5 +1481,56 @@ async def save_all_offers_from_import(
             reserved_emails.add(canon)
             email_rows_saved += 1
         payload["offer_id"] = int(offer.id)
+
+    from services.seller_blacklist import seller_name_key, seller_name_key_from_item
+
+    emitted_oids: set[int] = set()
+    for payload in output_rows:
+        try:
+            emitted_oids.add(int(payload.get("offer_id")))
+        except (TypeError, ValueError):
+            pass
+
+    source_items = [it for it in (items or []) if isinstance(it, dict)]
+    json_links: set[str] = set()
+    json_names: set[str] = set()
+    for it in source_items:
+        fields = fields_from_item(it)
+        lk = link_key(fields["link"] or "")
+        if lk:
+            json_links.add(lk)
+        nk = seller_name_key_from_item(it) or seller_name_key(fields["person_name"])
+        if nk:
+            json_names.add(nk)
+
+    for off in existing_rows:
+        oid = int(off.id)
+        if oid in emitted_oids:
+            continue
+        lk = link_key(offer_effective_link(off))
+        nk = seller_name_key(str(off.person_name or ""))
+        if not nk:
+            nk = seller_name_key_from_item(parse_offer_raw(getattr(off, "raw_json", None)))
+        in_file = bool(lk and lk in json_links) or bool(nk and nk in json_names)
+        if not in_file:
+            continue
+        emails: list[str] = []
+        for em in offer_contact_emails(off):
+            c = normalize_incoming_seller_email(em) or str(em or "").strip().lower()
+            if c and c not in emails:
+                emails.append(c)
+        if not emails:
+            continue
+        raw = parse_offer_raw(getattr(off, "raw_json", None))
+        payload = dict(raw) if raw else {}
+        payload["item_person_name"] = str(off.person_name or payload.get("item_person_name") or "")
+        if off.link or payload.get("item_link"):
+            payload["item_link"] = str(off.link or payload.get("item_link") or "")
+        if off.title or payload.get("item_title"):
+            payload["item_title"] = str(off.title or payload.get("item_title") or "")
+        payload["validated_emails"] = emails
+        payload["offer_id"] = oid
+        output_rows.append(payload)
+        emitted_oids.add(oid)
 
     return offers_saved, offers_with_email, email_rows_saved, output_rows

@@ -57,11 +57,33 @@ class ValidationConfig:
     use_ssl_verify: bool = True
     # Личный ЧС имён продавцов (Maria Johansen и т.д.) — повторно не валидировать
     seller_name_keys: set[str] | None = None
+    # Уже есть OfferEmail — не гоняем API, это не ЧС
+    already_validated_names: set[str] | None = None
 
 
 # -------------------------
 # Helpers: name normalization
 # -------------------------
+
+def classify_json_seller_skip(
+    name_key: str,
+    *,
+    blacklist: set[str],
+    already_validated: set[str],
+    batch_seen: set[str],
+) -> str | None:
+    """Почему продавца не гоняем в API. «already_in_db» — не ЧС."""
+    k = (name_key or "").strip().lower()
+    if not k:
+        return None
+    if k in blacklist:
+        return "blacklisted"
+    if k in already_validated:
+        return "already_in_db"
+    if k in batch_seen:
+        return "duplicates"
+    return None
+
 
 def _normalize_name(raw: str) -> str:
     return normalize_seller_name(raw)
@@ -507,6 +529,7 @@ async def _validate_offers_old(
                 "current_probe": "",
                 "short_nicks": 0,
                 "blacklisted": 0,
+                "already_in_db": 0,
                 "duplicates": 0,
                 "api_errors": 0,
                 "no_name": 0,
@@ -530,6 +553,7 @@ async def _validate_offers_old(
     from services.seller_blacklist import seller_name_key
 
     seller_bl = set(cfg.seller_name_keys or set())
+    already_validated = set(cfg.already_validated_names or set())
     batch_seen_names: set[str] = set()
     pending_seller_names: set[str] = set()
     if stats is not None:
@@ -548,14 +572,15 @@ async def _validate_offers_old(
             continue
 
         name_key = seller_name_key(raw_name)
-        if name_key and name_key in seller_bl:
-            if stats is not None:
-                stats["blacklisted"] = int(stats.get("blacklisted") or 0) + 1
-            continue
-
-        if name_key and name_key in batch_seen_names:
-            if stats is not None:
-                stats["blacklisted"] = int(stats.get("blacklisted") or 0) + 1
+        skip_why = classify_json_seller_skip(
+            name_key,
+            blacklist=seller_bl,
+            already_validated=already_validated,
+            batch_seen=batch_seen_names,
+        )
+        if skip_why and stats is not None:
+            stats[skip_why] = int(stats.get(skip_why) or 0) + 1
+        if skip_why:
             continue
 
         if _is_blacklisted(raw_name, user_blacklist):

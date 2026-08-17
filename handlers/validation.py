@@ -126,6 +126,7 @@ def _format_validation_status(
     offers_eligible: int = 0,
     listings_in_file: int = 0,
     no_name: int = 0,
+    already_in_db: int = 0,
 ) -> str:
     title = (
         f"{html_emoji('ok')} Подбор завершён"
@@ -172,25 +173,23 @@ def _format_validation_status(
         user_line,
         f"<code>{bar}</code> <b>{pct}%</b>",
     ]
-    bl_total = (
-        int(added_blacklist or 0)
-        + int(in_blacklist or 0)
-        + int(short_nicks or 0)
-        + int(no_name or 0)
-    )
+    bl_total = int(added_blacklist or 0) + int(in_blacklist or 0)
+    nick_total = int(short_nicks or 0) + int(no_name or 0)
+    already_n = int(already_in_db or 0)
     not_found = int(no_email_smtp if finished else no_email)
     if finished and int(listings_in_file or 0) > 0:
         lines.append("")
         lines.append(
             f"{html_emoji('presets')} В JSON: <b>{int(listings_in_file)}</b> объявлений · "
             f"в API: <b>{int(offers_eligible or 0)}</b> продавцов "
-            f"(1 имя = 1 проверка, остальные лоты — по email позже)"
+            f"(1 имя = 1 проверка)"
         )
     lines.extend(
         [
             "",
-            f"{html_emoji('email')} Добавлено: <b>{added}</b>",
-            f"{html_emoji('fail')} Пропуск (ЧС / ник / нет имени / повтор): <b>{bl_total}</b>",
+            f"{html_emoji('email')} Новых email: <b>{added}</b>",
+            f"{html_emoji('ok')} Уже в БД (не гоняем API): <b>{already_n}</b>",
+            f"{html_emoji('fail')} ЧС: <b>{bl_total}</b> · повтор имени в файле: <b>{int(duplicates or 0)}</b> · ник/нет имени: <b>{nick_total}</b>",
             f"{html_emoji('wait')} Без email (API): <b>{not_found}</b>",
         ]
     )
@@ -590,12 +589,19 @@ async def _run_validation_pipeline_inner(
         )
 
         append_active = await is_user_mailing_active(tg_id)
-        name_keys = await load_seller_name_keys(
+        chs_keys = await load_seller_name_keys(
             session,
             int(user_bl.id),
-            include_offer_names=bool(append_active),
+            include_offer_names=False,
         )
-        name_keys |= await load_seller_keys_with_validated_email(session, int(user_bl.id))
+        already_keys = await load_seller_keys_with_validated_email(session, int(user_bl.id))
+        if append_active:
+            with_offers = await load_seller_name_keys(
+                session,
+                int(user_bl.id),
+                include_offer_names=True,
+            )
+            already_keys |= with_offers - chs_keys
 
     from services.validemail_keys import validation_traffic_mode
 
@@ -610,7 +616,8 @@ async def _run_validation_pipeline_inner(
         require_first_and_last=REQUIRE_FIRST_AND_LAST,
         max_len=40,
         min_len=MIN_SELLER_LETTERS,
-        seller_name_keys=name_keys,
+        seller_name_keys=chs_keys,
+        already_validated_names=already_keys,
     )
 
     live_stats: dict = {
@@ -634,10 +641,11 @@ async def _run_validation_pipeline_inner(
         added = int(vstats.get("sellers_with_email") or 0)
         short_n = int(vstats.get("short_nicks") or 0)
         bl = int(vstats.get("blacklisted") or 0)
+        already_db = int(vstats.get("already_in_db") or 0)
         no_name = int(vstats.get("no_name") or 0)
         dup = int(vstats.get("duplicates") or 0)
         err = int(vstats.get("api_errors") or 0)
-        skip_fixed = short_n + bl + no_name
+        skip_fixed = short_n + bl + no_name + already_db + dup
         if finished:
             processed = total
         else:
@@ -686,6 +694,7 @@ async def _run_validation_pipeline_inner(
             offers_eligible=int(vstats.get("offers_eligible") or 0),
             listings_in_file=int(vstats.get("offers_total") or total_offers),
             no_name=int(vstats.get("no_name") or 0),
+            already_in_db=already_db,
         )
 
     try:
@@ -815,7 +824,8 @@ async def _run_validation_pipeline_inner(
                 message.answer_document(
                     FSInputFile(out_path),
                     caption=(
-                        f"{html_emoji('presets')} Результат · в БД {offers_saved}/{total_offers} · "
+                        f"{html_emoji('presets')} Результат · новых {offers_saved} · "
+                        f"в файле {len(output)}/{total_offers} · "
                         f"email {saved_email_count}{append_note}{skip_note}"
                     ),
                     parse_mode="HTML",

@@ -27,9 +27,10 @@ logger = logging.getLogger(__name__)
 
 NO_ACTIVE_PROXY = "PROXY_ERROR|no_active_proxy|No active proxy configured"
 
-# Ответ продавцу: тот же запас по времени, что и рассылка (login + DATA дольше, чем EHLO).
-REPLY_SMTP_TIMEOUT_SEC = max(20, min(90, int(os.getenv("REPLY_SMTP_TIMEOUT_SEC", "45"))))
+# Ответ продавцу: Loma/residential — login+STARTTLS+DATA, не 45 с.
+REPLY_SMTP_TIMEOUT_SEC = max(30, min(120, int(os.getenv("REPLY_SMTP_TIMEOUT_SEC", "75"))))
 REPLY_SMTP_MAX_PROXIES = max(1, min(6, int(os.getenv("REPLY_SMTP_MAX_PROXIES", "3"))))
+REPLY_SMTP_PROXY_RETRIES = max(1, min(4, int(os.getenv("REPLY_SMTP_PROXY_RETRIES", "3"))))
 
 # Рассылка /send: несколько SOCKS5, таймаут на каждую попытку.
 MAIL_SMTP_TIMEOUT_SEC = max(20, min(90, int(os.getenv("MAIL_SMTP_TIMEOUT_SEC", "45"))))
@@ -211,6 +212,11 @@ async def send_email_via_account_with_proxy(
     )
     # fast=True — только быстрые ответы в чате; рассылка всегда с MAIL_SMTP_TIMEOUT_SEC
     smtp_tmo = REPLY_SMTP_TIMEOUT_SEC if fast else MAIL_SMTP_TIMEOUT_SEC
+    if order:
+        from services.residential_proxy import is_residential_gateway, residential_smtp_timeout_sec
+
+        if is_residential_gateway(order[0]):
+            smtp_tmo = max(int(smtp_tmo), residential_smtp_timeout_sec())
 
     last_err: str | None = None
     last_msgid: str | None = None
@@ -218,62 +224,84 @@ async def send_email_via_account_with_proxy(
 
     for proxy in order:
         pid = int(proxy.id)
-        tried += 1
-        logger.info(
-            "[SMTP send] try proxy_id=%s %s:%s account=%s -> %s (%s/%s fast=%s sticky=%s)",
-            pid,
-            proxy.host,
-            proxy.port,
-            account.email,
-            to_email,
-            tried,
-            len(order),
-            fast,
-            sticky_proxy_id,
-        )
-        async with ProxySMTPContext(proxy):
-            ok, err, msgid = await send_email_via_account(
-                account,
+        attempts = REPLY_SMTP_PROXY_RETRIES if fast else 1
+        for attempt in range(1, attempts + 1):
+            tried += 1
+            logger.info(
+                "[SMTP send] try proxy_id=%s %s:%s account=%s -> %s (%s/%s fast=%s sticky=%s attempt=%s tmo=%ss)",
+                pid,
+                proxy.host,
+                proxy.port,
+                account.email,
                 to_email,
-                subject,
-                body,
-                sender_name=sender_name,
-                is_html=is_html,
-                smtp_timeout_sec=smtp_tmo,
+                tried,
+                len(order) * attempts,
+                fast,
+                sticky_proxy_id,
+                attempt,
+                smtp_tmo,
             )
-        err = normalize_send_error(err)
-        if ok:
-            _LAST_OK_PROXY_ID[int(user_id)] = pid
-            _LAST_OK_PROXY_BY_ACCOUNT[(int(user_id), int(account.id))] = pid
-            try:
-                await ProxyManager.note_proxy_success(session, pid)
-            except Exception:
-                pass
-            return True, err, msgid
+            if fast:
+                ok, err, msgid = await send_email_via_isolated_proxy(
+                    proxy,
+                    account,
+                    to_email,
+                    subject,
+                    body,
+                    sender_name=sender_name,
+                    is_html=is_html,
+                    smtp_timeout_sec=smtp_tmo,
+                )
+            else:
+                async with ProxySMTPContext(proxy):
+                    ok, err, msgid = await send_email_via_account(
+                        account,
+                        to_email,
+                        subject,
+                        body,
+                        sender_name=sender_name,
+                        is_html=is_html,
+                        smtp_timeout_sec=smtp_tmo,
+                    )
+            err = normalize_send_error(err)
+            if ok:
+                _LAST_OK_PROXY_ID[int(user_id)] = pid
+                _LAST_OK_PROXY_BY_ACCOUNT[(int(user_id), int(account.id))] = pid
+                try:
+                    await ProxyManager.note_proxy_success(session, pid)
+                except Exception:
+                    pass
+                return True, err, msgid
 
-        last_err = err
-        last_msgid = msgid
-        logger.warning(
-            "[SMTP send] fail proxy_id=%s account=%s err=%s",
-            pid,
-            account.email,
-            (err or "")[:200],
-        )
+            last_err = err
+            last_msgid = msgid
+            logger.warning(
+                "[SMTP send] fail proxy_id=%s account=%s err=%s attempt=%s",
+                pid,
+                account.email,
+                (err or "")[:200],
+                attempt,
+            )
+            if not should_retry_send_with_other_proxy(err):
+                break
+            if attempt < attempts:
+                continue
+            break
 
-        dead = _proxy_deactivate_on_fail(mailing_fast=mailing_fast, err=err)
+        dead = _proxy_deactivate_on_fail(mailing_fast=mailing_fast, err=last_err)
         try:
             await ProxyManager.note_proxy_failure(
                 session,
                 pid,
-                (err or "")[:500],
+                (last_err or "")[:500],
                 deactivate=dead,
                 from_mailing=True,
             )
         except Exception:
             pass
 
-        if not should_retry_send_with_other_proxy(err):
-            return False, err, last_msgid
+        if not should_retry_send_with_other_proxy(last_err):
+            return False, last_err, last_msgid
 
     hint = (
         f"Ни один из {tried} прокси не достучался до Gmail SMTP "

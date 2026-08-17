@@ -152,6 +152,14 @@ def _offer_title_matches_needle(needle: str, title: str) -> bool:
         return True
     if len(n) >= 4 and re.search(rf"(?<![a-z0-9]){re.escape(n)}(?![a-z0-9])", t):
         return True
+    n_toks = _distinctive_listing_tokens(n)
+    t_toks = set(_distinctive_listing_tokens(t))
+    if len(n_toks) >= 2 and t_toks:
+        if n_toks[0] in t_toks and n_toks[1] in t_toks:
+            return True
+        hits = sum(1 for tok in n_toks[:6] if tok in t_toks)
+        if hits >= min(3, len(n_toks[:4])):
+            return True
     return False
 
 

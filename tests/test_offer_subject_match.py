@@ -76,6 +76,14 @@ class OfferSubjectMatchTests(unittest.TestCase):
         self.assertTrue(_offer_title_matches_needle("lampe", "Lampe"))
         self.assertFalse(_offer_title_matches_needle("lampe", "Stehlampe schwarz"))
 
+    def test_elegoo_tokens_match_listing_title(self):
+        from services.offer_matching import _offer_title_matches_needle, product_title_from_subject
+
+        needle = product_title_from_subject(
+            "Re: Kurze Anfrage zu Elegoo Neptune 2 - 3D Printer / 3D Drucker"
+        )
+        self.assertTrue(_offer_title_matches_needle(needle, "Elegoo Neptune 2 3D Drucker"))
+
     def test_sofa_generic_body_needle(self):
         from services.offer_matching import offer_needle_is_too_generic
         from services.subject_offer import primary_inbound_product_needle

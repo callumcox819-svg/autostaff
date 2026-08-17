@@ -9,7 +9,7 @@ import re
 from dataclasses import dataclass, field
 
 from aiogram import Router, F
-from aiogram.types import BufferedInputFile, CallbackQuery, Message
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import StatesGroup, State
 
@@ -87,10 +87,14 @@ async def _run_aqua_link_bg(callback: CallbackQuery, work) -> None:
 
 
 def _incoming_smtp_wait_sec() -> int:
-    from services.smtp_proxy_send import REPLY_SMTP_MAX_PROXIES, REPLY_SMTP_TIMEOUT_SEC
+    from services.smtp_proxy_send import (
+        REPLY_SMTP_MAX_PROXIES,
+        REPLY_SMTP_PROXY_RETRIES,
+        REPLY_SMTP_TIMEOUT_SEC,
+    )
 
-    default = REPLY_SMTP_MAX_PROXIES * REPLY_SMTP_TIMEOUT_SEC + 20
-    return max(45, int(os.getenv("INCOMING_SMTP_TIMEOUT_SEC", str(default))))
+    default = REPLY_SMTP_MAX_PROXIES * REPLY_SMTP_TIMEOUT_SEC * REPLY_SMTP_PROXY_RETRIES + 30
+    return max(90, min(240, int(os.getenv("INCOMING_SMTP_TIMEOUT_SEC", str(int(default))))))
 REPLY_CHOICE_TEXT = "Выберите вариант"
 
 COUNTRY_KEY = "country"
@@ -643,6 +647,12 @@ async def _open_mail_reply_menu(
             if mail_row:
                 acc_id = int(mail_row.account_id)
                 uid_key = str(mail_row.imap_uid)
+                await _rebind_mail_card_for_reply(
+                    session,
+                    mail_row,
+                    tg_user_id=int(callback.from_user.id),
+                    tg_message=callback.message,
+                )
 
         inbox_label = ""
         try:
@@ -932,6 +942,53 @@ async def _sync_incoming_mail_offer_with_card(
     if outgoing_subj:
         mail.outgoing_mail_subject = (outgoing_subj or "")[:500]
     await session.flush()
+
+
+async def _rebind_mail_card_for_reply(
+    session,
+    mail: IncomingMail,
+    *,
+    tg_user_id: int,
+    tg_message: Message | None,
+) -> None:
+    """На «Написать ещё»: если лота нет — найти по теме и перерисовать карточку."""
+    if getattr(mail, "resolved_offer_id", None):
+        return
+    try:
+        await _sync_incoming_mail_offer_with_card(session, mail, tg_message=tg_message)
+        if not getattr(mail, "resolved_offer_id", None):
+            return
+        await session.commit()
+        if not tg_message:
+            return
+        text, kb = await build_mail_card_from_mail(session, mail)
+        try:
+            await tg_message.edit_text(text, reply_markup=kb, parse_mode="HTML")
+        except TelegramBadRequest:
+            pass
+        photo = (getattr(mail, "photo_url", None) or "").strip()
+        if photo:
+            from services.incoming_mail_worker import format_first_incoming_photo_caption
+
+            try:
+                await tg_message.bot.send_photo(
+                    chat_id=tg_message.chat.id,
+                    photo=photo,
+                    caption=format_first_incoming_photo_caption(
+                        product_title=(getattr(mail, "product_title", None) or "").strip() or None,
+                        offer_price=(getattr(mail, "offer_price", None) or "").strip() or None,
+                    ),
+                    parse_mode="HTML",
+                    reply_to_message_id=int(tg_message.message_id),
+                )
+            except Exception:
+                logger.exception("rebind photo failed mail_id=%s", getattr(mail, "id", None))
+    except Exception:
+        logger.exception("rebind mail card failed mail_id=%s", getattr(mail, "id", None))
+        try:
+            await session.rollback()
+        except Exception:
+            pass
 
 
 async def _bound_offer_from_incoming_mail(

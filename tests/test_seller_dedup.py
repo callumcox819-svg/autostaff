@@ -52,6 +52,18 @@ class SellerDedupTests(unittest.TestCase):
             "duplicates",
         )
 
+    def test_chs_only_from_saved_output_with_email(self):
+        from services.seller_blacklist import seller_keys_from_saved_output
+
+        keys = seller_keys_from_saved_output(
+            [
+                {"item_person_name": "Hans Mueller", "validated_emails": ["h@x.ch"]},
+                {"item_person_name": "No Mail", "validated_emails": []},
+                {"item_person_name": "Skip"},
+            ]
+        )
+        self.assertEqual(keys, {"hans mueller"})
+
     def test_status_separates_already_in_db_from_chs(self):
         from handlers.validation import _format_validation_status
 

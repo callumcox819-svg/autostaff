@@ -604,7 +604,7 @@ async def _run_validation_pipeline_inner(
             int(user_bl.id),
             include_offer_names=False,
         )
-        # ЧС без живого email не стопает API — иначе после /reset лоты не восстанавливаются.
+        # ЧС без живого email не стопает API (старые прогоны писали ЧС раньше, чем лот в БД).
         chs_keys &= already_keys
         if append_active:
             with_offers = await load_seller_name_keys(
@@ -748,24 +748,15 @@ async def _run_validation_pipeline_inner(
     validated_count = len(validated or [])
     eligible = int(live_stats.get("offers_eligible") or 0)
 
-    pending_names = live_stats.get("pending_seller_names") or set()
+    eligible = int(live_stats.get("offers_eligible") or 0)
+
     append_to_active_mailing = False
 
     async with Session() as session:
         user = await get_or_create_user(session, tg_id)
 
-        if pending_names:
-            from services.seller_blacklist import add_seller_name_blacklist_bulk
-
-            await add_seller_name_blacklist_bulk(session, int(user.id), pending_names)
-            await session.commit()
-
         append_to_active_mailing = await is_user_mailing_active(tg_id)
         # Не сносим offers: тот же item_link = тот же id (фото/ссылка после деплоя).
-
-        from services.mailing_reset import get_mailing_reset_skip_emails
-
-        skip_queue_emails = await get_mailing_reset_skip_emails(session, int(user.id))
 
         offers_saved, offers_with_email, saved_email_count, output = await save_all_offers_from_import(
             session,
@@ -774,9 +765,18 @@ async def _run_validation_pipeline_inner(
             validated_rows=validated or [],
             norm_email=_norm_email,
             max_emails_per_offer=MAX_EMAILS_PER_OFFER,
-            skip_queue_emails=skip_queue_emails,
         )
         await session.commit()
+
+        from services.seller_blacklist import (
+            add_seller_name_blacklist_bulk,
+            seller_keys_from_saved_output,
+        )
+
+        saved_name_keys = seller_keys_from_saved_output(output)
+        if saved_name_keys:
+            await add_seller_name_blacklist_bulk(session, int(user.id), saved_name_keys)
+            await session.commit()
 
         if append_to_active_mailing and saved_email_count > 0:
             from sqlalchemy import func as sql_func

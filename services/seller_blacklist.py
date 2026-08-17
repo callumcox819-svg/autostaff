@@ -22,6 +22,23 @@ def seller_name_key_from_item(item: dict) -> str:
     return seller_name_key(seller_name_from_item(item))
 
 
+def seller_keys_from_saved_output(output: list[dict] | None) -> set[str]:
+    """Имена, у которых в результате сохранения реально есть email."""
+    keys: set[str] = set()
+    for row in output or []:
+        if not isinstance(row, dict):
+            continue
+        emails = row.get("validated_emails") or row.get("emails") or []
+        if isinstance(emails, str):
+            emails = [emails]
+        if not any("@" in str(e or "") for e in emails):
+            continue
+        nk = seller_name_key_from_item(row)
+        if nk:
+            keys.add(nk)
+    return keys
+
+
 async def load_seller_name_keys(
     session,
     user_id: int,
@@ -97,8 +114,8 @@ async def add_seller_name_blacklist(
 async def load_seller_keys_with_validated_email(session, user_id: int) -> set[str]:
     """Имена продавцов с почтой: OfferEmail или validated_emails в raw_json.
 
-    После /reset очередь OfferEmail пустая, но лот в offers остаётся — имя
-    нельзя считать «пустым» и нельзя вечно держать только в ЧС без записи.
+    Если лот уже нет, а имя висит в ЧС — это не ручной /reset, а старый прогон
+    (ЧС писали до сохранения, либо лоты сносились при следующей валидации).
     """
     from services.offer_storage import offer_raw_has_validated_email, parse_offer_raw
 
@@ -147,7 +164,7 @@ async def prune_seller_blacklist_without_email(
     *,
     keep_keys: set[str],
 ) -> int:
-    """ЧС без живой почты — после wipe/reset такие имена снова идут в API."""
+    """ЧС без живой почты в БД: снова пускаем в API."""
     keep = {str(k or "").strip().lower() for k in (keep_keys or set()) if str(k or "").strip()}
     rows = (
         await session.execute(

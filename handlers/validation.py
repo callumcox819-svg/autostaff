@@ -524,6 +524,16 @@ async def _run_validation_pipeline_inner(
     user_line: str,
     tg_id: int,
 ) -> None:
+    try:
+        await status_msg.edit_text(
+            f"{html_emoji('search')} <b>Подбор email…</b>\n"
+            f"{user_line}\n"
+            f"В JSON: <b>{total_offers}</b> объявлений — запускаю API.",
+            parse_mode="HTML",
+        )
+    except Exception:
+        pass
+
     async with Session() as session:
         user = await get_or_create_user(session, tg_id)
 

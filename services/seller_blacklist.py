@@ -112,45 +112,20 @@ async def add_seller_name_blacklist(
 
 
 async def load_seller_keys_with_validated_email(session, user_id: int) -> set[str]:
-    """Имена продавцов с почтой: OfferEmail или validated_emails в raw_json.
-
-    Если лот уже нет, а имя висит в ЧС — это не ручной /reset, а старый прогон
-    (ЧС писали до сохранения, либо лоты сносились при следующей валидации).
-    """
-    from services.offer_storage import offer_raw_has_validated_email, parse_offer_raw
-
+    """Имена с живым OfferEmail. Без полного скана offers — иначе валидация зависает на старте."""
     keys: set[str] = set()
-    emailed_ids: set[int] = set()
-    email_rows = (
+    rows = (
         await session.execute(
-            sa_select(OfferEmail.offer_id)
-            .join(Offer, Offer.id == OfferEmail.offer_id)
+            sa_select(Offer.person_name, Offer.raw_json)
+            .join(OfferEmail, OfferEmail.offer_id == Offer.id)
             .where(Offer.user_id == int(user_id))
         )
     ).all()
-    for (oid,) in email_rows:
-        try:
-            emailed_ids.add(int(oid))
-        except (TypeError, ValueError):
-            pass
-
-    rows = (
-        await session.execute(
-            sa_select(Offer.id, Offer.person_name, Offer.raw_json).where(
-                Offer.user_id == int(user_id)
-            )
-        )
-    ).all()
-    for oid, pname, raw_json in rows:
-        has_mail = False
-        try:
-            has_mail = int(oid) in emailed_ids
-        except (TypeError, ValueError):
-            has_mail = False
-        if not has_mail and not offer_raw_has_validated_email(raw_json):
-            continue
+    for pname, raw_json in rows:
         key = seller_name_key(str(pname or ""))
         if not key and raw_json:
+            from services.offer_storage import parse_offer_raw
+
             raw = parse_offer_raw(raw_json)
             key = seller_name_key_from_item(raw if isinstance(raw, dict) else {})
         if key:

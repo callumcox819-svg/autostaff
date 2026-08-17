@@ -1345,9 +1345,30 @@ async def save_all_offers_from_import(
     output_rows: list[dict[str, Any]] = []
     offer_batch: list[tuple[Offer, list[str], dict[str, Any]]] = []
     seen_link_keys: set[str] = set()
+
+    file_urls: list[str] = []
+    for it in items or []:
+        if not isinstance(it, dict):
+            continue
+        u = str(it.get("item_link") or it.get("link") or it.get("url") or "").strip()
+        if u:
+            file_urls.append(u)
+            file_urls.append(u.rstrip("/"))
+    file_urls = list(dict.fromkeys(file_urls))
+
+    emailed_ids = (
+        sa_select(OfferEmail.offer_id)
+        .join(Offer, Offer.id == OfferEmail.offer_id)
+        .where(Offer.user_id == int(user_id))
+    )
+    import_conds = [Offer.id.in_(emailed_ids)]
+    if file_urls:
+        import_conds.append(Offer.link.in_(file_urls))
     existing_rows = (
         await session.execute(
-            sa_select(Offer).where(Offer.user_id == int(user_id))
+            sa_select(Offer)
+            .where(Offer.user_id == int(user_id))
+            .where(or_(*import_conds))
         )
     ).scalars().all()
     by_link: dict[str, Offer] = {}

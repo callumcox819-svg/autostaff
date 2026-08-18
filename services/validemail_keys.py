@@ -136,11 +136,11 @@ def seller_batch_pause_sec() -> float:
 def seller_validation_timeout_sec() -> float:
     raw = (os.getenv("VALIDEMAIL_SELLER_TIMEOUT_SEC") or "").strip()
     if not raw:
-        return 180.0 if validation_traffic_mode() else 150.0
+        return 90.0
     try:
         return max(30.0, min(300.0, float(raw)))
     except (TypeError, ValueError):
-        return 180.0
+        return 90.0
 
 
 def domain_probe_wave_size() -> int:
@@ -167,6 +167,17 @@ def max_domains_per_seller() -> int:
         return max(0, min(32, int(raw)))
     except (TypeError, ValueError):
         return 0
+
+
+def max_unknown_domains_per_seller() -> int:
+    """Сколько доменов подряд с unknown, потом стоп. «Нет ящика» — список не режем."""
+    raw = (os.getenv("VALIDEMAIL_MAX_UNKNOWN_DOMAINS") or "").strip()
+    if not raw:
+        return 4
+    try:
+        return max(1, min(16, int(raw)))
+    except (TypeError, ValueError):
+        return 4
 
 
 def validation_pool_size(num_keys: int | None = None) -> int:
@@ -228,7 +239,7 @@ def quick_combined_probe_size() -> int:
 def max_locals_per_seller() -> int:
     raw = (os.getenv("VALIDEMAIL_MAX_LOCALS") or "").strip()
     if not raw:
-        raw = "6"
+        raw = "4"
     try:
         return max(1, min(6, int(raw)))
     except (TypeError, ValueError):

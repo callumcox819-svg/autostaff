@@ -270,6 +270,20 @@ class ValidEmailNormalizeTests(unittest.TestCase):
         with patch.dict(os.environ, {"VALIDEMAIL_CONCURRENCY_PER_KEY": "22"}, clear=False):
             self.assertEqual(per_key_concurrency_limit(), 10)
 
+    def test_unknown_domain_cap_default(self):
+        from unittest.mock import patch
+
+        import os
+
+        from services.validemail_keys import max_unknown_domains_per_seller
+        from services.validemail_fast import _validemail_api_timeout
+
+        with patch.dict(os.environ, {"VALIDEMAIL_MAX_UNKNOWN_DOMAINS": "", "VALIDEMAIL_API_TIMEOUT": ""}, clear=False):
+            self.assertEqual(max_unknown_domains_per_seller(), 4)
+            self.assertEqual(_validemail_api_timeout(), 4)
+        with patch.dict(os.environ, {"VALIDEMAIL_API_TIMEOUT": "12"}, clear=False):
+            self.assertEqual(_validemail_api_timeout(), 8)
+
 
 if __name__ == "__main__":
     unittest.main()

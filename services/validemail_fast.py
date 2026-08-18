@@ -204,17 +204,11 @@ def _cache_set(url: str, email: str, ok: bool, raw: dict) -> None:
 
 
 def _validemail_api_timeout() -> int:
-    """Query param timeout (сервер SMTP), API: 2–30 с, default 4."""
-    try:
-        from config import config
-
-        base = int(getattr(config, "VALIDEMAIL_API_TIMEOUT", 8))
-    except Exception:
-        try:
-            base = int(os.getenv("VALIDEMAIL_API_TIMEOUT", "8"))
-        except (TypeError, ValueError):
-            base = 8
-    return max(2, min(30, base))
+    """Query param timeout, api-doc default 4. Не больше 8 с — иначе хвост unknown ест 12 минут."""
+    raw = (os.getenv("VALIDEMAIL_API_TIMEOUT") or "").strip()
+    if raw.isdigit():
+        return max(2, min(8, int(raw)))
+    return 4
 
 
 def _validemail_max_retries() -> int:

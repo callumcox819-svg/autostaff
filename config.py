@@ -134,7 +134,7 @@ class Config:
             int(
                 os.getenv(
                     "VALIDEMAIL_API_TIMEOUT",
-                    "12",
+                    "4",
                 )
             ),
         ),

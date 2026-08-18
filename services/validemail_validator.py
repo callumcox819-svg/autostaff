@@ -697,6 +697,7 @@ async def _validate_offers_old(
     from services.validemail_keys import (
         combined_local_probe,
         max_domains_per_seller,
+        max_unknown_domains_per_seller,
         max_locals_per_seller,
         probe_by_domain_waves,
         seller_batch_pause_sec,
@@ -1075,19 +1076,29 @@ async def _validate_offers_old(
         if not locals_list:
             return
 
-        # Как в рабочем прогоне: нашли — стоп. Нет ящика / unknown — следующий домен из приоритета.
+        # Нашли — стоп. Нет ящика — следующий домен. Несколько unknown подряд — не ждём 12 минут.
+        unknown_streak = 0
+        unknown_cap = max_unknown_domains_per_seller()
         for dom, wave in _domain_priority_waves(locals_list, domains_clean):
             if found_by_idx[i]:
                 break
             if stats is not None:
                 async with state_lock:
                     stats["current_domain"] = dom
-            await _probe_one_list(
+            verdict = await _probe_one_list(
                 i,
                 api_key,
                 wave,
                 count_api_errors=count_api_errors,
             )
+            if found_by_idx[i] or verdict == "hit":
+                break
+            if verdict == "no":
+                unknown_streak = 0
+                continue
+            unknown_streak += 1
+            if unknown_streak >= unknown_cap:
+                break
 
         nk = str(prepared[i].get("name_key") or "").strip()
         if found_by_idx[i] and nk:

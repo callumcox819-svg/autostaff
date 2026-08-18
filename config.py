@@ -76,7 +76,7 @@ def _validemail_max_retries_default() -> int:
     raw = (os.getenv("VALIDEMAIL_MAX_RETRIES") or "").strip()
     if raw.isdigit():
         return max(1, min(5, int(raw)))
-    return 1
+    return 2
 
 
 def _validemail_domain_wave_size() -> int:
@@ -134,7 +134,7 @@ class Config:
             int(
                 os.getenv(
                     "VALIDEMAIL_API_TIMEOUT",
-                    "8",
+                    "12",
                 )
             ),
         ),

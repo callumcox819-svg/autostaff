@@ -32,40 +32,35 @@ def validation_fast_mode() -> bool:
 
 
 def api_retry_max_sellers() -> int:
-    """Короткий повтор unknown/timeout. -1 = все, 0 = выкл. Дефолт 80 — не 20 мин на 437 сбоев."""
+    """Повтор unknown/timeout после основного прохода. -1 = все."""
     raw = (os.getenv("VALIDEMAIL_API_RETRY_MAX") or "").strip()
     if not raw:
-        return 80
+        return -1
     try:
         return max(-1, min(5000, int(raw)))
     except (TypeError, ValueError):
-        return 80
+        return -1
 
 
 def validation_wall_sec(num_keys: int | None = None) -> float:
-    """Стена всего подбора: 7 ключей ≈ 5.5 мин, не 25."""
+    """0 = без обрыва. Стена резала 500+ продавцов → 28 почт вместо ~200."""
     raw = (os.getenv("VALIDEMAIL_DEADLINE_SEC") or "").strip()
-    if raw:
-        try:
-            return max(0.0, min(900.0, float(raw)))
-        except (TypeError, ValueError):
-            pass
-    n = max(1, int(num_keys or 0) or len(keys_from_config()) or 1)
-    if n >= 7:
-        return 330.0
-    if n >= 5:
-        return 390.0
-    return 480.0
+    if not raw:
+        return 0.0
+    try:
+        return max(0.0, min(900.0, float(raw)))
+    except (TypeError, ValueError):
+        return 0.0
 
 
 def api_retry_wall_sec() -> float:
     raw = (os.getenv("VALIDEMAIL_API_RETRY_SEC") or "").strip()
     if raw:
         try:
-            return max(0.0, min(180.0, float(raw)))
+            return max(0.0, min(300.0, float(raw)))
         except (TypeError, ValueError):
             pass
-    return 45.0
+    return 90.0
 
 
 def combined_local_probe() -> bool:
@@ -284,11 +279,11 @@ def probe_by_domain_waves() -> bool:
 def probe_retry_count() -> int:
     raw = (os.getenv("VALIDEMAIL_PROBE_RETRIES") or "").strip()
     if not raw:
-        return 1
+        return 2
     try:
         return max(1, min(5, int(raw)))
     except (TypeError, ValueError):
-        return 1
+        return 2
 
 
 def optional_tail_domain_count() -> int:

@@ -675,7 +675,6 @@ async def _validate_offers_old(
         validation_pool_size,
         validation_traffic_mode,
         validation_fast_mode,
-        validation_wall_sec,
         domain_first_probe,
     )
 
@@ -699,11 +698,6 @@ async def _validate_offers_old(
     state_lock = asyncio.Lock()
     sellers_completed = 0
     seller_api_fail: list[int] = [0] * len(prepared)
-    t0 = time.monotonic()
-    wall_sec = validation_wall_sec(n_keys)
-
-    def _over_wall() -> bool:
-        return wall_sec > 0 and (time.monotonic() - t0) >= wall_sec
 
     if stats is not None:
         stats["validemail_keys"] = n_keys
@@ -1013,9 +1007,6 @@ async def _validate_offers_old(
         tier_probe: bool = True,
         count_api_errors: bool = True,
     ) -> None:
-        if _over_wall():
-            seller_api_fail[i] = 1
-            return
         row = prepared[i]
         async with state_lock:
             if stats is not None:
@@ -1083,10 +1074,7 @@ async def _validate_offers_old(
             nonlocal sellers_completed
             my_key = api_keys[i % n_keys]
             try:
-                if _over_wall():
-                    seller_api_fail[i] = 1
-                else:
-                    await asyncio.wait_for(_validate_seller(i, my_key), timeout=timeout)
+                await asyncio.wait_for(_validate_seller(i, my_key), timeout=timeout)
             except asyncio.TimeoutError:
                 logger.warning("validemail seller timeout idx=%s name=%s", i, prepared[i].get("person_name"))
                 if seller_api_fail[i] == 0 and stats is not None:
@@ -1110,28 +1098,13 @@ async def _validate_offers_old(
     await _run_sellers_batched()
 
     async def _run_api_retry_passes() -> None:
-        found_now = sum(1 for f in found_by_idx if f)
-        elapsed = time.monotonic() - t0
         retry_budget = api_retry_wall_sec()
-        if found_now > 0 and _over_wall():
-            logger.info(
-                "skip api retry: found=%s elapsed=%.0fs wall=%.0fs",
-                found_now,
-                elapsed,
-                wall_sec,
-            )
-            return
         if retry_budget <= 0:
             return
-        remaining = (wall_sec - elapsed) if wall_sec > 0 else retry_budget
-        if remaining < 20:
-            logger.info("skip api retry: remaining=%.0fs", remaining)
-            return
         cap = api_retry_max_sellers()
-        retry_sem = asyncio.Semaphore(max(16, min(seller_sem_cap, 96)))
+        retry_sem = asyncio.Semaphore(max(16, min(seller_sem_cap, 112)))
         max_passes = 1
         retry_t0 = time.monotonic()
-        retry_limit = min(retry_budget, max(20.0, remaining))
         retry_stop = asyncio.Event()
         for pass_no in range(max_passes):
             retry_idx = [
@@ -1153,11 +1126,11 @@ async def _validate_offers_old(
 
             async def _retry_seller(ri: int) -> None:
                 nonlocal retry_done
-                if retry_stop.is_set() or (time.monotonic() - retry_t0) >= retry_limit:
+                if retry_stop.is_set() or (time.monotonic() - retry_t0) >= retry_budget:
                     retry_stop.set()
                     return
                 async with retry_sem:
-                    if retry_stop.is_set() or (time.monotonic() - retry_t0) >= retry_limit:
+                    if retry_stop.is_set() or (time.monotonic() - retry_t0) >= retry_budget:
                         retry_stop.set()
                         return
                     seller_api_fail[ri] = 0

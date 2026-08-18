@@ -212,6 +212,22 @@ class ValidEmailNormalizeTests(unittest.TestCase):
         ]
         self.assertEqual(_domain_wave_verdict(nos, pending), "no")
 
+    def test_http_200_unknown_does_not_retry_same_domain(self):
+        from services.validemail_fast import _is_transient_failure
+        from services.validemail_validator import _should_retry_same_domain
+
+        unknown = {
+            "_http_status": 200,
+            "status": "unknown",
+            "reason": "timeout",
+            "isDeliverable": False,
+        }
+        self.assertFalse(_is_transient_failure(unknown))
+        self.assertFalse(_should_retry_same_domain(False, unknown))
+        self.assertTrue(
+            _should_retry_same_domain(False, {"_http_status": 429, "error": "rate limit"})
+        )
+
     def test_seven_keys_wall_uses_full_priority_list(self):
         from unittest.mock import patch
 

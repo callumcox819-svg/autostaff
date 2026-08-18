@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import contextvars
 import logging
 import os
 import time
@@ -30,10 +29,6 @@ _CACHE_TTL_SEC = 60 * 60 * 6  # 6 часов
 _TRANSIENT_REASONS = frozenset({"connection_error", "timeout"})
 _TRANSIENT_HTTP = frozenset({408, 429, 500, 502, 503, 504})
 _NO_RETRY_HTTP = frozenset({402, 403, 405})
-_DEAD_KEYS: set[str] = set()
-_KEY_POOL: contextvars.ContextVar[tuple[str, ...]] = contextvars.ContextVar(
-    "validemail_key_pool", default=()
-)
 _DEFINITIVE_BAD_REASONS = frozenset(
     {
         "invalid_smtp",
@@ -189,10 +184,6 @@ def clear_validation_email_cache() -> int:
     return n
 
 
-def clear_dead_validemail_keys() -> None:
-    _DEAD_KEYS.clear()
-
-
 def _cache_set(url: str, email: str, ok: bool, raw: dict) -> None:
     if not _should_cache_result(raw):
         return
@@ -240,6 +231,8 @@ def _is_transient_failure(raw: object) -> bool:
         return True
     try:
         st = int(raw.get("_http_status") or 0)
+        if st == 200:
+            return False
         if st in _NO_RETRY_HTTP:
             return False
         if st in _TRANSIENT_HTTP:
@@ -559,48 +552,6 @@ async def _fetch_validemail_once(
         return ok, raw
 
 
-async def _fetch_with_key_failover(
-    email_lc: str,
-    *,
-    preferred_key: str,
-    url: str,
-    use_ssl_verify: bool,
-) -> tuple[bool, dict]:
-    """Другой ключ только если этот мёртв (402/403). 429/timeout — тот же ключ, иначе 7× нагрузка."""
-    pool = [k for k in _KEY_POOL.get() if k] or [preferred_key]
-    ordered = [preferred_key] + [k for k in pool if k != preferred_key]
-    last: dict = {"error": "no api key"}
-    tried = 0
-    for key in ordered:
-        if not key or key in _DEAD_KEYS:
-            continue
-        tried += 1
-        ok, raw = await _fetch_validemail_once(
-            email_lc,
-            api_key=key,
-            url=url,
-            use_ssl_verify=use_ssl_verify,
-        )
-        last = raw if isinstance(raw, dict) else {"error": str(raw)}
-        try:
-            st = int(last.get("_http_status") or 0)
-        except (TypeError, ValueError):
-            st = 0
-        if st in (402, 403, 405):
-            _DEAD_KEYS.add(key)
-            last["_api_key_error"] = True
-            logger.warning(
-                "validemail key disabled http=%s remaining=%s",
-                st,
-                max(0, len(pool) - len(_DEAD_KEYS)),
-            )
-            continue
-        return ok, last
-    if tried == 0:
-        last = {"error": "all api keys dead", "_api_key_error": True, "_http_status": 402}
-    return False, last
-
-
 async def _check_one(
     email: str,
     *,
@@ -654,9 +605,9 @@ async def _check_one(
                     if cancel_event and cancel_event.is_set():
                         return email, False, {"error": "cancelled", "_cancelled": True}
                     try:
-                        ok, last_raw = await _fetch_with_key_failover(
+                        ok, last_raw = await _fetch_validemail_once(
                             email_lc,
-                            preferred_key=api_key,
+                            api_key=api_key,
                             url=url,
                             use_ssl_verify=use_ssl_verify,
                         )
@@ -815,8 +766,6 @@ async def validate_emails_fast(
 
     if not keys:
         return [(e, False, {"error": "no api key"}) for e in emails_list]
-
-    _KEY_POOL.set(tuple(keys))
 
     cancel_event = asyncio.Event() if stop_on_first_ok else None
 

@@ -99,7 +99,7 @@ def per_key_concurrency_limit() -> int:
         base = 40
     if not (os.getenv("VALIDEMAIL_CONCURRENCY_PER_KEY") or "").strip():
         base = _env_int("VALIDEMAIL_CONCURRENCY_PER_KEY", default=base, traffic=22)
-    cap = 10 if validation_fast_mode() else 8
+    cap = 24 if validation_fast_mode() else 16
     return max(1, min(cap, base))
 
 
@@ -110,7 +110,7 @@ def seller_parallel_per_key() -> int:
             return max(1, min(32, int(raw)))
         except (TypeError, ValueError):
             pass
-    n = _env_int("VALIDEMAIL_SELLER_PARALLEL_PER_KEY", default=8, traffic=10)
+    n = _env_int("VALIDEMAIL_SELLER_PARALLEL_PER_KEY", default=14, traffic=16)
     return max(1, min(32, n))
 
 
@@ -136,7 +136,7 @@ def seller_batch_pause_sec() -> float:
 def seller_validation_timeout_sec() -> float:
     raw = (os.getenv("VALIDEMAIL_SELLER_TIMEOUT_SEC") or "").strip()
     if not raw:
-        return 70.0 if validation_traffic_mode() else 80.0
+        return 90.0 if validation_traffic_mode() else 120.0
     try:
         return max(30.0, min(300.0, float(raw)))
     except (TypeError, ValueError):

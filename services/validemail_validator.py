@@ -375,13 +375,18 @@ def _wave_seller_needs_api_retry(
 
 
 def _should_retry_same_domain(ok: bool, raw: object) -> bool:
-    """429/сеть — повторяем тот же домен, не переходим к следующему."""
+    """Только 429/сеть. HTTP 200 unknown — это ответ ValidEmail, берём следующий домен."""
     if ok:
         return False
     if isinstance(raw, dict) and raw.get("_api_key_error"):
         return False
-    if _is_api_failure(ok, raw):
-        return True
+    if isinstance(raw, dict):
+        try:
+            st = int(raw.get("_http_status") or 0)
+        except (TypeError, ValueError):
+            st = 0
+        if st == 200:
+            return False
     return _is_transient_failure(raw)
 
 
@@ -579,11 +584,8 @@ async def _validate_offers_old(
         "off",
     ):
         from services.validemail_fast import (
-            clear_dead_validemail_keys,
             clear_validation_email_cache,
         )
-
-        clear_dead_validemail_keys()
         cleared = clear_validation_email_cache()
         if stats is not None and cleared:
             stats["cache_cleared"] = cleared
@@ -1067,27 +1069,19 @@ async def _validate_offers_old(
         if not locals_list:
             return
 
-        # Приоритет: нашли — стоп. Нет ящика — следующий домен. unknown — тоже следующий, не бросаем продавца.
-        unknown_domains = 0
+        # Как в рабочем прогоне: нашли — стоп. Нет ящика / unknown — следующий домен из приоритета.
         for dom, wave in _domain_priority_waves(locals_list, domains_clean):
             if found_by_idx[i]:
                 break
             if stats is not None:
                 async with state_lock:
                     stats["current_domain"] = dom
-            verdict = await _probe_one_list(
+            await _probe_one_list(
                 i,
                 api_key,
                 wave,
                 count_api_errors=count_api_errors,
             )
-            if found_by_idx[i] or verdict == "hit":
-                break
-            if verdict == "unknown":
-                seller_api_fail[i] = 1
-                unknown_domains += 1
-                if unknown_domains >= 2:
-                    break
 
         nk = str(prepared[i].get("name_key") or "").strip()
         if found_by_idx[i] and nk:

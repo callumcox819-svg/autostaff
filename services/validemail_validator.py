@@ -717,7 +717,7 @@ async def _validate_offers_old(
     n_keys = max(1, len(api_keys))
     per_key_limit, parallel_pool = validation_concurrency_plan(n_keys)
     sellers_parallel = seller_parallel_per_key()
-    parallel_pool = min(parallel_pool, global_inflight_cap(n_keys))
+    parallel_pool = global_inflight_cap(n_keys)
 
     if progress_cb:
         try:

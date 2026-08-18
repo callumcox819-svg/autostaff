@@ -93,24 +93,25 @@ def validemail_rps_per_key() -> float:
 
 
 def per_key_concurrency_limit() -> int:
-    """SMTP ValidEmail не тянет 20+ in-flight на ключ — тогда 500 unknown."""
+    """N одновременных запросов на ключ. Потолок 10 — ValidEmail 429 (10 req/s на ключ)."""
     raw = (os.getenv("VALIDEMAIL_CONCURRENCY_PER_KEY") or "").strip()
     if raw:
         try:
-            return max(1, min(6, int(raw)))
+            return max(1, min(10, int(raw)))
         except (TypeError, ValueError):
             pass
-    return 4
+    return 10
 
 
 def seller_parallel_per_key() -> int:
+    """Сколько продавцов на ключ. По умолчанию = N, чтобы 7 ключей давали 7×N запросов."""
     raw = (os.getenv("VALIDEMAIL_SELLER_PARALLEL_PER_KEY") or "").strip()
     if raw:
         try:
-            return max(1, min(6, int(raw)))
+            return max(1, min(10, int(raw)))
         except (TypeError, ValueError):
             pass
-    return 4
+    return per_key_concurrency_limit()
 
 
 def seller_batch_size() -> int:
@@ -197,17 +198,9 @@ def validation_concurrency_plan(num_keys: int) -> tuple[int, int]:
 
 
 def global_inflight_cap(num_keys: int | None = None) -> int:
-    """Потолок одновременных SMTP. 200 — это 74 почты, потом 4."""
+    """Всегда ключи × N. Не режем 7 ключей общим потолком 32."""
     n = max(1, int(num_keys or 0) or len(keys_from_config()) or 1)
-    per = per_key_concurrency_limit()
-    planned = per * n
-    raw = (os.getenv("VALIDEMAIL_GLOBAL_INFLIGHT") or "").strip()
-    if raw:
-        try:
-            planned = min(planned, max(8, int(raw)))
-        except (TypeError, ValueError):
-            pass
-    return max(8, min(32, planned))
+    return per_key_concurrency_limit() * n
 
 
 def combined_probe_max_emails() -> int:

@@ -241,6 +241,27 @@ class ValidEmailNormalizeTests(unittest.TestCase):
         with patch.dict(os.environ, {"VALIDEMAIL_MAX_DOMAINS_PROBE": "0"}, clear=False):
             self.assertEqual(max_domains_per_seller(), 0)
 
+    def test_smtp_budget_caps_ignore_old_env_storm(self):
+        from unittest.mock import patch
+
+        import os
+
+        from services.validemail_keys import (
+            global_inflight_cap,
+            per_key_concurrency_limit,
+            seller_parallel_per_key,
+        )
+
+        storm = {
+            "VALIDEMAIL_CONCURRENCY_PER_KEY": "22",
+            "VALIDEMAIL_GLOBAL_INFLIGHT": "200",
+            "VALIDEMAIL_SELLER_PARALLEL_PER_KEY": "16",
+        }
+        with patch.dict(os.environ, storm, clear=False):
+            self.assertLessEqual(per_key_concurrency_limit(), 6)
+            self.assertLessEqual(seller_parallel_per_key(), 6)
+            self.assertLessEqual(global_inflight_cap(7), 32)
+
 
 if __name__ == "__main__":
     unittest.main()

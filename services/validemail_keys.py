@@ -93,25 +93,24 @@ def validemail_rps_per_key() -> float:
 
 
 def per_key_concurrency_limit() -> int:
-    try:
-        base = int(getattr(config, "VALIDEMAIL_CONCURRENCY_PER_KEY", 40) or 40)
-    except (TypeError, ValueError):
-        base = 40
-    if not (os.getenv("VALIDEMAIL_CONCURRENCY_PER_KEY") or "").strip():
-        base = _env_int("VALIDEMAIL_CONCURRENCY_PER_KEY", default=base, traffic=22)
-    cap = 24 if validation_fast_mode() else 16
-    return max(1, min(cap, base))
+    """SMTP ValidEmail не тянет 20+ in-flight на ключ — тогда 500 unknown."""
+    raw = (os.getenv("VALIDEMAIL_CONCURRENCY_PER_KEY") or "").strip()
+    if raw:
+        try:
+            return max(1, min(6, int(raw)))
+        except (TypeError, ValueError):
+            pass
+    return 4
 
 
 def seller_parallel_per_key() -> int:
     raw = (os.getenv("VALIDEMAIL_SELLER_PARALLEL_PER_KEY") or "").strip()
     if raw:
         try:
-            return max(1, min(32, int(raw)))
+            return max(1, min(6, int(raw)))
         except (TypeError, ValueError):
             pass
-    n = _env_int("VALIDEMAIL_SELLER_PARALLEL_PER_KEY", default=14, traffic=16)
-    return max(1, min(32, n))
+    return 4
 
 
 def seller_batch_size() -> int:
@@ -136,11 +135,11 @@ def seller_batch_pause_sec() -> float:
 def seller_validation_timeout_sec() -> float:
     raw = (os.getenv("VALIDEMAIL_SELLER_TIMEOUT_SEC") or "").strip()
     if not raw:
-        return 90.0 if validation_traffic_mode() else 120.0
+        return 180.0 if validation_traffic_mode() else 150.0
     try:
         return max(30.0, min(300.0, float(raw)))
     except (TypeError, ValueError):
-        return 90.0
+        return 180.0
 
 
 def domain_probe_wave_size() -> int:
@@ -198,24 +197,17 @@ def validation_concurrency_plan(num_keys: int) -> tuple[int, int]:
 
 
 def global_inflight_cap(num_keys: int | None = None) -> int:
+    """Потолок одновременных SMTP. 200 — это 74 почты, потом 4."""
     n = max(1, int(num_keys or 0) or len(keys_from_config()) or 1)
     per = per_key_concurrency_limit()
+    planned = per * n
     raw = (os.getenv("VALIDEMAIL_GLOBAL_INFLIGHT") or "").strip()
     if raw:
         try:
-            return max(12, min(280, int(raw)))
+            planned = min(planned, max(8, int(raw)))
         except (TypeError, ValueError):
             pass
-    try:
-        from_config = int(getattr(config, "VALIDEMAIL_GLOBAL_INFLIGHT", 0) or 0)
-    except (TypeError, ValueError):
-        from_config = 0
-    if from_config >= 12:
-        return from_config
-    target = per * n * 5
-    if validation_fast_mode():
-        return max(120, min(240, target))
-    return max(40, min(160, per * n * 3))
+    return max(8, min(32, planned))
 
 
 def combined_probe_max_emails() -> int:
@@ -279,11 +271,11 @@ def probe_by_domain_waves() -> bool:
 def probe_retry_count() -> int:
     raw = (os.getenv("VALIDEMAIL_PROBE_RETRIES") or "").strip()
     if not raw:
-        return 2
+        return 1
     try:
         return max(1, min(5, int(raw)))
     except (TypeError, ValueError):
-        return 2
+        return 1
 
 
 def optional_tail_domain_count() -> int:

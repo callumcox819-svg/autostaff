@@ -117,7 +117,7 @@ def _register_validemail_429(raw: dict, *, api_key: str, attempt: int = 0) -> No
             extra = max(extra, float(ra))
         except (TypeError, ValueError):
             pass
-    until = time.time() + min(12.0, extra)
+    until = time.time() + min(25.0, extra)
     _KEY_RATE_PAUSE_UNTIL[k] = max(float(_KEY_RATE_PAUSE_UNTIL.get(k) or 0), until)
 
 
@@ -135,6 +135,14 @@ def _global_inflight_sem() -> asyncio.Semaphore:
                 cap = 96
         _GLOBAL_INFLIGHT = asyncio.Semaphore(cap)
     return _GLOBAL_INFLIGHT
+
+
+def reset_validemail_runtime() -> None:
+    """Сброс пулов: старый GLOBAL_INFLIGHT=200 иначе живёт до рестарта процесса."""
+    global _GLOBAL_INFLIGHT
+    _GLOBAL_INFLIGHT = None
+    _KEY_SEMAPHORES.clear()
+    _KEY_SEM_LIMITS.clear()
 
 
 def _semaphore_for_api_key(api_key: str, limit: int) -> asyncio.Semaphore:

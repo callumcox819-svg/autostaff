@@ -577,15 +577,17 @@ async def _validate_offers_old(
         )
         stats.update(_preserve)
 
+    from services.validemail_fast import reset_validemail_runtime
+
+    reset_validemail_runtime()
     if (os.getenv("VALIDEMAIL_CLEAR_CACHE") or "1").strip().lower() not in (
         "0",
         "false",
         "no",
         "off",
     ):
-        from services.validemail_fast import (
-            clear_validation_email_cache,
-        )
+        from services.validemail_fast import clear_validation_email_cache
+
         cleared = clear_validation_email_cache()
         if stats is not None and cleared:
             stats["cache_cleared"] = cleared
@@ -702,7 +704,7 @@ async def _validate_offers_old(
         seller_parallel_per_key,
         seller_validation_timeout_sec,
         validation_concurrency_plan,
-        validation_pool_size,
+        global_inflight_cap,
         validation_traffic_mode,
         validation_fast_mode,
         domain_first_probe,
@@ -715,8 +717,7 @@ async def _validate_offers_old(
     n_keys = max(1, len(api_keys))
     per_key_limit, parallel_pool = validation_concurrency_plan(n_keys)
     sellers_parallel = seller_parallel_per_key()
-    limit = max(2, int(cfg.concurrency) or validation_pool_size(n_keys))
-    parallel_pool = max(parallel_pool, min(limit, per_key_limit * n_keys))
+    parallel_pool = min(parallel_pool, global_inflight_cap(n_keys))
 
     if progress_cb:
         try:
@@ -806,12 +807,12 @@ async def _validate_offers_old(
             except Exception:
                 pass
 
-        use_keys = api_keys if n_keys > 1 else [api_key]
+        use_keys = [api_key]
         use_stop = bool(stop_on_first_ok) and len(batch_emails) >= 2
         return await validate_emails_fast(
             batch_emails,
             api_keys=use_keys,
-            concurrency=parallel_pool,
+            concurrency=per_key_limit,
             url=url,
             use_ssl_verify=bool(cfg.use_ssl_verify),
             progress_cb=lambda d, t, l, u, _bd=base_done: _wrap_progress(d, t, l, u, _bd),
@@ -946,50 +947,55 @@ async def _validate_offers_old(
         if found_by_idx[seller_i] or not pending:
             return "hit" if found_by_idx[seller_i] else "no"
         max_attempts = _probe_max_attempts()
-        last_verdict = "unknown"
-        for attempt in range(max_attempts):
-            dom_hint = (pending[0].split("@")[-1] if pending else "") or ""
-            results = await _run_batch(
-                pending,
-                seller_i=seller_i,
-                dom=dom_hint,
-                api_key=api_key,
-                stop_on_first_ok=True,
-            )
-            is_last = attempt >= max_attempts - 1
-            cv = await _consume_wave_priority(
-                seller_i,
-                results,
-                pending,
-                count_api_errors=is_last,
-            )
-            async with state_lock:
-                if stats is not None:
-                    stats["combinations_valid"] = int(
-                        stats.get("combinations_valid") or 0
-                    ) + cv
-                _refresh_stats()
+        last_verdict = "no"
+        any_unknown = False
+        for em in pending:
             if found_by_idx[seller_i]:
                 return "hit"
-            last_verdict = _domain_wave_verdict(results, pending)
-            by_lc = {(e or "").strip().lower(): (e, ok, raw) for e, ok, raw in results}
-            retry_list: list[str] = []
-            for em in pending:
-                row = by_lc.get((em or "").strip().lower())
-                if not row:
-                    retry_list.append(em)
-                    continue
-                _e, ok, raw = row
-                if _should_retry_same_domain(ok, raw):
-                    retry_list.append(_e)
-            if not retry_list or is_last:
-                break
-            pending = retry_list
-            raw0 = results[0][2] if results else {}
-            await asyncio.sleep(
-                _retry_delay_sec(attempt, raw0 if isinstance(raw0, dict) else {})
-            )
-        return last_verdict
+            one = [em]
+            results: list[tuple[str, bool, dict]] = []
+            for attempt in range(max_attempts):
+                dom_hint = (em.split("@")[-1] if em else "") or ""
+                results = await _run_batch(
+                    one,
+                    seller_i=seller_i,
+                    dom=dom_hint,
+                    api_key=api_key,
+                    stop_on_first_ok=False,
+                )
+                is_last = attempt >= max_attempts - 1
+                cv = await _consume_wave_priority(
+                    seller_i,
+                    results,
+                    one,
+                    count_api_errors=count_api_errors and is_last,
+                )
+                async with state_lock:
+                    if stats is not None:
+                        stats["combinations_valid"] = int(
+                            stats.get("combinations_valid") or 0
+                        ) + cv
+                    _refresh_stats()
+                if found_by_idx[seller_i]:
+                    return "hit"
+                raw0 = results[0][2] if results else {}
+                ok0 = bool(results[0][1]) if results else False
+                if is_last or not _should_retry_same_domain(ok0, raw0):
+                    break
+                await asyncio.sleep(
+                    _retry_delay_sec(attempt, raw0 if isinstance(raw0, dict) else {})
+                )
+            verdict = _domain_wave_verdict(results, one)
+            if verdict == "hit":
+                return "hit"
+            if verdict == "unknown":
+                any_unknown = True
+                last_verdict = "unknown"
+            elif last_verdict != "unknown":
+                last_verdict = verdict
+        if found_by_idx[seller_i]:
+            return "hit"
+        return "unknown" if any_unknown else last_verdict
 
     def _groups_by_domain(pending: list[str]) -> list[list[str]]:
         by_dom: dict[str, list[str]] = {}

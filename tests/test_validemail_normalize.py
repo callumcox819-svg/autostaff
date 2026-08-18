@@ -151,7 +151,25 @@ class ValidEmailNormalizeTests(unittest.TestCase):
         with patch.dict(os.environ, {"VALIDEMAIL_COMBINED_LOCALS": ""}, clear=False):
             self.assertFalse(combined_local_probe())
 
-    def test_seven_keys_wall_and_two_domains(self):
+    def test_domain_priority_one_domain_at_a_time(self):
+        from services.validemail_validator import _domain_priority_waves
+
+        waves = _domain_priority_waves(
+            ["anna.mueller", "annamueller"],
+            ["gmail.com", "icloud.com", "gmx.ch"],
+        )
+        self.assertEqual(
+            [d for d, _w in waves],
+            ["gmail.com", "icloud.com", "gmx.ch"],
+        )
+        self.assertEqual(
+            waves[0][1],
+            ["anna.mueller@gmail.com", "annamueller@gmail.com"],
+        )
+        self.assertTrue(all("@icloud.com" in e for e in waves[1][1]))
+        self.assertFalse(any("@icloud.com" in e for e in waves[0][1]))
+
+    def test_seven_keys_wall_uses_full_priority_list(self):
         from unittest.mock import patch
 
         import os
@@ -159,10 +177,10 @@ class ValidEmailNormalizeTests(unittest.TestCase):
         from services.validemail_keys import max_domains_per_seller, validation_wall_sec
 
         with patch.dict(os.environ, {"VALIDEMAIL_MAX_DOMAINS_PROBE": "", "VALIDEMAIL_DEADLINE_SEC": ""}, clear=False):
-            self.assertEqual(max_domains_per_seller(), 2)
+            self.assertEqual(max_domains_per_seller(), 0)
             self.assertEqual(validation_wall_sec(7), 330.0)
         with patch.dict(os.environ, {"VALIDEMAIL_MAX_DOMAINS_PROBE": "0"}, clear=False):
-            self.assertEqual(max_domains_per_seller(), 2)
+            self.assertEqual(max_domains_per_seller(), 0)
 
 
 if __name__ == "__main__":

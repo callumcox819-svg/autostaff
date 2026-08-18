@@ -141,7 +141,7 @@ def seller_batch_pause_sec() -> float:
 def seller_validation_timeout_sec() -> float:
     raw = (os.getenv("VALIDEMAIL_SELLER_TIMEOUT_SEC") or "").strip()
     if not raw:
-        return 50.0 if validation_traffic_mode() else 70.0
+        return 90.0 if validation_traffic_mode() else 120.0
     try:
         return max(30.0, min(300.0, float(raw)))
     except (TypeError, ValueError):
@@ -164,17 +164,14 @@ def tail_domains_one_batch() -> bool:
 
 
 def max_domains_per_seller() -> int:
-    """2 приоритетных домена (gmail + следующий). 0 = все. Иначе 8 доменов × 600 имён = 20 мин."""
+    """0 = весь приоритет из бота. Не режем список."""
     raw = (os.getenv("VALIDEMAIL_MAX_DOMAINS_PROBE") or "").strip()
-    if raw:
-        try:
-            n = int(raw)
-        except (TypeError, ValueError):
-            return 2
-        if n <= 0:
-            return 2
-        return min(32, n)
-    return 2
+    if not raw:
+        return 0
+    try:
+        return max(0, min(32, int(raw)))
+    except (TypeError, ValueError):
+        return 0
 
 
 def validation_pool_size(num_keys: int | None = None) -> int:

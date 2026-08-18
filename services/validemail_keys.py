@@ -32,14 +32,14 @@ def validation_fast_mode() -> bool:
 
 
 def api_retry_max_sellers() -> int:
-    """Повтор unknown/timeout после основного прохода. -1 = все."""
+    """Второй круг по всем unknown. 0 = выкл (дефолт): 15 мин «Повтор после сбоев»."""
     raw = (os.getenv("VALIDEMAIL_API_RETRY_MAX") or "").strip()
     if not raw:
-        return -1
+        return 0
     try:
         return max(-1, min(5000, int(raw)))
     except (TypeError, ValueError):
-        return -1
+        return 0
 
 
 def validation_wall_sec(num_keys: int | None = None) -> float:
@@ -99,7 +99,7 @@ def per_key_concurrency_limit() -> int:
         base = 40
     if not (os.getenv("VALIDEMAIL_CONCURRENCY_PER_KEY") or "").strip():
         base = _env_int("VALIDEMAIL_CONCURRENCY_PER_KEY", default=base, traffic=22)
-    cap = 24 if validation_fast_mode() else 16
+    cap = 10 if validation_fast_mode() else 8
     return max(1, min(cap, base))
 
 
@@ -110,7 +110,7 @@ def seller_parallel_per_key() -> int:
             return max(1, min(32, int(raw)))
         except (TypeError, ValueError):
             pass
-    n = _env_int("VALIDEMAIL_SELLER_PARALLEL_PER_KEY", default=16, traffic=18)
+    n = _env_int("VALIDEMAIL_SELLER_PARALLEL_PER_KEY", default=8, traffic=10)
     return max(1, min(32, n))
 
 

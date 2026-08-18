@@ -1133,15 +1133,22 @@ async def _validate_offers_old(
     await _run_sellers_batched()
 
     async def _run_api_retry_passes() -> None:
+        cap = api_retry_max_sellers()
+        if cap == 0:
+            return
         found_now = sum(1 for f in found_by_idx if f)
-        # 137 лидов уже есть — второй круг по 441 unknown = +10 минут без толка.
-        if found_now >= 80:
-            logger.info("skip api retry: already found=%s", found_now)
+        already_n = int((stats or {}).get("already_in_db") or 0)
+        # 144 уже в БД + новые: второй круг по 460 unknown = 15 мин на 1%.
+        if found_now + already_n >= 80:
+            logger.info(
+                "skip api retry: found=%s already_in_db=%s",
+                found_now,
+                already_n,
+            )
             return
         retry_budget = api_retry_wall_sec()
         if retry_budget <= 0:
             return
-        cap = api_retry_max_sellers()
         retry_sem = asyncio.Semaphore(max(16, min(seller_sem_cap, 112)))
         max_passes = 1
         retry_t0 = time.monotonic()

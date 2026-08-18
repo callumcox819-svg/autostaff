@@ -147,7 +147,7 @@ class ValidEmailNormalizeTests(unittest.TestCase):
         from services.validemail_keys import api_retry_max_sellers, combined_local_probe
 
         with patch.dict(os.environ, {"VALIDEMAIL_API_RETRY_MAX": ""}, clear=False):
-            self.assertEqual(api_retry_max_sellers(), -1)
+            self.assertEqual(api_retry_max_sellers(), 0)
         with patch.dict(os.environ, {"VALIDEMAIL_COMBINED_LOCALS": ""}, clear=False):
             self.assertFalse(combined_local_probe())
 

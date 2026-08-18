@@ -32,14 +32,40 @@ def validation_fast_mode() -> bool:
 
 
 def api_retry_max_sellers() -> int:
-    """Повтор продавцов после transient API. -1 = все, 0 = выкл."""
+    """Короткий повтор unknown/timeout. -1 = все, 0 = выкл. Дефолт 80 — не 20 мин на 437 сбоев."""
     raw = (os.getenv("VALIDEMAIL_API_RETRY_MAX") or "").strip()
     if not raw:
-        return -1
+        return 80
     try:
         return max(-1, min(5000, int(raw)))
     except (TypeError, ValueError):
-        return -1
+        return 80
+
+
+def validation_wall_sec(num_keys: int | None = None) -> float:
+    """Стена всего подбора: 7 ключей ≈ 5.5 мин, не 25."""
+    raw = (os.getenv("VALIDEMAIL_DEADLINE_SEC") or "").strip()
+    if raw:
+        try:
+            return max(0.0, min(900.0, float(raw)))
+        except (TypeError, ValueError):
+            pass
+    n = max(1, int(num_keys or 0) or len(keys_from_config()) or 1)
+    if n >= 7:
+        return 330.0
+    if n >= 5:
+        return 390.0
+    return 480.0
+
+
+def api_retry_wall_sec() -> float:
+    raw = (os.getenv("VALIDEMAIL_API_RETRY_SEC") or "").strip()
+    if raw:
+        try:
+            return max(0.0, min(180.0, float(raw)))
+        except (TypeError, ValueError):
+            pass
+    return 45.0
 
 
 def combined_local_probe() -> bool:
@@ -78,7 +104,7 @@ def per_key_concurrency_limit() -> int:
         base = 40
     if not (os.getenv("VALIDEMAIL_CONCURRENCY_PER_KEY") or "").strip():
         base = _env_int("VALIDEMAIL_CONCURRENCY_PER_KEY", default=base, traffic=22)
-    cap = 16 if validation_fast_mode() else 12
+    cap = 24 if validation_fast_mode() else 16
     return max(1, min(cap, base))
 
 
@@ -89,7 +115,7 @@ def seller_parallel_per_key() -> int:
             return max(1, min(32, int(raw)))
         except (TypeError, ValueError):
             pass
-    n = _env_int("VALIDEMAIL_SELLER_PARALLEL_PER_KEY", default=8, traffic=8)
+    n = _env_int("VALIDEMAIL_SELLER_PARALLEL_PER_KEY", default=14, traffic=16)
     return max(1, min(32, n))
 
 
@@ -115,7 +141,7 @@ def seller_batch_pause_sec() -> float:
 def seller_validation_timeout_sec() -> float:
     raw = (os.getenv("VALIDEMAIL_SELLER_TIMEOUT_SEC") or "").strip()
     if not raw:
-        return 150.0 if validation_traffic_mode() else 180.0
+        return 50.0 if validation_traffic_mode() else 70.0
     try:
         return max(30.0, min(300.0, float(raw)))
     except (TypeError, ValueError):
@@ -138,11 +164,17 @@ def tail_domains_one_batch() -> bool:
 
 
 def max_domains_per_seller() -> int:
-    try:
-        n = int(getattr(config, "VALIDEMAIL_MAX_DOMAINS_PROBE", 0) or 0)
-    except (TypeError, ValueError):
-        return 0
-    return max(0, min(32, n))
+    """2 приоритетных домена (gmail + следующий). 0 = все. Иначе 8 доменов × 600 имён = 20 мин."""
+    raw = (os.getenv("VALIDEMAIL_MAX_DOMAINS_PROBE") or "").strip()
+    if raw:
+        try:
+            n = int(raw)
+        except (TypeError, ValueError):
+            return 2
+        if n <= 0:
+            return 2
+        return min(32, n)
+    return 2
 
 
 def validation_pool_size(num_keys: int | None = None) -> int:
@@ -255,11 +287,11 @@ def probe_by_domain_waves() -> bool:
 def probe_retry_count() -> int:
     raw = (os.getenv("VALIDEMAIL_PROBE_RETRIES") or "").strip()
     if not raw:
-        return 2
+        return 1
     try:
         return max(1, min(5, int(raw)))
     except (TypeError, ValueError):
-        return 2
+        return 1
 
 
 def optional_tail_domain_count() -> int:

@@ -147,9 +147,22 @@ class ValidEmailNormalizeTests(unittest.TestCase):
         from services.validemail_keys import api_retry_max_sellers, combined_local_probe
 
         with patch.dict(os.environ, {"VALIDEMAIL_API_RETRY_MAX": ""}, clear=False):
-            self.assertEqual(api_retry_max_sellers(), -1)
+            self.assertEqual(api_retry_max_sellers(), 80)
         with patch.dict(os.environ, {"VALIDEMAIL_COMBINED_LOCALS": ""}, clear=False):
             self.assertFalse(combined_local_probe())
+
+    def test_seven_keys_wall_and_two_domains(self):
+        from unittest.mock import patch
+
+        import os
+
+        from services.validemail_keys import max_domains_per_seller, validation_wall_sec
+
+        with patch.dict(os.environ, {"VALIDEMAIL_MAX_DOMAINS_PROBE": "", "VALIDEMAIL_DEADLINE_SEC": ""}, clear=False):
+            self.assertEqual(max_domains_per_seller(), 2)
+            self.assertEqual(validation_wall_sec(7), 330.0)
+        with patch.dict(os.environ, {"VALIDEMAIL_MAX_DOMAINS_PROBE": "0"}, clear=False):
+            self.assertEqual(max_domains_per_seller(), 2)
 
 
 if __name__ == "__main__":

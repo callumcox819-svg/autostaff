@@ -58,7 +58,7 @@ def _validemail_per_key_concurrency() -> int:
 def _validemail_seller_parallel_per_key() -> int:
     raw = (os.getenv("VALIDEMAIL_SELLER_PARALLEL_PER_KEY") or "").strip()
     if not raw:
-        return 8 if _validemail_traffic_mode() else 8
+        return 16 if _validemail_traffic_mode() else 14
     try:
         return max(1, min(32, int(raw)))
     except (TypeError, ValueError):
@@ -76,7 +76,7 @@ def _validemail_max_retries_default() -> int:
     raw = (os.getenv("VALIDEMAIL_MAX_RETRIES") or "").strip()
     if raw.isdigit():
         return max(1, min(5, int(raw)))
-    return 2
+    return 1
 
 
 def _validemail_domain_wave_size() -> int:
@@ -134,7 +134,7 @@ class Config:
             int(
                 os.getenv(
                     "VALIDEMAIL_API_TIMEOUT",
-                    "12",
+                    "8",
                 )
             ),
         ),

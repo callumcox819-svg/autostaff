@@ -227,6 +227,12 @@ def _is_api_failure(_ok: bool, raw: object) -> bool:
     if st == 200:
         if reason in _TRANSIENT_API_REASONS:
             return True
+        status200 = str(
+            raw.get("status") or raw.get("State") or raw.get("state") or ""
+        ).lower().strip()
+        # unknown = SMTP не ответил (не «ящика нет»). Иначе 300+ «без email» при 7 найденных.
+        if status200 == "unknown":
+            return True
         return False
 
     if reason in ("connection_error", "timeout"):
@@ -238,7 +244,6 @@ def _is_api_failure(_ok: bool, raw: object) -> bool:
     if status in (
         "deliverable",
         "undeliverable",
-        "unknown",
         "risky",
         "invalid",
         "not deliverable",
@@ -304,9 +309,11 @@ def _is_api_failure(_ok: bool, raw: object) -> bool:
 
 
 def _probe_inconclusive(ok: bool, raw: object) -> bool:
-    """Таймаут/429/сеть — не «ящик не существует»."""
-    if ok or _is_cancelled_raw(raw):
+    """Таймаут/429/сеть/unknown/cancelled — не «ящик не существует»."""
+    if ok:
         return False
+    if _is_cancelled_raw(raw):
+        return True
     if _is_api_failure(ok, raw):
         return True
     return _is_transient_failure(raw)
@@ -318,10 +325,7 @@ def _wave_seller_needs_api_retry(
     *,
     seller_already_found: bool,
 ) -> bool:
-    """
-    Повтор продавца только если волна ничего не дала и не было ни одного
-    уверенного «нет ящика» — один timeout среди 36 undeliverable не retry.
-    """
+    """Повтор, если остались timeout/unknown/cancelled — даже рядом с undeliverable."""
     if seller_already_found:
         return False
     by_lc = {(e or "").strip().lower(): (e, ok, raw) for e, ok, raw in results}
@@ -331,18 +335,16 @@ def _wave_seller_needs_api_retry(
         em_lc = (em_lc or "").strip().lower()
         row = by_lc.get(em_lc)
         if not row:
+            inconclusive += 1
             continue
         _e, ok, raw = row
-        if _is_cancelled_raw(raw):
-            continue
         if ok:
             return False
         if _probe_inconclusive(ok, raw):
             inconclusive += 1
         else:
             definitive_no += 1
-    if definitive_no > 0:
-        return False
+    # Есть не дожатые адреса — повторяем их, даже если соседний local уже undeliverable.
     return inconclusive > 0
 
 
@@ -1133,6 +1135,9 @@ async def _validate_offers_old(
                 await asyncio.wait_for(_validate_seller(i, my_key), timeout=timeout)
             except asyncio.TimeoutError:
                 logger.warning("validemail seller timeout idx=%s name=%s", i, prepared[i].get("person_name"))
+                if seller_api_fail[i] == 0 and stats is not None:
+                    stats["api_errors"] = int(stats.get("api_errors") or 0) + 1
+                seller_api_fail[i] = 1
                 if stats is not None:
                     stats["seller_timeouts"] = int(stats.get("seller_timeouts") or 0) + 1
             async with state_lock:
@@ -1153,7 +1158,7 @@ async def _validate_offers_old(
     async def _run_api_retry_passes() -> None:
         cap = api_retry_max_sellers()
         retry_sem = asyncio.Semaphore(max(12, min(32, max(8, seller_sem_cap // 2))))
-        max_passes = 1 if validation_fast_mode() else 2
+        max_passes = 2
         for pass_no in range(max_passes):
             retry_idx = [
                 i
@@ -1182,8 +1187,10 @@ async def _validate_offers_old(
                         ri,
                         api_keys[ri % n_keys],
                         tier_probe=False,
-                        count_api_errors=False,
+                        count_api_errors=True,
                     )
+                    if found_by_idx[ri]:
+                        seller_api_fail[ri] = 0
                 async with retry_lock:
                     retry_done += 1
                     if stats is not None:

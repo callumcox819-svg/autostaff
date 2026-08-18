@@ -73,6 +73,84 @@ class ValidEmailNormalizeTests(unittest.TestCase):
         with patch.dict(os.environ, {"VALIDEMAIL_ACCEPT_RISKY": "0", "VALIDEMAIL_TRAFFIC_MODE": "1"}):
             self.assertFalse(_normalize_ok(payload))
 
+    def test_unknown_is_api_failure_not_mailbox_missing(self):
+        from services.validemail_validator import _is_api_failure
+
+        self.assertTrue(
+            _is_api_failure(
+                False,
+                {
+                    "_http_status": 200,
+                    "status": "unknown",
+                    "reason": "timeout",
+                    "isDeliverable": False,
+                },
+            )
+        )
+        self.assertTrue(
+            _is_api_failure(
+                False,
+                {
+                    "_http_status": 200,
+                    "status": "unknown",
+                    "reason": "other",
+                    "isDeliverable": False,
+                },
+            )
+        )
+        self.assertFalse(
+            _is_api_failure(
+                False,
+                {
+                    "_http_status": 200,
+                    "status": "undeliverable",
+                    "reason": "invalid_smtp",
+                    "isDeliverable": False,
+                },
+            )
+        )
+
+    def test_wave_retries_cancelled_even_if_one_undeliverable(self):
+        from services.validemail_validator import _wave_seller_needs_api_retry
+
+        emails = [
+            "a@gmail.com",
+            "b@gmail.com",
+            "c@gmail.com",
+        ]
+        results = [
+            (
+                "a@gmail.com",
+                False,
+                {
+                    "_http_status": 200,
+                    "status": "undeliverable",
+                    "reason": "invalid_smtp",
+                },
+            ),
+            ("b@gmail.com", False, {"error": "cancelled", "_cancelled": True}),
+            (
+                "c@gmail.com",
+                False,
+                {"_http_status": 200, "status": "unknown", "reason": "timeout"},
+            ),
+        ]
+        self.assertTrue(
+            _wave_seller_needs_api_retry(results, emails, seller_already_found=False)
+        )
+
+    def test_retry_all_sellers_by_default(self):
+        from unittest.mock import patch
+
+        import os
+
+        from services.validemail_keys import api_retry_max_sellers, combined_local_probe
+
+        with patch.dict(os.environ, {"VALIDEMAIL_API_RETRY_MAX": ""}, clear=False):
+            self.assertEqual(api_retry_max_sellers(), -1)
+        with patch.dict(os.environ, {"VALIDEMAIL_COMBINED_LOCALS": ""}, clear=False):
+            self.assertFalse(combined_local_probe())
+
 
 if __name__ == "__main__":
     unittest.main()

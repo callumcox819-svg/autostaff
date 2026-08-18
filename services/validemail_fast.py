@@ -244,8 +244,14 @@ def _is_transient_failure(raw: object) -> bool:
 
 
 def _should_cache_result(raw: object) -> bool:
-    """Не кэшируем таймауты и 429 — иначе «валидные» теряются на час."""
-    return not _is_transient_failure(raw)
+    """Не кэшируем таймауты, 429 и unknown — иначе живые ящики теряются на час."""
+    if _is_transient_failure(raw):
+        return False
+    if isinstance(raw, dict):
+        st = str(raw.get("status") or raw.get("State") or raw.get("state") or "").lower().strip()
+        if st == "unknown":
+            return False
+    return True
 
 
 def _retry_delay_sec(attempt: int, raw: dict) -> float:

@@ -32,20 +32,20 @@ def validation_fast_mode() -> bool:
 
 
 def api_retry_max_sellers() -> int:
-    """Повтор продавцов после transient API (0 = выкл)."""
+    """Повтор продавцов после transient API. -1 = все, 0 = выкл."""
     raw = (os.getenv("VALIDEMAIL_API_RETRY_MAX") or "").strip()
     if not raw:
-        return 120 if validation_traffic_mode() else 0
+        return -1
     try:
-        return max(0, min(120, int(raw)))
+        return max(-1, min(5000, int(raw)))
     except (TypeError, ValueError):
-        return 0
+        return -1
 
 
 def combined_local_probe() -> bool:
-    """Все local-part × домены одним HTTP-залпом на продавца."""
-    raw = (os.getenv("VALIDEMAIL_COMBINED_LOCALS") or "1").strip().lower()
-    return raw not in ("0", "false", "no", "off")
+    """Все local-part × домены одним HTTP-залпом. Выкл по умолчанию — SMTP не успевает."""
+    raw = (os.getenv("VALIDEMAIL_COMBINED_LOCALS") or "0").strip().lower()
+    return raw in ("1", "true", "yes", "on")
 
 
 def _env_int(name: str, *, default: int, traffic: int | None = None) -> int:
@@ -78,7 +78,7 @@ def per_key_concurrency_limit() -> int:
         base = 40
     if not (os.getenv("VALIDEMAIL_CONCURRENCY_PER_KEY") or "").strip():
         base = _env_int("VALIDEMAIL_CONCURRENCY_PER_KEY", default=base, traffic=22)
-    cap = 28 if validation_fast_mode() else 12
+    cap = 16 if validation_fast_mode() else 12
     return max(1, min(cap, base))
 
 
@@ -89,7 +89,7 @@ def seller_parallel_per_key() -> int:
             return max(1, min(32, int(raw)))
         except (TypeError, ValueError):
             pass
-    n = _env_int("VALIDEMAIL_SELLER_PARALLEL_PER_KEY", default=14, traffic=16)
+    n = _env_int("VALIDEMAIL_SELLER_PARALLEL_PER_KEY", default=8, traffic=8)
     return max(1, min(32, n))
 
 
@@ -115,7 +115,7 @@ def seller_batch_pause_sec() -> float:
 def seller_validation_timeout_sec() -> float:
     raw = (os.getenv("VALIDEMAIL_SELLER_TIMEOUT_SEC") or "").strip()
     if not raw:
-        return 85.0 if validation_traffic_mode() else 120.0
+        return 150.0 if validation_traffic_mode() else 180.0
     try:
         return max(30.0, min(300.0, float(raw)))
     except (TypeError, ValueError):
@@ -255,7 +255,7 @@ def probe_by_domain_waves() -> bool:
 def probe_retry_count() -> int:
     raw = (os.getenv("VALIDEMAIL_PROBE_RETRIES") or "").strip()
     if not raw:
-        return 1 if validation_traffic_mode() else 2
+        return 2
     try:
         return max(1, min(5, int(raw)))
     except (TypeError, ValueError):

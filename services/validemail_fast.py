@@ -566,7 +566,7 @@ async def _fetch_with_key_failover(
     url: str,
     use_ssl_verify: bool,
 ) -> tuple[bool, dict]:
-    """402/429 на одном ключе — сразу другой из пула, иначе 7 ключей бесполезны."""
+    """Другой ключ только если этот мёртв (402/403). 429/timeout — тот же ключ, иначе 7× нагрузка."""
     pool = [k for k in _KEY_POOL.get() if k] or [preferred_key]
     ordered = [preferred_key] + [k for k in pool if k != preferred_key]
     last: dict = {"error": "no api key"}
@@ -589,15 +589,13 @@ async def _fetch_with_key_failover(
         if st in (402, 403, 405):
             _DEAD_KEYS.add(key)
             last["_api_key_error"] = True
-            logger.warning("validemail key disabled http=%s remaining=%s", st, len(pool) - len(_DEAD_KEYS))
+            logger.warning(
+                "validemail key disabled http=%s remaining=%s",
+                st,
+                max(0, len(pool) - len(_DEAD_KEYS)),
+            )
             continue
-        if ok:
-            return True, last
-        if st == 429:
-            continue
-        if _is_transient_failure(last):
-            continue
-        return False, last
+        return ok, last
     if tried == 0:
         last = {"error": "all api keys dead", "_api_key_error": True, "_http_status": 402}
     return False, last

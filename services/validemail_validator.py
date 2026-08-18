@@ -1068,6 +1068,7 @@ async def _validate_offers_old(
             return
 
         # Приоритет: нашли — стоп. Нет ящика — следующий домен. unknown — тоже следующий, не бросаем продавца.
+        unknown_domains = 0
         for dom, wave in _domain_priority_waves(locals_list, domains_clean):
             if found_by_idx[i]:
                 break
@@ -1084,7 +1085,9 @@ async def _validate_offers_old(
                 break
             if verdict == "unknown":
                 seller_api_fail[i] = 1
-                continue
+                unknown_domains += 1
+                if unknown_domains >= 2:
+                    break
 
         nk = str(prepared[i].get("name_key") or "").strip()
         if found_by_idx[i] and nk:
@@ -1132,66 +1135,6 @@ async def _validate_offers_old(
         await asyncio.gather(*(_limited(i) for i in range(n_sellers)))
 
     await _run_sellers_batched()
-
-    async def _run_api_retry_passes() -> None:
-        found_now = sum(1 for f in found_by_idx if f)
-        # Уже нашли новые почты в этом файле — второй круг не нужен.
-        if found_now > 0:
-            return
-        # 0 новых при сотнях имён — первый проход сдох (429/ключ). Один аварийный круг.
-        if n_sellers < 15:
-            return
-        logger.warning("validemail 0 new emails — emergency retry sellers=%s", n_sellers)
-        cap = n_sellers
-        retry_budget = 90.0
-        retry_sem = asyncio.Semaphore(max(16, min(seller_sem_cap, 112)))
-        max_passes = 1
-        retry_t0 = time.monotonic()
-        retry_stop = asyncio.Event()
-        for pass_no in range(max_passes):
-            retry_idx = [
-                i
-                for i in range(n_sellers)
-                if not found_by_idx[i] and seller_api_fail[i] > 0
-            ]
-            if not retry_idx:
-                break
-            if cap >= 0 and len(retry_idx) > cap:
-                retry_idx = retry_idx[:cap]
-            if stats is not None:
-                stats["phase"] = "api_retry"
-                stats["api_retry_pass"] = pass_no + 1
-                stats["api_retry_queued"] = len(retry_idx)
-                stats["api_retry_done"] = 0
-            retry_done = 0
-            retry_lock = asyncio.Lock()
-
-            async def _retry_seller(ri: int) -> None:
-                nonlocal retry_done
-                if retry_stop.is_set() or (time.monotonic() - retry_t0) >= retry_budget:
-                    retry_stop.set()
-                    return
-                async with retry_sem:
-                    if retry_stop.is_set() or (time.monotonic() - retry_t0) >= retry_budget:
-                        retry_stop.set()
-                        return
-                    seller_api_fail[ri] = 0
-                    await _validate_seller(
-                        ri,
-                        api_keys[ri % n_keys],
-                        tier_probe=False,
-                        count_api_errors=True,
-                    )
-                    if found_by_idx[ri]:
-                        seller_api_fail[ri] = 0
-                async with retry_lock:
-                    retry_done += 1
-                    if stats is not None:
-                        stats["api_retry_done"] = retry_done
-
-            await asyncio.gather(*(_retry_seller(i) for i in retry_idx))
-
-    await _run_api_retry_passes()
 
     if stats is not None:
         stats["sellers_api_unresolved"] = sum(

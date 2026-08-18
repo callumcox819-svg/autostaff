@@ -202,6 +202,10 @@ def _format_validation_status(
         )
     if int(errors or 0) > 0:
         lines.append(f"{html_emoji('fail')} Ошибок API: <b>{int(errors)}</b>")
+    if finished and int(added or 0) == 0 and int(errors or 0) >= 30:
+        lines.append(
+            f"{html_emoji('warn')} Новых почт нет — ValidEmail не ответил. Проверь ключи и баланс."
+        )
     return "\n".join(lines)
 
 

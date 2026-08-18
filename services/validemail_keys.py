@@ -136,7 +136,7 @@ def seller_batch_pause_sec() -> float:
 def seller_validation_timeout_sec() -> float:
     raw = (os.getenv("VALIDEMAIL_SELLER_TIMEOUT_SEC") or "").strip()
     if not raw:
-        return 40.0 if validation_traffic_mode() else 55.0
+        return 70.0 if validation_traffic_mode() else 80.0
     try:
         return max(30.0, min(300.0, float(raw)))
     except (TypeError, ValueError):

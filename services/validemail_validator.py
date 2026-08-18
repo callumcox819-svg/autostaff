@@ -578,8 +578,12 @@ async def _validate_offers_old(
         "no",
         "off",
     ):
-        from services.validemail_fast import clear_validation_email_cache
+        from services.validemail_fast import (
+            clear_dead_validemail_keys,
+            clear_validation_email_cache,
+        )
 
+        clear_dead_validemail_keys()
         cleared = clear_validation_email_cache()
         if stats is not None and cleared:
             stats["cache_cleared"] = cleared
@@ -687,8 +691,6 @@ async def _validate_offers_old(
     url = str(cfg.validation_url or DEFAULT_VALIDEMAIL_URL).strip()
 
     from services.validemail_keys import (
-        api_retry_max_sellers,
-        api_retry_wall_sec,
         combined_local_probe,
         max_domains_per_seller,
         max_locals_per_seller,
@@ -1065,8 +1067,7 @@ async def _validate_offers_old(
         if not locals_list:
             return
 
-        # Приоритет: нашли — стоп. Нет ящика (undeliverable) — следующий домен.
-        # unknown/timeout — не гоняем остальные домены по 12с (это и есть 15 минут).
+        # Приоритет: нашли — стоп. Нет ящика — следующий домен. unknown — тоже следующий, не бросаем продавца.
         for dom, wave in _domain_priority_waves(locals_list, domains_clean):
             if found_by_idx[i]:
                 break
@@ -1083,7 +1084,7 @@ async def _validate_offers_old(
                 break
             if verdict == "unknown":
                 seller_api_fail[i] = 1
-                break
+                continue
 
         nk = str(prepared[i].get("name_key") or "").strip()
         if found_by_idx[i] and nk:
@@ -1133,22 +1134,16 @@ async def _validate_offers_old(
     await _run_sellers_batched()
 
     async def _run_api_retry_passes() -> None:
-        cap = api_retry_max_sellers()
-        if cap == 0:
-            return
         found_now = sum(1 for f in found_by_idx if f)
-        already_n = int((stats or {}).get("already_in_db") or 0)
-        # 144 уже в БД + новые: второй круг по 460 unknown = 15 мин на 1%.
-        if found_now + already_n >= 80:
-            logger.info(
-                "skip api retry: found=%s already_in_db=%s",
-                found_now,
-                already_n,
-            )
+        # Уже нашли новые почты в этом файле — второй круг не нужен.
+        if found_now > 0:
             return
-        retry_budget = api_retry_wall_sec()
-        if retry_budget <= 0:
+        # 0 новых при сотнях имён — первый проход сдох (429/ключ). Один аварийный круг.
+        if n_sellers < 15:
             return
+        logger.warning("validemail 0 new emails — emergency retry sellers=%s", n_sellers)
+        cap = n_sellers
+        retry_budget = 90.0
         retry_sem = asyncio.Semaphore(max(16, min(seller_sem_cap, 112)))
         max_passes = 1
         retry_t0 = time.monotonic()

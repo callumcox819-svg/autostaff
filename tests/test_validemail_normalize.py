@@ -169,6 +169,49 @@ class ValidEmailNormalizeTests(unittest.TestCase):
         self.assertTrue(all("@icloud.com" in e for e in waves[1][1]))
         self.assertFalse(any("@icloud.com" in e for e in waves[0][1]))
 
+    def test_wave_verdict_unknown_does_not_look_like_no_mailbox(self):
+        from services.validemail_validator import _domain_wave_verdict
+
+        pending = ["a@gmail.com", "b@gmail.com"]
+        unknown = [
+            (
+                "a@gmail.com",
+                False,
+                {"_http_status": 200, "status": "unknown", "reason": "timeout"},
+            ),
+            (
+                "b@gmail.com",
+                False,
+                {
+                    "_http_status": 200,
+                    "status": "undeliverable",
+                    "reason": "invalid_smtp",
+                },
+            ),
+        ]
+        self.assertEqual(_domain_wave_verdict(unknown, pending), "unknown")
+        nos = [
+            (
+                "a@gmail.com",
+                False,
+                {
+                    "_http_status": 200,
+                    "status": "undeliverable",
+                    "reason": "invalid_smtp",
+                },
+            ),
+            (
+                "b@gmail.com",
+                False,
+                {
+                    "_http_status": 200,
+                    "status": "undeliverable",
+                    "reason": "invalid_smtp",
+                },
+            ),
+        ]
+        self.assertEqual(_domain_wave_verdict(nos, pending), "no")
+
     def test_seven_keys_wall_uses_full_priority_list(self):
         from unittest.mock import patch
 

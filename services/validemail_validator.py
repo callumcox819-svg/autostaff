@@ -319,6 +319,32 @@ def _probe_inconclusive(ok: bool, raw: object) -> bool:
     return _is_transient_failure(raw)
 
 
+def _domain_wave_verdict(
+    results: list[tuple[str, bool, dict]],
+    pending: list[str],
+) -> str:
+    """hit — есть ящик; no — все undeliverable (берём следующий домен); unknown — SMTP не ответил."""
+    by_lc = {(e or "").strip().lower(): (e, ok, raw) for e, ok, raw in results}
+    inconclusive = 0
+    definitive_no = 0
+    for em in pending:
+        em_lc = (em or "").strip().lower()
+        row = by_lc.get(em_lc)
+        if not row:
+            inconclusive += 1
+            continue
+        _e, ok, raw = row
+        if ok:
+            return "hit"
+        if _probe_inconclusive(ok, raw):
+            inconclusive += 1
+        else:
+            definitive_no += 1
+    if inconclusive > 0:
+        return "unknown"
+    return "no"
+
+
 def _wave_seller_needs_api_retry(
     results: list[tuple[str, bool, dict]],
     priority_emails: list[str],
@@ -912,10 +938,11 @@ async def _validate_offers_old(
         pending: list[str],
         *,
         count_api_errors: bool = True,
-    ) -> None:
+    ) -> str:
         if found_by_idx[seller_i] or not pending:
-            return
+            return "hit" if found_by_idx[seller_i] else "no"
         max_attempts = _probe_max_attempts()
+        last_verdict = "unknown"
         for attempt in range(max_attempts):
             dom_hint = (pending[0].split("@")[-1] if pending else "") or ""
             results = await _run_batch(
@@ -939,7 +966,8 @@ async def _validate_offers_old(
                     ) + cv
                 _refresh_stats()
             if found_by_idx[seller_i]:
-                return
+                return "hit"
+            last_verdict = _domain_wave_verdict(results, pending)
             by_lc = {(e or "").strip().lower(): (e, ok, raw) for e, ok, raw in results}
             retry_list: list[str] = []
             for em in pending:
@@ -957,6 +985,7 @@ async def _validate_offers_old(
             await asyncio.sleep(
                 _retry_delay_sec(attempt, raw0 if isinstance(raw0, dict) else {})
             )
+        return last_verdict
 
     def _groups_by_domain(pending: list[str]) -> list[list[str]]:
         by_dom: dict[str, list[str]] = {}
@@ -1036,19 +1065,25 @@ async def _validate_offers_old(
         if not locals_list:
             return
 
-        # Приоритет доменов: 1-й домен × все local → нашли — стоп. Нет — 2-й. Чужие домены не мешаем.
+        # Приоритет: нашли — стоп. Нет ящика (undeliverable) — следующий домен.
+        # unknown/timeout — не гоняем остальные домены по 12с (это и есть 15 минут).
         for dom, wave in _domain_priority_waves(locals_list, domains_clean):
             if found_by_idx[i]:
                 break
             if stats is not None:
                 async with state_lock:
                     stats["current_domain"] = dom
-            await _probe_one_list(
+            verdict = await _probe_one_list(
                 i,
                 api_key,
                 wave,
                 count_api_errors=count_api_errors,
             )
+            if found_by_idx[i] or verdict == "hit":
+                break
+            if verdict == "unknown":
+                seller_api_fail[i] = 1
+                break
 
         nk = str(prepared[i].get("name_key") or "").strip()
         if found_by_idx[i] and nk:
@@ -1098,6 +1133,11 @@ async def _validate_offers_old(
     await _run_sellers_batched()
 
     async def _run_api_retry_passes() -> None:
+        found_now = sum(1 for f in found_by_idx if f)
+        # 137 лидов уже есть — второй круг по 441 unknown = +10 минут без толка.
+        if found_now >= 80:
+            logger.info("skip api retry: already found=%s", found_now)
+            return
         retry_budget = api_retry_wall_sec()
         if retry_budget <= 0:
             return

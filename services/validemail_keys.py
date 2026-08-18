@@ -60,7 +60,7 @@ def api_retry_wall_sec() -> float:
             return max(0.0, min(300.0, float(raw)))
         except (TypeError, ValueError):
             pass
-    return 90.0
+    return 40.0
 
 
 def combined_local_probe() -> bool:
@@ -110,7 +110,7 @@ def seller_parallel_per_key() -> int:
             return max(1, min(32, int(raw)))
         except (TypeError, ValueError):
             pass
-    n = _env_int("VALIDEMAIL_SELLER_PARALLEL_PER_KEY", default=14, traffic=16)
+    n = _env_int("VALIDEMAIL_SELLER_PARALLEL_PER_KEY", default=16, traffic=18)
     return max(1, min(32, n))
 
 
@@ -136,7 +136,7 @@ def seller_batch_pause_sec() -> float:
 def seller_validation_timeout_sec() -> float:
     raw = (os.getenv("VALIDEMAIL_SELLER_TIMEOUT_SEC") or "").strip()
     if not raw:
-        return 90.0 if validation_traffic_mode() else 120.0
+        return 40.0 if validation_traffic_mode() else 55.0
     try:
         return max(30.0, min(300.0, float(raw)))
     except (TypeError, ValueError):

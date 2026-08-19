@@ -228,9 +228,12 @@ async def run_burst_mailing(
         )
     pairs = pair_targets_with_accounts(targets, acc_ordered)
     waves = split_into_waves(pairs, wave_size=wave_size)
+    # Оценка длительности волны нужна только для расчёта паузы между волнами.
+    # per_letter_tmo включает ретраи и таймауты, поэтому давал завышение и превращал BURST
+    # в "полуинстант". Ставим меньшую оценку, чтобы burst был ближе к 2–10 секундам.
     est_wave = min(
-        float(per_letter_tmo) * 0.45,
-        25.0,
+        float(per_letter_tmo) * 0.08,
+        6.0,
     )
     wave_gap = burst_wave_gap_sec(len(waves), estimated_wave_sec=est_wave)
     stagger_s = inbox_stagger_ms() / 1000.0

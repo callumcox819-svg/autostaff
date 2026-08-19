@@ -143,12 +143,13 @@ def mailing_ehlo_name() -> str | None:
 
 def inbox_stagger_ms() -> int:
     """Микро-задержка старта каждого ящика внутри волны (не одновременный залп)."""
-    return max(0, min(400, int(os.getenv("INBOX_STAGGER_MS", "60"))))
+    # По умолчанию — чуть меньше, чтобы BURST не выглядел "негновенным" при волнах.
+    return max(0, min(400, int(os.getenv("INBOX_STAGGER_MS", "20"))))
 
 
 def inbox_account_gap_sec() -> float:
     """Пауза между волнами с одного Gmail (если адресов > ящиков)."""
-    return max(0.0, min(3.0, float(os.getenv("INBOX_ACCOUNT_GAP_SEC", "0.42"))))
+    return max(0.0, min(3.0, float(os.getenv("INBOX_ACCOUNT_GAP_SEC", "0.2"))))
 
 
 def burst_target_max_sec() -> float:
@@ -168,9 +169,11 @@ def burst_wave_gap_sec(num_waves: int, *, estimated_wave_sec: float = 3.0) -> fl
         return base
     budget = max(0.0, burst_target_max_sec() - estimated_wave_sec)
     if budget <= 0:
-        return max(0.08, base)
+        min_gap = max(0.0, min(1.0, float(os.getenv("BURST_MIN_WAVE_GAP_SEC", "0.02"))))
+        return max(min_gap, base)
     adaptive = budget / max(1, num_waves - 1)
-    return max(0.08, min(1.5, min(base + 0.05, adaptive)))
+    min_gap = max(0.0, min(1.0, float(os.getenv("BURST_MIN_WAVE_GAP_SEC", "0.02"))))
+    return max(min_gap, min(1.5, min(base + 0.05, adaptive)))
 
 
 def inbox_max_body_chars() -> int:

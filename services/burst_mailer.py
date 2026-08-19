@@ -34,7 +34,7 @@ from services.mailing_send import MAIL_FAST_SEND_RETRIES
 
 logger = logging.getLogger(__name__)
 
-BURST_SMTP_RETRIES = max(1, min(4, int(os.getenv("BURST_SMTP_RETRIES", "2"))))
+BURST_SMTP_RETRIES = max(1, min(4, int(os.getenv("BURST_SMTP_RETRIES", "1"))))
 BURST_RETRY_PAUSE_SEC = max(
     0.0, min(1.0, float(os.getenv("BURST_RETRY_PAUSE_SEC", "0.06")))
 )
@@ -47,13 +47,13 @@ def burst_per_letter_timeout_sec(sticky_proxy=None) -> int:
     """Должен быть ≥ SMTP×ретраи; иначе asyncio обрежет Loma на 24 с."""
     raw_env = (os.getenv("BURST_PER_LETTER_TIMEOUT_SEC") or "").strip()
     if raw_env.isdigit():
-        return max(30, min(240, int(raw_env)))
+        return max(15, min(240, int(raw_env)))
     smtp_t = int(MAIL_FAST_SMTP_TIMEOUT_SEC)
     if sticky_proxy is not None and is_residential_gateway(sticky_proxy):
         smtp_t = max(smtp_t, residential_smtp_timeout_sec())
     inner = smtp_t * max(1, MAIL_FAST_SEND_RETRIES)
-    outer = inner * BURST_SMTP_RETRIES + 20
-    return max(60, min(240, outer))
+    outer = inner * BURST_SMTP_RETRIES + 5
+    return max(20, min(120, outer))
 
 
 def burst_wave_size_for_proxy(proxy, num_accounts: int) -> int:

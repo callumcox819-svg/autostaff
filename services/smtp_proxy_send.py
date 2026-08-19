@@ -37,7 +37,7 @@ REPLY_SMTP_PROXY_RETRIES = max(1, min(4, int(os.getenv("REPLY_SMTP_PROXY_RETRIES
 MAIL_SMTP_TIMEOUT_SEC = max(20, min(90, int(os.getenv("MAIL_SMTP_TIMEOUT_SEC", "45"))))
 # Фаст + один ротирующий gateway (Loma: login+DATA дольше — не 18 с).
 MAIL_FAST_SMTP_TIMEOUT_SEC = max(
-    20, min(120, int(os.getenv("MAIL_FAST_SMTP_TIMEOUT_SEC", "60")))
+    12, min(120, int(os.getenv("MAIL_FAST_SMTP_TIMEOUT_SEC", "20")))
 )
 MAIL_SMTP_MAX_PROXIES = max(1, min(12, int(os.getenv("MAIL_SMTP_MAX_PROXIES", "10"))))
 # Явный id ротирующего SOCKS5 в БД (опционально; иначе первый 🟢).

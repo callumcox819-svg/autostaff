@@ -27,8 +27,8 @@ def is_residential_gateway(proxy: Proxy | None) -> bool:
 
 
 def residential_smtp_timeout_sec() -> int:
-    return max(45, min(120, int(os.getenv("RESIDENTIAL_SMTP_TIMEOUT_SEC", "75"))))
+    return max(20, min(120, int(os.getenv("RESIDENTIAL_SMTP_TIMEOUT_SEC", "25"))))
 
 
 def residential_burst_inflight() -> int:
-    return max(1, min(12, int(os.getenv("RESIDENTIAL_BURST_INFLIGHT", "4"))))
+    return max(1, min(30, int(os.getenv("RESIDENTIAL_BURST_INFLIGHT", "30"))))

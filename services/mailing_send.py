@@ -31,7 +31,7 @@ MAIL_VERIFY_SENT = os.getenv("MAIL_VERIFY_SENT", "0").strip().lower() in (
 MAIL_VERIFY_SENT_DELAY_SEC = max(2, min(8, int(os.getenv("MAIL_VERIFY_SENT_DELAY_SEC", "3"))))
 MAIL_SEND_RETRIES = max(1, min(3, int(os.getenv("MAIL_SEND_RETRIES", "2"))))
 MAIL_FAST_SEND_RETRIES = max(
-    MAIL_SEND_RETRIES, min(5, int(os.getenv("MAIL_FAST_SEND_RETRIES", "3")))
+    MAIL_SEND_RETRIES, min(5, int(os.getenv("MAIL_FAST_SEND_RETRIES", "1")))
 )
 # 0 = все активные ящики за одну волну (параллельно)
 MAIL_FAST_PARALLEL_ACCOUNTS = max(
@@ -41,7 +41,7 @@ MAIL_SEND_RETRY_PAUSE_SEC = max(
     1.0, min(8.0, float(os.getenv("MAIL_SEND_RETRY_PAUSE_SEC", "2")))
 )
 MAIL_FAST_SEND_RETRY_PAUSE_SEC = max(
-    0.0, min(2.0, float(os.getenv("MAIL_FAST_SEND_RETRY_PAUSE_SEC", "0.15")))
+    0.0, min(2.0, float(os.getenv("MAIL_FAST_SEND_RETRY_PAUSE_SEC", "0.0")))
 )
 
 

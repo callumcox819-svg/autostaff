@@ -37,7 +37,7 @@ REPLY_SMTP_PROXY_RETRIES = max(1, min(4, int(os.getenv("REPLY_SMTP_PROXY_RETRIES
 MAIL_SMTP_TIMEOUT_SEC = max(20, min(90, int(os.getenv("MAIL_SMTP_TIMEOUT_SEC", "45"))))
 # Фаст + один ротирующий gateway (Loma: login+DATA дольше — не 18 с).
 MAIL_FAST_SMTP_TIMEOUT_SEC = max(
-    12, min(120, int(os.getenv("MAIL_FAST_SMTP_TIMEOUT_SEC", "20")))
+    8, min(120, int(os.getenv("MAIL_FAST_SMTP_TIMEOUT_SEC", "15")))
 )
 MAIL_SMTP_MAX_PROXIES = max(1, min(12, int(os.getenv("MAIL_SMTP_MAX_PROXIES", "10"))))
 # Явный id ротирующего SOCKS5 в БД (опционально; иначе первый 🟢).
@@ -217,7 +217,11 @@ async def send_email_via_account_with_proxy(
         from services.residential_proxy import is_residential_gateway, residential_smtp_timeout_sec
 
         if is_residential_gateway(order[0]):
-            smtp_tmo = max(int(smtp_tmo), residential_smtp_timeout_sec())
+            base_fast = min(
+                int(smtp_tmo), int(os.getenv("BURST_FAST_SMTP_TIMEOUT_CAP_SEC", "20"))
+            )
+            boosted = int(residential_smtp_timeout_sec())
+            smtp_tmo = min(max(base_fast, boosted), base_fast * 2)
 
     last_err: str | None = None
     last_msgid: str | None = None
@@ -358,7 +362,11 @@ async def send_email_via_account_with_proxy_isolated(
         from services.residential_proxy import is_residential_gateway, residential_smtp_timeout_sec
 
         if is_residential_gateway(order[0]):
-            smtp_tmo = max(int(smtp_tmo), residential_smtp_timeout_sec())
+            base_fast = min(
+                int(smtp_tmo), int(os.getenv("BURST_FAST_SMTP_TIMEOUT_CAP_SEC", "20"))
+            )
+            boosted = int(residential_smtp_timeout_sec())
+            smtp_tmo = min(max(base_fast, boosted), base_fast * 2)
     last_err: str | None = None
     last_msgid: str | None = None
     tried = 0

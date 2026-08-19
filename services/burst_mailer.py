@@ -39,7 +39,7 @@ BURST_RETRY_PAUSE_SEC = max(
     0.0, min(1.0, float(os.getenv("BURST_RETRY_PAUSE_SEC", "0.06")))
 )
 BURST_MAX_INFLIGHT = max(
-    4, min(120, int(os.getenv("BURST_MAX_INFLIGHT", "12")))
+    4, min(120, int(os.getenv("BURST_MAX_INFLIGHT", "30")))
 )
 
 
@@ -47,13 +47,19 @@ def burst_per_letter_timeout_sec(sticky_proxy=None) -> int:
     """Должен быть ≥ SMTP×ретраи; иначе asyncio обрежет Loma на 24 с."""
     raw_env = (os.getenv("BURST_PER_LETTER_TIMEOUT_SEC") or "").strip()
     if raw_env.isdigit():
-        return max(15, min(240, int(raw_env)))
-    smtp_t = int(MAIL_FAST_SMTP_TIMEOUT_SEC)
+        return max(8, min(240, int(raw_env)))
+
+    # Для "трафика" не даём burst застрять на residential/Loma.
+    # Если их SMTP-timeout в env высокий — режем до разумного потолка.
+    cap_fast = int(os.getenv("BURST_FAST_SMTP_TIMEOUT_CAP_SEC", "15"))
+    smtp_t = min(int(MAIL_FAST_SMTP_TIMEOUT_SEC), cap_fast)
     if sticky_proxy is not None and is_residential_gateway(sticky_proxy):
-        smtp_t = max(smtp_t, residential_smtp_timeout_sec())
+        boosted = int(residential_smtp_timeout_sec())
+        # максимум в 2x от базового fast-потолка
+        smtp_t = min(max(smtp_t, boosted), smtp_t * 2)
     inner = smtp_t * max(1, MAIL_FAST_SEND_RETRIES)
-    outer = inner * BURST_SMTP_RETRIES + 5
-    return max(20, min(120, outer))
+    outer = inner * BURST_SMTP_RETRIES + 2
+    return max(8, min(60, outer))
 
 
 def burst_wave_size_for_proxy(proxy, num_accounts: int) -> int:

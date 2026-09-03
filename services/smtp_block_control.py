@@ -18,6 +18,25 @@ def _truthy(v: str | None) -> bool:
     return str(v or "").strip().lower() in {"1", "true", "yes", "on", "y"}
 
 
+def is_temporary_smtp_busy(err: str | None) -> bool:
+    """421 / 4.4.5 Server busy — Gmail перегружен, не бан и не дневной лимит."""
+    s = normalize_send_error(err or "").lower()
+    hard_quota = (
+        "daily user sending limit",
+        "sending limit exceeded",
+        "user sending limit",
+        "5.4.5",
+    )
+    if any(p in s for p in hard_quota):
+        return False
+    if "4.4.5" in s or "server busy" in s or "try again later" in s:
+        return True
+    # ACCOUNT_RATE_LIMIT:421:... без daily/5.4.5
+    if ":421:" in s or s.endswith(":421") or " 421 " in f" {s} ":
+        return "limit" not in s or "try again" in s
+    return False
+
+
 def is_smtp_account_block_error(err: str | None) -> bool:
     """Ошибка уровня ящика (лимит Gmail, блок, неверный пароль) — не ошибка одного получателя."""
     s = normalize_send_error(err or "")
@@ -30,13 +49,27 @@ def is_smtp_account_block_error(err: str | None) -> bool:
         "SMTP_ACCEPTED_NOT_IN_SENT",
     ):
         return False
+    # 421 busy — только пауза, ящик с рассылки НЕ снимаем
+    if is_temporary_smtp_busy(s):
+        return False
     if kind in (
         "ACCOUNT_BLOCKED",
-        "ACCOUNT_RATE_LIMIT",
         "ACCOUNT_INVALID_CREDENTIALS",
         "ACCOUNT_WEB_LOGIN_REQUIRED",
     ):
         return True
+    # ACCOUNT_RATE_LIMIT: снимаем только при жёсткой квоте (не Server busy)
+    if kind == "ACCOUNT_RATE_LIMIT":
+        t = s.lower()
+        return any(
+            p in t
+            for p in (
+                "daily user sending limit",
+                "sending limit exceeded",
+                "user sending limit",
+                "5.4.5",
+            )
+        )
     t = s.lower()
     # Обычный DSN / отбой на адрес получателя — ящик отправителя не блокируем.
     recipient_only = (

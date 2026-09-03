@@ -125,8 +125,19 @@ def _classify_exception(e: Exception) -> Tuple[Optional[str], str]:
         return "bad", _marker("ACCOUNT_INVALID_CREDENTIALS", code, text)
     if _is_web_login_required(text):
         return "bad", _marker("ACCOUNT_WEB_LOGIN_REQUIRED", code, text)
-    if _is_rate_limit(code, text) or _is_blocked(code, text):
-        return "smtp_blocked", _marker("ACCOUNT_RATE_LIMIT", code, text)
+    if _is_blocked(code, text):
+        return "smtp_blocked", _marker("ACCOUNT_BLOCKED", code, text)
+    if _is_rate_limit(code, text):
+        marker = _marker("ACCOUNT_RATE_LIMIT", code, text)
+        try:
+            from services.smtp_block_control import is_smtp_account_block_error
+
+            if is_smtp_account_block_error(marker):
+                return "smtp_blocked", marker
+        except Exception:
+            pass
+        # 421 Server busy — не smtp_blocked
+        return None, marker
     err = f"{type(e).__name__}: {code or ''} {text}".strip() or str(e)
     return _classify_status(err)
 

@@ -46,11 +46,13 @@ def global_subject_template() -> str:
 
 def render_subject_with_offer(subject_template: str, offer_title: str) -> str:
     """OFFER и {{OFFER}} → название товара; без названия в шаблоне остаётся OFFER."""
+    from utils.re_literal import re_sub_literal
+
     tpl = sanitize_email_subject((subject_template or "").strip() or global_subject_template())
     title = sanitize_email_subject((offer_title or "").strip())
     replacement = title if title else "OFFER"
     out = tpl.replace("{{OFFER}}", replacement)
-    out = _OFFER_WORD_RE.sub(replacement, out)
+    out = re_sub_literal(_OFFER_WORD_RE, replacement, out)
     out = sanitize_email_subject(out)
     if not out:
         out = replacement or "Anfrage"
@@ -128,8 +130,10 @@ def _regex_from_offer_template(template: str) -> re.Pattern[str] | None:
     if not _OFFER_WORD_RE.search(tpl):
         return None
 
+    from utils.re_literal import re_sub_literal
+
     slot = "\uE000"
-    tmp = _OFFER_WORD_RE.sub(slot, tpl)
+    tmp = re_sub_literal(_OFFER_WORD_RE, slot, tpl)
     parts = tmp.split(slot)
     if len(parts) < 2:
         return None

@@ -248,11 +248,13 @@ def _scrub_offer_leaks(subject: str, body: str, offer_title: str) -> tuple[str, 
     title = (offer_title or "").strip()
 
     def _repl_body(text: str) -> str:
+        from utils.re_literal import re_sub_literal
+
         if not text:
             return text
         if title:
-            return _OFFER_TOKEN_RE.sub(title, text)
-        return _OFFER_TOKEN_RE.sub("Ihr Inserat", text)
+            return re_sub_literal(_OFFER_TOKEN_RE, title, text)
+        return re_sub_literal(_OFFER_TOKEN_RE, "Ihr Inserat", text)
 
     return subject, _repl_body(body)
 

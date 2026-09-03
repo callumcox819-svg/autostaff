@@ -3,6 +3,8 @@ from __future__ import annotations
 import re
 from typing import Any, Optional
 
+from utils.re_literal import re_sub_literal
+
 # Supported placeholders (case-insensitive, with optional spaces):
 # {{LINK}}, {{ITEM_TITLE}}, {{PRICE}}, {{DATE}}, {{SELLER_EMAIL}}, {{BUYER_NAME}}, {{ADDRESS}}, {{IMAGE_URL}}, {{IMAGE}}
 LINK_PLACEHOLDER_RE = re.compile(r"\{\{\s*LINK\s*\}\}", re.I)
@@ -23,7 +25,7 @@ def apply_placeholders(text: str, link: str = "", ctx: Optional[dict[str, Any]] 
     out = text
 
     if link:
-        out = LINK_PLACEHOLDER_RE.sub(str(link), out)
+        out = re_sub_literal(LINK_PLACEHOLDER_RE, str(link), out)
 
     if not ctx:
         return out

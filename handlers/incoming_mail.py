@@ -2866,7 +2866,9 @@ def _apply_link(html_text: str, link: str) -> str:
         return ""
     if not link:
         return html_text
-    return re.sub(r"\{\{\s*LINK\s*\}\}", link, html_text, flags=re.I)
+    from utils.re_literal import re_sub_literal
+
+    return re_sub_literal(r"\{\{\s*LINK\s*\}\}", link, html_text, flags=re.I)
 
 
 @router.callback_query(F.data.startswith("mail_reply_html:"))

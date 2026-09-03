@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import re
 
+from utils.re_literal import re_sub_literal
+
 _OFFER_TOKEN_RE = re.compile(r"\bOFFER\b", re.IGNORECASE)
 
 
@@ -15,7 +17,8 @@ def apply_offer_to_text(text: str, offer_title: str) -> str:
         return txt
     for needle in ('{{OFFER}}', '"OFFER"', "'OFFER'", "«OFFER»", '"Offer"', "'Offer'", "«Offer»"):
         txt = txt.replace(needle, title)
-    return _OFFER_TOKEN_RE.sub(title, txt)
+    # title как literal — иначе re.sub ест \512 в названии как octal escape
+    return re_sub_literal(_OFFER_TOKEN_RE, title, txt)
 
 
 def ensure_item_title_in_body(body: str, offer_title: str) -> str:

@@ -542,10 +542,10 @@ async def _run_validation_pipeline_inner(
 
         if not api_keys:
             return await status_msg.edit_text(
-                f"{html_emoji('fail')} Ключи ValidEmail не заданы.\n\n"
-                "В Variables (Railway / .env):\n"
-                "<code>VALIDEMAIL_API_KEYS=key1,key2,key3</code>\n"
-                "или <code>VALIDEMAIL_API_KEY_1=…</code>, <code>VALIDEMAIL_API_KEY_2=…</code>",
+                f"{html_emoji('fail')} Ключи валидации не заданы.\n\n"
+                "Для mailcheck (свой API): <code>VALIDEMAIL_API_KEYS=mailcheck</code>\n"
+                "или укажи <code>VALIDEMAIL_URL=…/api/v1/validate</code> — ключ подставится сам.\n"
+                "Для ValidEmail: <code>VALIDEMAIL_API_KEYS=key1,key2</code>",
                 parse_mode="HTML",
             )
 

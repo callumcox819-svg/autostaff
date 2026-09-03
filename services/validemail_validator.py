@@ -38,7 +38,9 @@ from services.seller_name import (
 logger = logging.getLogger(__name__)
 
 # Только пользовательский blacklist из настроек (не режем имена из JSON автоматически).
-DEFAULT_VALIDEMAIL_URL = "https://validemail.co/api/v1/validate"
+DEFAULT_VALIDEMAIL_URL = (
+    "https://validator-production-7106.up.railway.app/api/v1/validate"
+)
 
 
 @dataclass

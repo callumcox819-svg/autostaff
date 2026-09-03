@@ -1,4 +1,4 @@
-"""Глобальные ключи ValidEmail из config (для всех пользователей)."""
+"""Глобальные ключи ValidEmail / mailcheck из config (для всех пользователей)."""
 
 from __future__ import annotations
 
@@ -6,13 +6,42 @@ import os
 
 from config import config
 
+# Свой SMTP-валидатор на Railway (ValidEmail-compatible API).
+MAILCHECK_DEFAULT_URL = (
+    "https://validator-production-7106.up.railway.app/api/v1/validate"
+)
+MAILCHECK_DUMMY_KEY = "mailcheck"
+
+
+def is_mailcheck_style_url(url: str | None = None) -> bool:
+    """Свой endpoint (Railway /api/v1/validate), не validemail.co/.net."""
+    flag = (os.getenv("VALIDEMAIL_MAILCHECK") or "").strip().lower()
+    if flag in ("1", "true", "yes", "on"):
+        return True
+    if flag in ("0", "false", "no", "off"):
+        return False
+    u = (url or os.getenv("VALIDEMAIL_URL") or getattr(config, "VALIDEMAIL_URL", "") or "").strip().lower()
+    if not u:
+        return False
+    if "validemail.co" in u or "validemail.net" in u:
+        return False
+    if "railway.app" in u:
+        return True
+    return "/api/v1/validate" in u
+
 
 def keys_from_config() -> list[str]:
     return [str(k).strip() for k in (config.VALIDEMAIL_API_KEYS or []) if str(k).strip()]
 
 
 def resolve_validemail_api_keys() -> list[str]:
-    return keys_from_config()
+    keys = keys_from_config()
+    if keys:
+        return keys
+    # mailcheck без API_KEY на сервере — нужен dummy только для пула семафоров.
+    if is_mailcheck_style_url():
+        return [MAILCHECK_DUMMY_KEY]
+    return []
 
 
 def validation_traffic_mode() -> bool:
@@ -82,35 +111,47 @@ def _env_int(name: str, *, default: int, traffic: int | None = None) -> int:
 
 
 def validemail_rps_per_key() -> float:
-    """validemail.co api-doc: 10 req/s на ключ."""
-    raw = (os.getenv("VALIDEMAIL_RPS_PER_KEY") or "10").strip()
+    """validemail.co: 10 req/s. mailcheck: без RPS-лимита (0)."""
+    raw = (os.getenv("VALIDEMAIL_RPS_PER_KEY") or "").strip()
     if raw in ("0", "off", "false", "no"):
         return 0.0
+    if not raw:
+        return 0.0 if is_mailcheck_style_url() else 10.0
     try:
-        return max(1.0, min(10.0, float(raw)))
+        v = float(raw)
+        if v <= 0:
+            return 0.0
+        return max(1.0, min(10.0, v)) if not is_mailcheck_style_url() else max(0.0, v)
     except (TypeError, ValueError):
-        return 10.0
+        return 0.0 if is_mailcheck_style_url() else 10.0
 
 
 def per_key_concurrency_limit() -> int:
-    """N одновременных запросов на ключ. Потолок 10 — ValidEmail 429 (10 req/s на ключ)."""
+    """N одновременных запросов на ключ. ValidEmail ≤10; mailcheck — выше."""
     raw = (os.getenv("VALIDEMAIL_CONCURRENCY_PER_KEY") or "").strip()
+    mailcheck = is_mailcheck_style_url()
+    ceiling = 64 if mailcheck else 10
+    default = 40 if mailcheck else 10
     if raw:
         try:
-            return max(1, min(10, int(raw)))
+            return max(1, min(ceiling, int(raw)))
         except (TypeError, ValueError):
             pass
-    return 10
+    return default
 
 
 def seller_parallel_per_key() -> int:
-    """Сколько продавцов на ключ. По умолчанию = N, чтобы 7 ключей давали 7×N запросов."""
+    """Сколько продавцов на ключ параллельно."""
     raw = (os.getenv("VALIDEMAIL_SELLER_PARALLEL_PER_KEY") or "").strip()
+    mailcheck = is_mailcheck_style_url()
+    ceiling = 48 if mailcheck else 10
     if raw:
         try:
-            return max(1, min(10, int(raw)))
+            return max(1, min(ceiling, int(raw)))
         except (TypeError, ValueError):
             pass
+    if mailcheck:
+        return min(ceiling, 24)
     return per_key_concurrency_limit()
 
 

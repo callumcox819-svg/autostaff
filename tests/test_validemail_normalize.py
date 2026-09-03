@@ -68,10 +68,66 @@ class ValidEmailNormalizeTests(unittest.TestCase):
             "isFormatValid": True,
             "isDomainValid": True,
         }
-        with patch.dict(os.environ, {"VALIDEMAIL_ACCEPT_RISKY": "", "VALIDEMAIL_TRAFFIC_MODE": "1"}):
+        with patch.dict(
+            os.environ,
+            {
+                "VALIDEMAIL_ACCEPT_RISKY": "",
+                "VALIDEMAIL_TRAFFIC_MODE": "1",
+                "VALIDEMAIL_URL": "https://validemail.co/api/v1/validate",
+                "VALIDEMAIL_MAILCHECK": "0",
+            },
+        ):
             self.assertTrue(_normalize_ok(payload))
         with patch.dict(os.environ, {"VALIDEMAIL_ACCEPT_RISKY": "0", "VALIDEMAIL_TRAFFIC_MODE": "1"}):
             self.assertFalse(_normalize_ok(payload))
+        with patch.dict(
+            os.environ,
+            {
+                "VALIDEMAIL_ACCEPT_RISKY": "",
+                "VALIDEMAIL_TRAFFIC_MODE": "1",
+                "VALIDEMAIL_URL": "https://validator-production-7106.up.railway.app/api/v1/validate",
+                "VALIDEMAIL_MAILCHECK": "",
+            },
+        ):
+            self.assertFalse(_normalize_ok(payload))
+
+    def test_mailcheck_build_request_bearer_optional_and_timeout(self):
+        import os
+        from unittest.mock import patch
+
+        from services.validemail_fast import _build_request
+
+        url = "https://validator-production-7106.up.railway.app/api/v1/validate"
+        with patch.dict(os.environ, {"VALIDEMAIL_API_TIMEOUT": "8"}, clear=False):
+            headers, params = _build_request(url, "mailcheck", "a@b.com")
+            self.assertNotIn("Authorization", headers)
+            self.assertEqual(params.get("email"), "a@b.com")
+            self.assertEqual(params.get("timeout"), "8")
+            self.assertNotIn("api_key", params)
+
+            headers2, _ = _build_request(url, "real-secret", "a@b.com")
+            self.assertEqual(headers2.get("Authorization"), "Bearer real-secret")
+
+            headers3, params3 = _build_request(url, "", "a@b.com")
+            self.assertNotIn("Authorization", headers3)
+            self.assertEqual(params3.get("email"), "a@b.com")
+
+    def test_mailcheck_empty_key_resolves_dummy(self):
+        import os
+        from unittest.mock import patch
+
+        from services.validemail_keys import resolve_validemail_api_keys
+
+        with patch.dict(
+            os.environ,
+            {
+                "VALIDEMAIL_URL": "https://validator-production-7106.up.railway.app/api/v1/validate",
+                "VALIDEMAIL_MAILCHECK": "",
+            },
+            clear=False,
+        ):
+            with patch("services.validemail_keys.keys_from_config", return_value=[]):
+                self.assertEqual(resolve_validemail_api_keys(), ["mailcheck"])
 
     def test_unknown_is_api_failure_not_mailbox_missing(self):
         from services.validemail_validator import _is_api_failure
@@ -252,23 +308,35 @@ class ValidEmailNormalizeTests(unittest.TestCase):
             seller_parallel_per_key,
         )
 
-        with patch.dict(
-            os.environ,
-            {
-                "VALIDEMAIL_CONCURRENCY_PER_KEY": "",
-                "VALIDEMAIL_GLOBAL_INFLIGHT": "200",
-                "VALIDEMAIL_SELLER_PARALLEL_PER_KEY": "",
-            },
-            clear=False,
-        ):
+        ve = {
+            "VALIDEMAIL_URL": "https://validemail.co/api/v1/validate",
+            "VALIDEMAIL_MAILCHECK": "0",
+            "VALIDEMAIL_CONCURRENCY_PER_KEY": "",
+            "VALIDEMAIL_GLOBAL_INFLIGHT": "200",
+            "VALIDEMAIL_SELLER_PARALLEL_PER_KEY": "",
+        }
+        with patch.dict(os.environ, ve, clear=False):
             self.assertEqual(per_key_concurrency_limit(), 10)
             self.assertEqual(seller_parallel_per_key(), 10)
             self.assertEqual(global_inflight_cap(7), 70)
-        with patch.dict(os.environ, {"VALIDEMAIL_CONCURRENCY_PER_KEY": "7"}, clear=False):
+        with patch.dict(os.environ, {**ve, "VALIDEMAIL_CONCURRENCY_PER_KEY": "7"}, clear=False):
             self.assertEqual(per_key_concurrency_limit(), 7)
             self.assertEqual(global_inflight_cap(7), 49)
-        with patch.dict(os.environ, {"VALIDEMAIL_CONCURRENCY_PER_KEY": "22"}, clear=False):
+        with patch.dict(os.environ, {**ve, "VALIDEMAIL_CONCURRENCY_PER_KEY": "22"}, clear=False):
             self.assertEqual(per_key_concurrency_limit(), 10)
+
+        mc = {
+            "VALIDEMAIL_URL": "https://validator-production-7106.up.railway.app/api/v1/validate",
+            "VALIDEMAIL_MAILCHECK": "",
+            "VALIDEMAIL_CONCURRENCY_PER_KEY": "",
+            "VALIDEMAIL_SELLER_PARALLEL_PER_KEY": "",
+        }
+        with patch.dict(os.environ, mc, clear=False):
+            self.assertEqual(per_key_concurrency_limit(), 40)
+            self.assertEqual(seller_parallel_per_key(), 24)
+            self.assertEqual(global_inflight_cap(1), 40)
+        with patch.dict(os.environ, {**mc, "VALIDEMAIL_CONCURRENCY_PER_KEY": "48"}, clear=False):
+            self.assertEqual(per_key_concurrency_limit(), 48)
 
     def test_unknown_domain_cap_default(self):
         from unittest.mock import patch
@@ -278,10 +346,33 @@ class ValidEmailNormalizeTests(unittest.TestCase):
         from services.validemail_keys import max_unknown_domains_per_seller
         from services.validemail_fast import _validemail_api_timeout
 
-        with patch.dict(os.environ, {"VALIDEMAIL_MAX_UNKNOWN_DOMAINS": "", "VALIDEMAIL_API_TIMEOUT": ""}, clear=False):
+        with patch.dict(
+            os.environ,
+            {
+                "VALIDEMAIL_MAX_UNKNOWN_DOMAINS": "",
+                "VALIDEMAIL_API_TIMEOUT": "",
+                "VALIDEMAIL_URL": "https://validemail.co/api/v1/validate",
+                "VALIDEMAIL_MAILCHECK": "0",
+            },
+            clear=False,
+        ):
             self.assertEqual(max_unknown_domains_per_seller(), 4)
             self.assertEqual(_validemail_api_timeout(), 4)
-        with patch.dict(os.environ, {"VALIDEMAIL_API_TIMEOUT": "12"}, clear=False):
+        with patch.dict(
+            os.environ,
+            {
+                "VALIDEMAIL_API_TIMEOUT": "",
+                "VALIDEMAIL_URL": "https://validator-production-7106.up.railway.app/api/v1/validate",
+                "VALIDEMAIL_MAILCHECK": "",
+            },
+            clear=False,
+        ):
+            self.assertEqual(_validemail_api_timeout(), 8)
+        with patch.dict(
+            os.environ,
+            {"VALIDEMAIL_API_TIMEOUT": "12", "VALIDEMAIL_MAILCHECK": "0"},
+            clear=False,
+        ):
             self.assertEqual(_validemail_api_timeout(), 8)
 
 

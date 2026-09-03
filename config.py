@@ -48,28 +48,28 @@ def _parse_validemail_api_keys() -> list[str]:
 def _validemail_per_key_concurrency() -> int:
     raw = (os.getenv("VALIDEMAIL_CONCURRENCY_PER_KEY") or "").strip()
     if not raw:
-        return 22 if _validemail_traffic_mode() else 20
+        return 40 if _validemail_traffic_mode() else 32
     try:
         return max(1, min(64, int(raw)))
     except (TypeError, ValueError):
-        return 15 if _validemail_traffic_mode() else 40
+        return 40
 
 
 def _validemail_seller_parallel_per_key() -> int:
     raw = (os.getenv("VALIDEMAIL_SELLER_PARALLEL_PER_KEY") or "").strip()
     if not raw:
-        return 16 if _validemail_traffic_mode() else 14
+        return 24 if _validemail_traffic_mode() else 20
     try:
-        return max(1, min(32, int(raw)))
+        return max(1, min(48, int(raw)))
     except (TypeError, ValueError):
-        return 12
+        return 24
 
 
 def _validemail_global_inflight_default() -> int:
     raw = (os.getenv("VALIDEMAIL_GLOBAL_INFLIGHT") or "").strip()
     if raw.isdigit():
         return max(12, min(280, int(raw)))
-    return 200 if _validemail_traffic_mode() else 0
+    return 80 if _validemail_traffic_mode() else 40
 
 
 def _validemail_max_retries_default() -> int:
@@ -112,7 +112,10 @@ class Config:
 
     DATABASE_URL = (os.getenv("DATABASE_URL") or "").strip()
 
-    VALIDEMAIL_URL = os.getenv("VALIDEMAIL_URL", "https://validemail.co/api/v1/validate").strip()
+    VALIDEMAIL_URL = os.getenv(
+        "VALIDEMAIL_URL",
+        "https://validator-production-7106.up.railway.app/api/v1/validate",
+    ).strip()
     VALIDEMAIL_API_KEYS = _parse_validemail_api_keys()
     VALIDEMAIL_CONCURRENCY_PER_KEY = _validemail_per_key_concurrency()
     VALIDEMAIL_SELLER_PARALLEL_PER_KEY = _validemail_seller_parallel_per_key()
@@ -122,9 +125,9 @@ class Config:
     if _conc_env.isdigit():
         VALIDEMAIL_CONCURRENCY = max(2, int(_conc_env))
     elif _validemail_traffic_mode():
-        VALIDEMAIL_CONCURRENCY = 200
+        VALIDEMAIL_CONCURRENCY = 80
     else:
-        n_k = max(1, len(VALIDEMAIL_API_KEYS))
+        n_k = max(1, len(VALIDEMAIL_API_KEYS) or 1)
         VALIDEMAIL_CONCURRENCY = max(2, VALIDEMAIL_CONCURRENCY_PER_KEY * n_k)
     VALIDEMAIL_GLOBAL_INFLIGHT = _validemail_global_inflight_default()
     VALIDEMAIL_API_TIMEOUT = max(
@@ -134,7 +137,7 @@ class Config:
             int(
                 os.getenv(
                     "VALIDEMAIL_API_TIMEOUT",
-                    "4",
+                    "8",
                 )
             ),
         ),

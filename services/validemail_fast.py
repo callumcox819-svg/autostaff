@@ -204,11 +204,19 @@ def _cache_set(url: str, email: str, ok: bool, raw: dict) -> None:
 
 
 def _validemail_api_timeout() -> int:
-    """Query param timeout, api-doc default 4. Не больше 8 с — иначе хвост unknown ест 12 минут."""
+    """Query param timeout для SMTP на стороне API. mailcheck default 8."""
     raw = (os.getenv("VALIDEMAIL_API_TIMEOUT") or "").strip()
+    try:
+        from services.validemail_keys import is_mailcheck_style_url
+
+        mailcheck = is_mailcheck_style_url()
+    except Exception:
+        mailcheck = False
+    ceiling = 15 if mailcheck else 8
+    default = 8 if mailcheck else 4
     if raw.isdigit():
-        return max(2, min(8, int(raw)))
-    return 4
+        return max(2, min(ceiling, int(raw)))
+    return default
 
 
 def _validemail_max_retries() -> int:
@@ -386,8 +394,11 @@ def _normalize_ok_v1(data: dict, *, strict: bool, min_score: int) -> bool:
         if accept_risky in ("1", "true", "yes", "on"):
             return True
         try:
-            from services.validemail_keys import validation_traffic_mode
+            from services.validemail_keys import is_mailcheck_style_url, validation_traffic_mode
 
+            # catch-all / risky на своём SMTP ≠ подтверждённый inbox
+            if is_mailcheck_style_url():
+                return False
             if validation_traffic_mode():
                 return True
         except Exception:
@@ -480,23 +491,37 @@ def _normalize_ok(data: object) -> bool:
     return False
 
 
+def _uses_bearer_timeout_api(url: str) -> bool:
+    """validemail.co или свой mailcheck (Railway /api/v1/validate)."""
+    ul = (url or "").strip().lower()
+    if "validemail.co" in ul:
+        return True
+    try:
+        from services.validemail_keys import is_mailcheck_style_url
+
+        return is_mailcheck_style_url(url)
+    except Exception:
+        return "railway.app" in ul or (
+            "/api/v1/validate" in ul and "validemail.net" not in ul
+        )
+
+
 def _build_request(url: str, api_key: str, email: str) -> tuple[dict, dict]:
     """
     Возвращает (headers, params) для GET запроса.
     Поддерживает:
-      - validemail.co (Bearer, params email)
-      - api.validemail.net (api_key query, params api_key+email)
-      - auto по URL
+      - validemail.co / mailcheck (Bearer optional, email + timeout)
+      - api.validemail.net (api_key query)
     """
-    u = (url or "").strip()
-    ul = u.lower()
     headers: dict = {}
     params: dict = {}
 
-    if "validemail.co" in ul:
+    if _uses_bearer_timeout_api(url):
         headers["Accept"] = "application/json"
-        if api_key:
-            headers["Authorization"] = f"Bearer {api_key}"
+        key = (api_key or "").strip()
+        # dummy «mailcheck» не шлём — на Railway API_KEY пустой
+        if key and key.lower() not in ("mailcheck", "none", "dummy"):
+            headers["Authorization"] = f"Bearer {key}"
         params["email"] = email
         params["timeout"] = str(_validemail_api_timeout())
         return headers, params
@@ -675,7 +700,15 @@ async def _validate_emails_single_key(
 ) -> list[tuple[str, bool, dict]]:
     api_key = (api_key or "").strip()
     if not api_key:
-        return [(e, False, {"error": "no api key"}) for e in emails_list]
+        if _uses_bearer_timeout_api(url):
+            try:
+                from services.validemail_keys import MAILCHECK_DUMMY_KEY
+
+                api_key = MAILCHECK_DUMMY_KEY
+            except Exception:
+                api_key = "mailcheck"
+        else:
+            return [(e, False, {"error": "no api key"}) for e in emails_list]
 
     limit = max(2, int(concurrency))
     display_limit = int(shared_limit) if shared_limit is not None else limit
@@ -757,7 +790,15 @@ async def validate_emails_fast(
     Быстрая параллельная проверка email.
     Несколько api_keys: emails делятся между ключами, каждый ключ — свой пул запросов.
   """
-    url = (url or "").strip() or "https://validemail.co/api/v1/validate"
+    try:
+        from services.validemail_keys import MAILCHECK_DEFAULT_URL, MAILCHECK_DUMMY_KEY
+
+        default_url = MAILCHECK_DEFAULT_URL
+        dummy_key = MAILCHECK_DUMMY_KEY
+    except Exception:
+        default_url = "https://validator-production-7106.up.railway.app/api/v1/validate"
+        dummy_key = "mailcheck"
+    url = (url or "").strip() or default_url
     emails_list = [str(e).strip() for e in emails if str(e).strip()]
 
     keys = [str(k).strip() for k in (api_keys or []) if str(k).strip()]
@@ -767,7 +808,10 @@ async def validate_emails_fast(
             keys = [single]
 
     if not keys:
-        return [(e, False, {"error": "no api key"}) for e in emails_list]
+        if _uses_bearer_timeout_api(url):
+            keys = [dummy_key]
+        else:
+            return [(e, False, {"error": "no api key"}) for e in emails_list]
 
     cancel_event = asyncio.Event() if stop_on_first_ok else None
 

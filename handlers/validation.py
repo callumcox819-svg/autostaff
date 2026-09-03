@@ -179,6 +179,9 @@ def _format_validation_status(
     not_found = int(no_email_smtp if finished else no_email)
     if not finished and ph == "api_retry":
         not_found = 0
+    unresolved = int(sellers_api_unresolved or 0)
+    # В финале всё без найденной почты = «Без email» (в т.ч. SMTP unknown).
+    no_email_total = not_found + unresolved if finished else not_found
     if finished and int(listings_in_file or 0) > 0:
         lines.append("")
         lines.append(
@@ -192,19 +195,13 @@ def _format_validation_status(
             f"{html_emoji('email')} Новых email: <b>{added}</b>",
             f"{html_emoji('ok')} Уже в БД (не гоняем API): <b>{already_n}</b>",
             f"{html_emoji('fail')} ЧС: <b>{bl_total}</b> · повтор имени в файле: <b>{int(duplicates or 0)}</b> · ник/нет имени: <b>{nick_total}</b>",
-            f"{html_emoji('wait')} Без email (API): <b>{not_found}</b>",
+            f"{html_emoji('wait')} Без email: <b>{no_email_total}</b>",
         ]
     )
-    if finished and int(sellers_api_unresolved or 0) > 0:
+    # В процессе можно показать, что часть ещё «висит» на SMTP; в финале — только «Без email».
+    if not finished and int(sellers_api_unresolved or 0) > 0:
         lines.append(
-            f"{html_emoji('warn')} API не дожали: <b>{int(sellers_api_unresolved)}</b> "
-            f"(не в «Без email» — можно повторить файл)"
-        )
-    if int(errors or 0) > 0:
-        lines.append(f"{html_emoji('fail')} Ошибок API: <b>{int(errors)}</b>")
-    if finished and int(added or 0) == 0 and int(errors or 0) >= 30:
-        lines.append(
-            f"{html_emoji('warn')} Новых почт нет — ValidEmail не ответил. Проверь ключи и баланс."
+            f"{html_emoji('wait')} Ждём SMTP: <b>{int(sellers_api_unresolved)}</b>"
         )
     return "\n".join(lines)
 

@@ -108,8 +108,8 @@ class SellerDedupTests(unittest.TestCase):
             api_retry_done=0,
         )
         self.assertIn("Повтор после сбоев API", text)
-        self.assertIn("Без email (API): <b>0</b>", text)
-        self.assertIn("Ошибок API", text)
+        self.assertIn("Без email: <b>0</b>", text)
+        self.assertNotIn("Ошибок API", text)
 
 
 if __name__ == "__main__":

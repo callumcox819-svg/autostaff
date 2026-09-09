@@ -26,6 +26,7 @@ from utils.ui_emoji import html_emoji
 from services.seller_name import (
     MIN_NAME_TOKEN_LEN,
     MIN_SELLER_LETTERS,
+    is_usable_single_local,
     normalize_seller_name,
     pick_handle_locals,
     pick_name_tokens,
@@ -129,6 +130,7 @@ def _make_local_part_variants(name: str, *, require_first_and_last: bool) -> lis
     """
     Логины из имени продавца: Maria Johansen → maria.johansen; Martuis2 → martuis2.
     Приоритет: ник (Semiuel2421) или first.last (Sam Day → sam.day), затем firstlast.
+    Однословные <5 букв и бренды/города не пробиваем.
     """
     out: list[str] = []
     seen: set[str] = set()
@@ -140,6 +142,10 @@ def _make_local_part_variants(name: str, *, require_first_and_last: bool) -> lis
         local = re.sub(r"\.+", ".", local).strip(".")
         if not local or local in seen:
             return
+        # одно слово — только ≥5 букв и не бренд/город
+        if "." not in local and "_" not in local and "+" not in local:
+            if not is_usable_single_local(local):
+                return
         seen.add(local)
         out.append(local)
 
@@ -171,12 +177,13 @@ def _make_local_part_variants(name: str, *, require_first_and_last: bool) -> lis
 
     for h in handles:
         _add(h)
-    # Частые CH-паттерны: nachname@gmx, vorname@gmail, dann first.last
+    # first.last / склейка — основной паттерн
     _add(f"{first}.{last}")
     _add(f"{first}{last}")
-    if len(last) >= MIN_SELLER_LETTERS:
+    # одиночные имя/фамилия — только если ≥5 букв и не бренд/город
+    if is_usable_single_local(last):
         _add(last)
-    if len(first) >= MIN_SELLER_LETTERS and first != last:
+    if first != last and is_usable_single_local(first):
         _add(first)
     if len(first) >= 2 and len(last) >= 2:
         _add(f"{first[0]}{last}")

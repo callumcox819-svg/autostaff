@@ -13,13 +13,51 @@ class SellerDedupTests(unittest.TestCase):
         self.assertIn("maria.johansen", vs)
         self.assertIn("mariajohansen", vs)
         self.assertIn("johansen", vs)
-        self.assertIn("maria", vs)
-        self.assertGreaterEqual(len(vs), 6)
+        self.assertIn("maria", vs)  # 5 букв — ок
+        self.assertGreaterEqual(len(vs), 4)
 
         a = {"item_person_name": "Maria Johansen", "item_link": "https://a/1"}
         b = {"item_person_name": "Maria  Johansen", "item_link": "https://a/2"}
         self.assertEqual(seller_name_key_from_item(a), seller_name_key_from_item(b))
         self.assertEqual(seller_name_key("Maria Johansen"), seller_name_key("maria johansen"))
+
+    def test_reject_short_nick_brand_city_keep_long_name(self):
+        from services.seller_name import (
+            is_usable_single_local,
+            seller_name_eligible_for_validation,
+        )
+
+        self.assertFalse(is_usable_single_local("jan"))
+        self.assertFalse(is_usable_single_local("auto"))
+        self.assertFalse(is_usable_single_local("audi"))
+        self.assertFalse(is_usable_single_local("amersfoort"))
+        self.assertTrue(is_usable_single_local("mariasto"))
+
+        self.assertFalse(seller_name_eligible_for_validation("Jan"))
+        self.assertFalse(seller_name_eligible_for_validation("Auto"))
+        self.assertFalse(seller_name_eligible_for_validation("Amersfoort"))
+        self.assertTrue(seller_name_eligible_for_validation("mariasto"))
+
+        self.assertEqual(
+            _make_local_part_variants("Jan", require_first_and_last=False),
+            [],
+        )
+        self.assertEqual(
+            _make_local_part_variants("Auto", require_first_and_last=False),
+            [],
+        )
+        self.assertEqual(
+            _make_local_part_variants("Amersfoort", require_first_and_last=False),
+            [],
+        )
+        self.assertIn(
+            "mariasto",
+            _make_local_part_variants("mariasto", require_first_and_last=False),
+        )
+        # короткие имя/фамилия по отдельности не пробиваем, first.last — да
+        vs = _make_local_part_variants("Jan de Vries", require_first_and_last=False)
+        self.assertIn("jan.vries", vs)
+        self.assertNotIn("jan", vs)
 
     def test_skip_already_in_db_is_not_blacklist(self):
         from services.validemail_validator import classify_json_seller_skip

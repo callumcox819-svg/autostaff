@@ -6,9 +6,134 @@ import re
 import unicodedata
 from typing import Any
 
-# Слова короче 4 букв не участвуют в first.last; ник ≥3 букв валидируем целиком.
+# Слова короче 4 букв не участвуют в first.last; ник / одно слово — ≥5 букв.
 MIN_NAME_TOKEN_LEN = 4
-MIN_SELLER_LETTERS = 3
+MIN_SELLER_LETTERS = 5
+
+# Однословные local-part: бренды, города NL, мусор — не пробиваем.
+_BLOCKED_SINGLE_LOCALS = frozenset(
+    {
+        # бренды / авто / магазин
+        "auto",
+        "audi",
+        "bmw",
+        "ford",
+        "toyota",
+        "volvo",
+        "opel",
+        "garage",
+        "shop",
+        "store",
+        "markt",
+        "marktplaats",
+        "motors",
+        "motor",
+        "automotive",
+        "autobedrijf",
+        "dealer",
+        "dealers",
+        "parts",
+        "mobility",
+        "vintage",
+        "antique",
+        "boutique",
+        "service",
+        "services",
+        "company",
+        "handel",
+        "verkoop",
+        "verhuur",
+        "online",
+        "official",
+        "info",
+        "contact",
+        "admin",
+        "sales",
+        "support",
+        "noreply",
+        "mail",
+        "email",
+        "test",
+        "tester",
+        "private",
+        "prive",
+        "particulier",
+        "hobby",
+        "hobbyist",
+        # частые города NL (как ник на MP)
+        "amsterdam",
+        "rotterdam",
+        "utrecht",
+        "eindhoven",
+        "tilburg",
+        "groningen",
+        "breda",
+        "nijmegen",
+        "haarlem",
+        "arnhem",
+        "amersfoort",
+        "apeldoorn",
+        "zaandam",
+        "leiden",
+        "dordrecht",
+        "zwolle",
+        "maastricht",
+        "delft",
+        "alkmaar",
+        "hilversum",
+        "leeuwarden",
+        "denhaag",
+        "haag",
+        "almere",
+        "haarlemmer",
+        "enschede",
+        "venlo",
+        "heerlen",
+        "helmond",
+        "oss",
+        "emmen",
+        "deventer",
+    }
+)
+
+
+def is_blocked_single_local(local: str) -> bool:
+    s = re.sub(r"[^a-z0-9]", "", (local or "").lower())
+    if not s:
+        return True
+    if s in _BLOCKED_SINGLE_LOCALS:
+        return True
+    # denhaag / den-haag уже в списке; "denhaag123" тоже режем по префиксу города
+    for city in (
+        "amsterdam",
+        "rotterdam",
+        "amersfoort",
+        "apeldoorn",
+        "eindhoven",
+        "utrecht",
+        "groningen",
+        "haarlem",
+        "arnhem",
+    ):
+        if s.startswith(city) and len(s) <= len(city) + 3:
+            return True
+    return False
+
+
+def is_usable_single_local(local: str, *, min_letters: int = MIN_SELLER_LETTERS) -> bool:
+    """Одно слово как email-local: mariasto ок; jan/auto/amersfoort — нет."""
+    raw = (local or "").strip().lower()
+    if not raw or "." in raw or "+" in raw:
+        return False
+    s = re.sub(r"[^a-z0-9_]", "", raw)
+    if not s:
+        return False
+    letters = sum(1 for c in s if c.isalpha())
+    if letters < int(min_letters):
+        return False
+    if is_blocked_single_local(s):
+        return False
+    return True
 
 
 def seller_name_from_item(item: dict[str, Any]) -> str:
@@ -83,13 +208,18 @@ def normalize_seller_name(raw: str) -> str:
 
 def pick_name_tokens_for_email(name: str) -> list[str]:
     """
-    Токены для local-part: сначала слова ≥4 букв; если пары нет — слова ≥2 букв
-    (Sam Day → sam.day, как у типичных gmail).
+    Токены для local-part: пара слов предпочтительнее (Jan Vries → jan + vries),
+    даже если имя короче 4 букв; одиночное длинное слово — как есть.
     """
     long_t = pick_name_tokens(name, min_len=MIN_NAME_TOKEN_LEN)
-    if len(long_t) >= 2 or len(long_t) == 1:
+    if len(long_t) >= 2:
         return long_t
-    return pick_name_tokens(name, min_len=2)
+    short_t = pick_name_tokens(name, min_len=2)
+    if len(short_t) >= 2:
+        return short_t
+    if long_t:
+        return long_t
+    return short_t
 
 
 def pick_name_tokens(name: str, *, min_len: int = MIN_NAME_TOKEN_LEN) -> list[str]:
@@ -118,19 +248,21 @@ def seller_name_letter_count(name: str) -> int:
 
 
 def seller_name_too_short(name: str, *, min_letters: int = MIN_SELLER_LETTERS) -> bool:
-    """Меньше 3 букв в имени — не валидируем."""
+    """Меньше 5 букв в имени/нике — не валидируем."""
     if not (name or "").strip():
         return True
     return seller_name_letter_count(name) < int(min_letters)
 
 
 def _is_handle_token(h: str, *, min_letters: int = MIN_SELLER_LETTERS) -> bool:
-    """Ник: Bird19, mar_l5z6, sportstar3000 — буквы/цифры/_, ≥3 букв."""
+    """Ник: Bird19, mar_l5z6, sportstar3000 — буквы/цифры/_, ≥5 букв."""
     if len(h) < min_letters or len(h) > 64:
         return False
     if not re.fullmatch(r"[A-Za-z0-9_]+", h):
         return False
     if seller_name_letter_count(h) < min_letters:
+        return False
+    if is_blocked_single_local(h):
         return False
     return any(c.isalpha() for c in h)
 
@@ -138,7 +270,7 @@ def _is_handle_token(h: str, *, min_letters: int = MIN_SELLER_LETTERS) -> bool:
 def pick_handle_locals(name: str) -> list[str]:
     """
     Никнеймы как в JSON: Bird19, mar_l5z6, sportstar3000 — local-part как есть (lower).
-    Имя «Имя Фамилия» сюда не попадает (только first.last).
+    Имя «Имя Фамилия» сюда не попадает (только first.last). Минимум 5 букв.
     """
     s = normalize_seller_name(name)
     if not s or seller_name_too_short(s):
@@ -157,6 +289,8 @@ def pick_handle_locals(name: str) -> list[str]:
         if not looks_like_nick:
             continue
         hl = h.lower()
+        if not is_usable_single_local(hl):
+            continue
         if hl not in seen:
             seen.add(hl)
             out.append(hl)
@@ -164,11 +298,14 @@ def pick_handle_locals(name: str) -> list[str]:
 
 
 def seller_name_eligible_for_validation(name: str, *, min_token_len: int = MIN_NAME_TOKEN_LEN) -> bool:
-    """Имя подходит для имя@домен: ник ≥3 букв, слово ≥4 букв, или пара слов (Andrey Porstad)."""
+    """Имя подходит: ник ≥5 букв (не бренд/город), слово ≥5, или пара слов (Andrey Porstad)."""
     if seller_name_too_short(name):
         return False
     if pick_handle_locals(name):
         return True
-    if pick_name_tokens(name, min_len=min_token_len):
+    tokens = pick_name_tokens(name, min_len=min_token_len)
+    if len(tokens) >= 2:
+        return True
+    if len(tokens) == 1 and is_usable_single_local(tokens[0]):
         return True
     return len(pick_name_tokens(name, min_len=2)) >= 2

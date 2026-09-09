@@ -41,9 +41,13 @@ BURST_RETRY_PAUSE_SEC = max(
 BURST_MAX_INFLIGHT = max(
     4, min(120, int(os.getenv("BURST_MAX_INFLIGHT", "30")))
 )
+# Один sticky-прокси: как в обычных мейлерах 2–3 потока, не 30 параллельных SMTP.
+BURST_SINGLE_PROXY_INFLIGHT = max(
+    1, min(8, int(os.getenv("BURST_SINGLE_PROXY_INFLIGHT", "3")))
+)
 
 
-def burst_per_letter_timeout_sec(sticky_proxy=None) -> int:
+def burst_per_letter_timeout_sec(sticky_proxy=None, *, num_proxies: int = 1) -> int:
     """Должен быть ≥ SMTP×ретраи; иначе asyncio обрежет Loma на 24 с."""
     raw_env = (os.getenv("BURST_PER_LETTER_TIMEOUT_SEC") or "").strip()
     if raw_env.isdigit():
@@ -53,17 +57,27 @@ def burst_per_letter_timeout_sec(sticky_proxy=None) -> int:
     # Если их SMTP-timeout в env высокий — режем до разумного потолка.
     cap_fast = int(os.getenv("BURST_FAST_SMTP_TIMEOUT_CAP_SEC", "15"))
     smtp_t = min(int(MAIL_FAST_SMTP_TIMEOUT_SEC), cap_fast)
+    # Один прокси: полный send (AUTH+DATA) часто >15с — иначе UNEXPECTED_EOF/timeout.
+    if int(num_proxies) <= 1:
+        smtp_t = max(
+            smtp_t,
+            min(60, int(os.getenv("BURST_SINGLE_PROXY_SMTP_TIMEOUT_SEC", "45"))),
+        )
     if sticky_proxy is not None and is_residential_gateway(sticky_proxy):
         boosted = int(residential_smtp_timeout_sec())
         # максимум в 2x от базового fast-потолка
-        smtp_t = min(max(smtp_t, boosted), smtp_t * 2)
+        smtp_t = min(max(smtp_t, boosted), max(smtp_t * 2, 60))
     inner = smtp_t * max(1, MAIL_FAST_SEND_RETRIES)
     outer = inner * BURST_SMTP_RETRIES + 2
-    return max(8, min(60, outer))
+    return max(8, min(90, outer))
 
 
-def burst_wave_size_for_proxy(proxy, num_accounts: int) -> int:
+def burst_wave_size_for_proxy(
+    proxy, num_accounts: int, *, num_proxies: int = 1
+) -> int:
     cap = BURST_MAX_INFLIGHT
+    if int(num_proxies) <= 1:
+        cap = min(cap, BURST_SINGLE_PROXY_INFLIGHT)
     if is_residential_gateway(proxy):
         cap = min(cap, residential_burst_inflight())
     return max(1, min(int(num_accounts), cap))
@@ -214,6 +228,9 @@ async def run_burst_mailing(
     async with db_session() as session:
         sticky_px = await pick_sticky_proxy_for_fast_mailing(session, int(db_user_id))
         last_sent = await last_sent_ts_by_account(session, int(db_user_id))
+        from services.smtp_proxy_send import _list_active_mailing_proxies
+
+        n_proxies = len(await _list_active_mailing_proxies(session, int(db_user_id)))
     if not sticky_px:
         raise RuntimeError("NO_ROTATING_PROXY")
 
@@ -221,8 +238,16 @@ async def run_burst_mailing(
 
     sticky_proxy_id = int(sticky_px.id)
     acc_ordered = order_accounts_for_burst(list(accounts), last_sent=last_sent)
-    per_letter_tmo = burst_per_letter_timeout_sec(sticky_px)
-    wave_size = burst_wave_size_for_proxy(sticky_px, len(acc_ordered))
+    per_letter_tmo = burst_per_letter_timeout_sec(sticky_px, num_proxies=n_proxies or 1)
+    wave_size = burst_wave_size_for_proxy(
+        sticky_px, len(acc_ordered), num_proxies=n_proxies or 1
+    )
+    if (n_proxies or 1) <= 1:
+        logger.info(
+            "single proxy burst: wave=%s letter_tmo=%ss (cap parallel SMTP like classic mailers)",
+            wave_size,
+            per_letter_tmo,
+        )
     if is_residential_gateway(sticky_px):
         logger.info(
             "residential proxy %s:%s — wave=%s smtp_tmo~%ss letter_cap=%ss",

@@ -1,4 +1,7 @@
-"""Каталог площадок CSM (meow network) — serviceKey = {platform}_{country|verify_all}."""
+"""Каталог CSM: сначала страна, затем сервисы этой страны.
+
+serviceKey = {platform}_{country} | {platform}_verify_all
+"""
 
 from __future__ import annotations
 
@@ -14,75 +17,97 @@ CSM_PLATFORMS: tuple[tuple[str, str, str], ...] = (
     ("leboncoin", "Leboncoin", "price"),
     ("subito", "Subito", "burst"),
     ("marktplaats", "Marktplaats", "puzzle"),
-    ("2dehands", "2dehands", "green"),
+    ("2dehands", "2dehands", "add"),
     ("wallapop", "Wallapop", "proxy"),
     ("gumtree", "Gumtree", "email"),
     ("olx", "OLX", "status"),
     ("blocket", "Blocket", "yellow"),
     ("dba", "DBA", "info"),
     ("facebook", "Facebook", "user"),
-    ("mercari", "Mercari", "add"),
+    ("mercari", "Mercari", "quick_add"),
     ("poshmark", "Poshmark", "ok"),
     ("etsy", "Etsy", "mail"),
     ("tutti", "Tutti", "hide"),
     ("ricardo", "Ricardo", "key"),
+    ("anibis", "Anibis", "accounts"),
 )
 
-# ISO-подобные коды, которые принимает slug-парсер CSM
+# Страны: (id, русское название, emoji key)
 CSM_COUNTRIES: tuple[tuple[str, str, str], ...] = (
-    ("us", "USA", "compass"),
-    ("uk", "UK", "compass"),
-    ("ca", "Canada", "compass"),
-    ("de", "Germany", "compass"),
-    ("at", "Austria", "compass"),
-    ("ch", "Switzerland", "compass"),
-    ("fr", "France", "compass"),
-    ("it", "Italy", "compass"),
-    ("es", "Spain", "compass"),
-    ("nl", "Netherlands", "compass"),
-    ("be", "Belgium", "compass"),
-    ("pl", "Poland", "compass"),
-    ("se", "Sweden", "compass"),
-    ("dk", "Denmark", "compass"),
-    ("pt", "Portugal", "compass"),
+    ("nl", "Нидерланды", "compass"),
+    ("be", "Бельгия", "compass"),
+    ("de", "Германия", "compass"),
+    ("at", "Австрия", "compass"),
+    ("ch", "Швейцария", "compass"),
+    ("fr", "Франция", "compass"),
+    ("it", "Италия", "compass"),
+    ("es", "Испания", "compass"),
+    ("pt", "Португалия", "compass"),
+    ("pl", "Польша", "compass"),
+    ("se", "Швеция", "compass"),
+    ("dk", "Дания", "compass"),
+    ("uk", "Великобритания", "compass"),
+    ("us", "США", "compass"),
+    ("ca", "Канада", "compass"),
 )
+
+# Страна → сервисы (порядок = приоритет в UI)
+CSM_COUNTRY_SERVICES: dict[str, tuple[str, ...]] = {
+    "nl": ("marktplaats", "2dehands", "vinted", "depop", "ebay", "facebook"),
+    "be": ("2dehands", "marktplaats", "vinted", "depop", "ebay", "facebook"),
+    "de": ("kleinanzeigen", "ebay", "vinted", "depop", "facebook"),
+    "at": ("willhaben", "ebay", "vinted", "depop", "facebook"),
+    "ch": ("tutti", "ricardo", "anibis", "ebay", "vinted", "depop"),
+    "fr": ("leboncoin", "vinted", "depop", "ebay", "facebook"),
+    "it": ("subito", "vinted", "depop", "ebay", "facebook"),
+    "es": ("wallapop", "vinted", "depop", "ebay", "facebook"),
+    "pt": ("olx", "wallapop", "vinted", "depop", "ebay"),
+    "pl": ("olx", "vinted", "depop", "ebay", "facebook"),
+    "se": ("blocket", "vinted", "depop", "ebay", "facebook"),
+    "dk": ("dba", "vinted", "depop", "ebay", "facebook"),
+    "uk": ("gumtree", "ebay", "vinted", "depop", "facebook", "etsy"),
+    "us": ("depop", "ebay", "mercari", "poshmark", "etsy", "vinted", "facebook"),
+    "ca": ("ebay", "depop", "vinted", "facebook", "etsy"),
+}
 
 CSM_VERIFY_SUFFIX = "verify_all"
 
-_PLATFORM_IDS = {p for p, _, _ in CSM_PLATFORMS}
+_PLATFORM_BY_ID = {p: (p, label, emoji) for p, label, emoji in CSM_PLATFORMS}
 _COUNTRY_IDS = {c for c, _, _ in CSM_COUNTRIES}
-
-
-def _env_platforms() -> list[tuple[str, str, str]] | None:
-    """Опционально: CSM_PLATFORMS=depop,vinted,ebay"""
-    raw = (os.getenv("CSM_PLATFORMS") or "").strip()
-    if not raw:
-        return None
-    out: list[tuple[str, str, str]] = []
-    known = {p: (p, label, emoji) for p, label, emoji in CSM_PLATFORMS}
-    for part in raw.split(","):
-        pid = part.strip().lower()
-        if not pid:
-            continue
-        if pid in known:
-            out.append(known[pid])
-        else:
-            out.append((pid, pid.capitalize(), "link"))
-    return out or None
-
-
-def list_csm_platforms() -> list[tuple[str, str, str]]:
-    return list(_env_platforms() or CSM_PLATFORMS)
 
 
 def list_csm_countries() -> list[tuple[str, str, str]]:
     return list(CSM_COUNTRIES)
 
 
+def list_csm_platforms() -> list[tuple[str, str, str]]:
+    raw = (os.getenv("CSM_PLATFORMS") or "").strip()
+    if not raw:
+        return list(CSM_PLATFORMS)
+    out: list[tuple[str, str, str]] = []
+    for part in raw.split(","):
+        pid = part.strip().lower()
+        if not pid:
+            continue
+        out.append(_PLATFORM_BY_ID.get(pid, (pid, pid.capitalize(), "link")))
+    return out or list(CSM_PLATFORMS)
+
+
+def platforms_for_country(country_id: str) -> list[tuple[str, str, str]]:
+    """Сервисы для страны: (platform_id, label, emoji_key)."""
+    cc = (country_id or "").strip().lower()
+    ids = CSM_COUNTRY_SERVICES.get(cc) or ("depop", "ebay", "vinted")
+    known = {p: (p, label, emoji) for p, label, emoji in list_csm_platforms()}
+    out: list[tuple[str, str, str]] = []
+    for pid in ids:
+        out.append(known.get(pid, (pid, pid.capitalize(), "link")))
+    return out
+
+
 def platform_label(platform_id: str) -> str:
-    for pid, label, _ in list_csm_platforms():
-        if pid == platform_id:
-            return label
+    meta = _PLATFORM_BY_ID.get((platform_id or "").strip().lower())
+    if meta:
+        return meta[1]
     return (platform_id or "—").capitalize()
 
 
@@ -99,16 +124,10 @@ def parse_service_key(service_code: str | None) -> tuple[str, str]:
     """→ (platform, country|verify_all)."""
     s = (service_code or "").strip().lower()
     if not s or "_" not in s:
-        return "depop", "us"
+        return "marktplaats", "nl"
     platform, rest = s.split("_", 1)
-    if rest == "verify" or rest == CSM_VERIFY_SUFFIX:
+    if rest in {"verify", CSM_VERIFY_SUFFIX}:
         return platform or "depop", CSM_VERIFY_SUFFIX
-    if platform not in _PLATFORM_IDS and platform not in {p for p, _, _ in list_csm_platforms()}:
-        # unknown platform still keep as-is
-        pass
-    if rest not in _COUNTRY_IDS and rest != CSM_VERIFY_SUFFIX:
-        # keep raw suffix
-        return platform, rest
     return platform, rest
 
 
@@ -124,7 +143,7 @@ def service_key_label(service_code: str | None) -> str:
     platform, country = parse_service_key(service_code)
     if country == CSM_VERIFY_SUFFIX:
         return f"{platform_label(platform)} · Verify"
-    return f"{platform_label(platform)} · {country_label(country)}"
+    return f"{country_label(country)} · {platform_label(platform)}"
 
 
 def is_verify_service(service_code: str | None) -> bool:

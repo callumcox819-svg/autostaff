@@ -65,7 +65,7 @@ async def _generate_csm(session, user: User, cfg, offer: Offer | None, *, listin
     if not (cfg.service_code or "").strip():
         raise AquaError(
             f"Не выбрана площадка CSM. "
-            f"{menu_path(('settings', ''), ('key', 'Команды API'))} → CSM → Площадка."
+            f"{menu_path(('settings', ''), ('key', 'Команды API'))} → CSM → Страна / площадка."
         )
 
     listing = (listing_url or "").strip()

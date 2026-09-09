@@ -70,7 +70,7 @@ def default_service_for_team(team_id: str) -> str:
     if team_id == "evoleum":
         return "marktplaats_nl"
     if team_id == "csm":
-        return "depop_us"
+        return "marktplaats_nl"
     return ""
 
 

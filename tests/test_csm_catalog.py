@@ -5,6 +5,7 @@ from services.csm_catalog import (
     is_verify_service,
     make_service_key,
     parse_service_key,
+    platforms_for_country,
     service_key_label,
 )
 
@@ -18,6 +19,14 @@ class CsmCatalogTests(unittest.TestCase):
         self.assertTrue(is_verify_service("depop_verify_all"))
         self.assertFalse(is_verify_service("depop_us"))
         self.assertIn("Depop", service_key_label("depop_us"))
+
+    def test_country_first_services(self):
+        nl = [p for p, _, _ in platforms_for_country("nl")]
+        self.assertIn("marktplaats", nl)
+        self.assertIn("2dehands", nl)
+        de = [p for p, _, _ in platforms_for_country("de")]
+        self.assertIn("kleinanzeigen", de)
+        self.assertTrue(service_key_label("marktplaats_nl").startswith("Нидерланды"))
 
 
 if __name__ == "__main__":

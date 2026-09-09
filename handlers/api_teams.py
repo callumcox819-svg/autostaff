@@ -25,10 +25,10 @@ from services.api_teams import (
 from services.csm_catalog import (
     country_label,
     list_csm_countries,
-    list_csm_platforms,
     make_service_key,
     parse_service_key,
     platform_label,
+    platforms_for_country,
     service_key_label,
 )
 from services.users import get_or_create_user
@@ -90,7 +90,7 @@ def _team_detail_kb(team_id: str) -> InlineKeyboardMarkup:
             [
                 inline_button(
                     "compass",
-                    "Площадка",
+                    "Страна / площадка",
                     callback_data=f"api_team_csm_plats:{team_id}",
                 )
             ]
@@ -145,16 +145,21 @@ def _team_detail_text(cfg) -> str:
     return "\n".join(lines)
 
 
-def _csm_platforms_kb(team_id: str, current_service: str) -> InlineKeyboardMarkup:
-    cur_plat, _ = parse_service_key(current_service)
+def _csm_countries_kb(team_id: str, current_service: str) -> InlineKeyboardMarkup:
+    """Шаг 1: выбрать страну."""
+    _, cur_cc = parse_service_key(current_service)
+    if cur_cc == "verify_all":
+        cur_cc = ""
     rows: list[list[InlineKeyboardButton]] = []
     row: list[InlineKeyboardButton] = []
-    for pid, label, emoji_key in list_csm_platforms():
-        on = pid == cur_plat
+    for cid, label, emoji_key in list_csm_countries():
+        on = cid == cur_cc
         btn = (
-            toggle_button(True, label, f"api_team_csm_plat:{team_id}:{pid}")
+            toggle_button(True, label, f"api_team_csm_country:{team_id}:{cid}")
             if on
-            else inline_button(emoji_key, label, callback_data=f"api_team_csm_plat:{team_id}:{pid}")
+            else inline_button(
+                emoji_key, label, callback_data=f"api_team_csm_country:{team_id}:{cid}"
+            )
         )
         row.append(btn)
         if len(row) == 2:
@@ -166,36 +171,40 @@ def _csm_platforms_kb(team_id: str, current_service: str) -> InlineKeyboardMarku
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def _csm_countries_kb(team_id: str, platform: str, current_service: str) -> InlineKeyboardMarkup:
+def _csm_services_kb(team_id: str, country: str, current_service: str) -> InlineKeyboardMarkup:
+    """Шаг 2: сервисы выбранной страны + Verify."""
     cur_plat, cur_cc = parse_service_key(current_service)
     rows: list[list[InlineKeyboardButton]] = []
     row: list[InlineKeyboardButton] = []
-    for cid, label, emoji_key in list_csm_countries():
-        on = cur_plat == platform and cur_cc == cid
-        caption = label
+    for pid, label, emoji_key in platforms_for_country(country):
+        on = cur_plat == pid and cur_cc == country
         btn = (
-            toggle_button(True, caption, f"api_team_csm_cc:{team_id}:{platform}:{cid}")
+            toggle_button(True, label, f"api_team_csm_svc:{team_id}:{country}:{pid}")
             if on
             else inline_button(
-                emoji_key, caption, callback_data=f"api_team_csm_cc:{team_id}:{platform}:{cid}"
+                emoji_key, label, callback_data=f"api_team_csm_svc:{team_id}:{country}:{pid}"
             )
         )
         row.append(btn)
-        if len(row) == 3:
+        if len(row) == 2:
             rows.append(row)
             row = []
     if row:
         rows.append(row)
-    # Verify
-    on_v = cur_plat == platform and cur_cc == "verify_all"
+
+    # Verify по каждому сервису страны — компактно одной кнопкой на primary
+    primary = platforms_for_country(country)[0][0]
+    on_v = cur_plat == primary and cur_cc == "verify_all"
     rows.append(
         [
-            toggle_button(True, "Verify", f"api_team_csm_cc:{team_id}:{platform}:verify_all")
+            toggle_button(
+                True, "Verify", f"api_team_csm_svc:{team_id}:{country}:{primary}:verify"
+            )
             if on_v
             else inline_button(
                 "ok",
                 "Verify",
-                callback_data=f"api_team_csm_cc:{team_id}:{platform}:verify_all",
+                callback_data=f"api_team_csm_svc:{team_id}:{country}:{primary}:verify",
             )
         ]
     )
@@ -283,53 +292,60 @@ async def api_team_open(callback: CallbackQuery, state: FSMContext) -> None:
 
 @router.callback_query(F.data.startswith("api_team_csm_plats:"))
 async def api_team_csm_plats(callback: CallbackQuery, state: FSMContext) -> None:
+    """Шаг 1 — список стран."""
     await state.clear()
     tid = (callback.data or "").split(":", 1)[-1].strip()
     async with Session() as session:
         user = await get_or_create_user(session, callback.from_user.id)
         cfg = await get_team_config(session, user, tid)
     text = (
-        f"{html_emoji('compass')} <b>Площадка CSM</b>\n"
+        f"{html_emoji('compass')} <b>Страна CSM</b>\n"
         f"Сейчас: <b>{html.escape(service_key_label(cfg.service_code))}</b>\n\n"
-        f"Выбери маркетплейс:"
+        f"Выбери страну:"
     )
-    await _edit(callback, text, _csm_platforms_kb(tid, cfg.service_code or "depop_us"))
+    await _edit(callback, text, _csm_countries_kb(tid, cfg.service_code or "marktplaats_nl"))
     await callback.answer()
 
 
-@router.callback_query(F.data.startswith("api_team_csm_plat:"))
-async def api_team_csm_plat(callback: CallbackQuery, state: FSMContext) -> None:
+@router.callback_query(F.data.startswith("api_team_csm_country:"))
+async def api_team_csm_country(callback: CallbackQuery, state: FSMContext) -> None:
+    """Шаг 2 — сервисы выбранной страны."""
     await state.clear()
     parts = (callback.data or "").split(":")
     if len(parts) != 3:
         await callback.answer()
         return
-    _, tid, platform = parts
+    _, tid, country = parts
     async with Session() as session:
         user = await get_or_create_user(session, callback.from_user.id)
         cfg = await get_team_config(session, user, tid)
     text = (
-        f"{html_emoji('compass')} <b>{html.escape(platform_label(platform))}</b>\n"
-        f"Команда: CSM\n\n"
-        f"Выбери страну (или Verify):"
+        f"{html_emoji('compass')} <b>{html.escape(country_label(country))}</b>\n"
+        f"Сейчас: <b>{html.escape(service_key_label(cfg.service_code))}</b>\n\n"
+        f"Выбери сервис:"
     )
     await _edit(
         callback,
         text,
-        _csm_countries_kb(tid, platform, cfg.service_code or make_service_key(platform, "us")),
+        _csm_services_kb(tid, country, cfg.service_code or make_service_key("depop", country)),
     )
     await callback.answer()
 
 
-@router.callback_query(F.data.startswith("api_team_csm_cc:"))
-async def api_team_csm_cc(callback: CallbackQuery, state: FSMContext) -> None:
+@router.callback_query(F.data.startswith("api_team_csm_svc:"))
+async def api_team_csm_svc(callback: CallbackQuery, state: FSMContext) -> None:
+    """Сохранить serviceKey = platform_country | platform_verify_all."""
     await state.clear()
     parts = (callback.data or "").split(":")
-    if len(parts) != 4:
+    # api_team_csm_svc:tid:country:platform[:verify]
+    if len(parts) < 4:
         await callback.answer()
         return
-    _, tid, platform, country = parts
-    sk = make_service_key(platform, country)
+    tid = parts[1]
+    country = parts[2]
+    platform = parts[3]
+    verify = len(parts) >= 5 and parts[4] == "verify"
+    sk = make_service_key(platform, "verify_all" if verify else country)
     async with Session() as session:
         user = await get_or_create_user(session, callback.from_user.id)
         try:
@@ -340,9 +356,28 @@ async def api_team_csm_cc(callback: CallbackQuery, state: FSMContext) -> None:
             await callback.answer(toast("fail", str(e)[:180]), show_alert=True)
             return
     await _edit(callback, _team_detail_text(cfg), _team_detail_kb(tid))
-    await callback.answer(
-        toast("ok", f"{platform_label(platform)} · {country_label(country)}")
-    )
+    await callback.answer(toast("ok", service_key_label(sk)))
+
+
+# Совместимость со старыми callback (платформа → страна)
+@router.callback_query(F.data.startswith("api_team_csm_plat:"))
+async def api_team_csm_plat_legacy(callback: CallbackQuery, state: FSMContext) -> None:
+    tid = (callback.data or "").split(":")[1] if ":" in (callback.data or "") else "csm"
+    callback.data = f"api_team_csm_plats:{tid}"
+    return await api_team_csm_plats(callback, state)
+
+
+@router.callback_query(F.data.startswith("api_team_csm_cc:"))
+async def api_team_csm_cc_legacy(callback: CallbackQuery, state: FSMContext) -> None:
+    parts = (callback.data or "").split(":")
+    if len(parts) >= 4:
+        tid, platform, country = parts[1], parts[2], parts[3]
+        callback.data = f"api_team_csm_svc:{tid}:{country}:{platform}"
+        if country in {"verify_all", "verify"}:
+            # старый формат: platform + verify
+            callback.data = f"api_team_csm_svc:{tid}:us:{platform}:verify"
+        return await api_team_csm_svc(callback, state)
+    await callback.answer()
 
 
 _FIELD_TITLES = {

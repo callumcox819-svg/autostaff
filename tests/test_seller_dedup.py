@@ -12,9 +12,9 @@ class SellerDedupTests(unittest.TestCase):
         vs = _make_local_part_variants("Maria Johansen", require_first_and_last=False)
         self.assertIn("maria.johansen", vs)
         self.assertIn("mariajohansen", vs)
-        self.assertIn("johansen", vs)
-        self.assertIn("maria", vs)  # 5 букв — ок
-        self.assertGreaterEqual(len(vs), 4)
+        self.assertNotIn("johansen", vs)  # голые имя/фамилия больше не пробиваем
+        self.assertNotIn("maria", vs)
+        self.assertGreaterEqual(len(vs), 3)
 
         a = {"item_person_name": "Maria Johansen", "item_link": "https://a/1"}
         b = {"item_person_name": "Maria  Johansen", "item_link": "https://a/2"}

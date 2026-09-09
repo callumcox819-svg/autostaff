@@ -582,7 +582,9 @@ async def strip_validated_email_from_other_offers(
     keep_offer_id: int,
     email: str,
 ) -> None:
-    """Один validated email на одного user — только один offer_id."""
+    """Один validated email на одного user — только один offer_id (без полного скана БД)."""
+    from sqlalchemy import func
+
     from services.offer_matching import canon_seller_email
 
     want = canon_seller_email(email)
@@ -597,29 +599,37 @@ async def strip_validated_email_from_other_offers(
             .join(Offer, Offer.id == OfferEmail.offer_id)
             .where(Offer.user_id == uid)
             .where(OfferEmail.offer_id != keep)
+            .where(func.lower(OfferEmail.email) == want)
         )
     ).scalars().all()
+    touched_ids: set[int] = set()
     for oe in oe_rows:
-        if _seller_email_matches(oe.email or "", email):
-            await session.delete(oe)
+        touched_ids.add(int(oe.offer_id))
+        await session.delete(oe)
+
+    if not touched_ids:
+        return
 
     others = (
         await session.execute(
-            sa_select(Offer).where(Offer.user_id == uid).where(Offer.id != keep)
+            sa_select(Offer).where(Offer.user_id == uid).where(Offer.id.in_(touched_ids))
         )
     ).scalars().all()
     for off in others:
         raw = parse_offer_raw(getattr(off, "raw_json", None))
+        changed = False
         lst = list(raw.get("validated_emails") or [])
         new_lst = [x for x in lst if not _seller_email_matches(str(x or ""), email)]
         if len(new_lst) != len(lst):
             raw["validated_emails"] = new_lst
-            off.raw_json = json.dumps(raw, ensure_ascii=False)
+            changed = True
         for key in ("email", "validated_email", "seller_email", "contact_email"):
             v = raw.get(key)
             if isinstance(v, str) and _seller_email_matches(v, email):
                 raw[key] = ""
-                off.raw_json = json.dumps(raw, ensure_ascii=False)
+                changed = True
+        if changed:
+            off.raw_json = json.dumps(raw, ensure_ascii=False)
 
 
 def normalize_incoming_seller_email(raw: str) -> str:
@@ -1425,6 +1435,7 @@ async def save_all_offers_from_import(
     seen_link_keys: set[str] = set()
 
     file_urls: list[str] = []
+    file_link_keys: set[str] = set()
     for it in items or []:
         if not isinstance(it, dict):
             continue
@@ -1432,23 +1443,41 @@ async def save_all_offers_from_import(
         if u:
             file_urls.append(u)
             file_urls.append(u.rstrip("/"))
+            lk = link_key(u)
+            if lk:
+                file_link_keys.add(lk)
     file_urls = list(dict.fromkeys(file_urls))
 
-    emailed_ids = (
-        sa_select(OfferEmail.offer_id)
-        .join(Offer, Offer.id == OfferEmail.offer_id)
-        .where(Offer.user_id == int(user_id))
-    )
-    import_conds = [Offer.id.in_(emailed_ids)]
+    # Только лоты из текущего файла (+ по email из этого прогона) — не весь архив user.
+    existing_rows: list[Offer] = []
     if file_urls:
-        import_conds.append(Offer.link.in_(file_urls))
-    existing_rows = (
-        await session.execute(
-            sa_select(Offer)
-            .where(Offer.user_id == int(user_id))
-            .where(or_(*import_conds))
+        existing_rows = list(
+            (
+                await session.execute(
+                    sa_select(Offer)
+                    .where(Offer.user_id == int(user_id))
+                    .where(Offer.link.in_(file_urls))
+                )
+            ).scalars().all()
         )
-    ).scalars().all()
+    # Догрузка по raw item_link, если колонка link пустая/старая
+    if file_link_keys and len(existing_rows) < len(file_link_keys):
+        more = (
+            await session.execute(
+                sa_select(Offer)
+                .where(Offer.user_id == int(user_id))
+                .order_by(Offer.id.desc())
+                .limit(min(2500, max(400, len(file_link_keys) * 4)))
+            )
+        ).scalars().all()
+        have_ids = {int(o.id) for o in existing_rows}
+        for off in more:
+            if int(off.id) in have_ids:
+                continue
+            if link_key(offer_effective_link(off)) in file_link_keys:
+                existing_rows.append(off)
+                have_ids.add(int(off.id))
+
     by_link: dict[str, Offer] = {}
     by_email: dict[str, Offer] = {}
     for off in existing_rows:
@@ -1460,7 +1489,7 @@ async def save_all_offers_from_import(
             if c and c not in by_email:
                 by_email[c] = off
 
-    # /reset снимает OfferEmail, raw_json почту оставляет — вернуть в БД до новой волны API.
+    # /reset снимает OfferEmail, raw_json почту оставляет — вернуть только для лотов из файла.
     for off in existing_rows:
         if getattr(off, "id", None) is None:
             continue
@@ -1541,6 +1570,19 @@ async def save_all_offers_from_import(
         offer = by_link.get(lk_save) if lk_save else None
         if offer is None and canon in reserved_emails:
             prev = by_email.get(canon)
+            if prev is None:
+                row_oe = (
+                    await session.execute(
+                        sa_select(Offer)
+                        .join(OfferEmail, OfferEmail.offer_id == Offer.id)
+                        .where(Offer.user_id == int(user_id))
+                        .where(OfferEmail.email == canon)
+                        .limit(1)
+                    )
+                ).scalars().first()
+                if row_oe is not None:
+                    prev = row_oe
+                    by_email[canon] = prev
             if prev is not None:
                 # Тот же email уже в БД — обновляем лот полным VOID JSON, не выкидываем.
                 offer = prev

@@ -177,14 +177,9 @@ def _make_local_part_variants(name: str, *, require_first_and_last: bool) -> lis
 
     for h in handles:
         _add(h)
-    # first.last / склейка — основной паттерн
+    # Только составные логины — одиночные maria@/henk@ SMTP часто врёт.
     _add(f"{first}.{last}")
     _add(f"{first}{last}")
-    # одиночные имя/фамилия — только если ≥5 букв и не бренд/город
-    if is_usable_single_local(last):
-        _add(last)
-    if first != last and is_usable_single_local(first):
-        _add(first)
     if len(first) >= 2 and len(last) >= 2:
         _add(f"{first[0]}{last}")
         _add(f"{first[0]}.{last}")

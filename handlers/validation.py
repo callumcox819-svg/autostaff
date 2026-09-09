@@ -158,7 +158,13 @@ def _format_validation_status(
         bar_done = min(seller_index, max(0, sellers_total - 1))
 
     bar, pct = _progress_bar(bar_done, bar_total)
-    if not finished and ph == "api_retry" and rq > 0 and rd < rq:
+    if not finished and ph == "saving":
+        pct = 98
+        bar, _ = _progress_bar(98, 100)
+    elif not finished and ph == "export":
+        pct = 99
+        bar, _ = _progress_bar(99, 100)
+    elif not finished and ph == "api_retry" and rq > 0 and rd < rq:
         pct = min(pct, 98)
     elif (
         not finished

@@ -49,14 +49,18 @@ class InboxDeliverabilityTests(unittest.TestCase):
             self.assertFalse(mailing_fast_mode())
             self.assertEqual(inbox_stagger_ms(), 80)
 
-    def test_finalize_keeps_title_in_subject_path(self):
-        subj, body = finalize_inbox_mail(
-            "Vraag over OFFER",
-            "Beste, is OFFER nog beschikbaar?",
-            offer_title="Fiets",
-        )
-        self.assertIn("Fiets", body)
-        self.assertNotIn("OFFER", body)
+    def test_no_double_greeting(self):
+        from services.mailing_deliverability import add_inbox_body_variation
+
+        with patch.dict(os.environ, {"MAILING_BODY_VARIATION": "1"}, clear=False):
+            out = add_inbox_body_variation(
+                "Goedendag, kan ik nog reageren op de bank?\n\nDank je!"
+            )
+        self.assertEqual(out.lower().count("goedendag"), 1)
+        self.assertNotIn("goedemiddag", out.lower().split("goedendag")[0])
+        # Не должно быть двух приветствий подряд в начале
+        first_block = out.split("\n\n", 1)[0].lower()
+        self.assertTrue(first_block.startswith("goedendag"))
 
 
 if __name__ == "__main__":

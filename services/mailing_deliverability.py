@@ -223,18 +223,41 @@ def sanitize_body_for_inbox(body: str) -> str:
     return out
 
 
+_GREETING_LINE_RE = re.compile(
+    r"^\s*(?:"
+    r"beste|hoi|hallo|hello|hi|hey|"
+    r"goedendag|goedemorgen|goedemiddag|goedenavond|"
+    r"gr[uü]ezi|guten\s+tag|liebe[r]?|"
+    r"dear|good\s+(?:morning|afternoon|evening)"
+    r")\b",
+    re.I,
+)
+
+
+def _body_already_has_greeting(body: str) -> bool:
+    first = ((body or "").lstrip().split("\n", 1)[0] or "").strip()
+    if not first:
+        return False
+    return bool(_GREETING_LINE_RE.match(first))
+
+
 def add_inbox_body_variation(body: str) -> str:
+    """Микро-уникализация. Не клеим второе приветствие поверх уже существующего."""
     if not mailing_body_variation():
         return (body or "").strip()
     b = (body or "").strip()
-    opener = random.choice(_INBOX_OPENERS)
-    starts = ("beste", "hoi", "goedemiddag", "hallo", "hello", "hi", "grüezi", "guten tag")
-    if opener and not b.lower().startswith(starts):
-        b = f"{opener.strip()}\n\n{b}" if opener.strip() else b
+    if not _body_already_has_greeting(b):
+        opener = random.choice(_INBOX_OPENERS)
+        if opener and opener.strip():
+            b = f"{opener.strip()}\n\n{b}"
     closing = random.choice(_INBOX_CLOSINGS)
     if not closing:
         return b.strip()
-    if closing.lower() in b.lower()[-40:]:
+    if closing.lower() in b.lower()[-50:]:
+        return b.strip()
+    # Не дублировать «Dank je» если тело уже заканчивается благодарностью
+    tail = b.lower()[-60:]
+    if any(x in tail for x in ("dank", "bedankt", "thanks", "groet")):
         return b.strip()
     return f"{b}\n\n{closing}".strip()
 

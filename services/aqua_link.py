@@ -125,8 +125,7 @@ async def _generate_goo(session, user: User, cfg, offer: Offer | None, *, listin
         )
     if not (cfg.team_key or "").strip():
         raise AquaError(
-            "Не задан Team-ключ на сервере "
-            "(Railway Variables: <code>GOO_TEAM_KEY</code> / <code>TEAM_API_KEY</code>)."
+            "Генерация недоступна: на сервере не задан team-ключ. Напишите админу."
         )
     if not (cfg.profile_id or "").strip():
         raise AquaError(

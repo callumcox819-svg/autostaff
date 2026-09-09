@@ -135,8 +135,6 @@ def _team_detail_text(cfg) -> str:
             f" (<code>{html.escape(cfg.service_code or '—')}</code>)"
         )
     else:
-        team_ok = "задан на сервере" if (cfg.team_key or "").strip() else "не задан (Railway Variables)"
-        lines.append(f"<b>Team-ключ:</b> {html.escape(team_ok)}")
         lines.append(f"<b>Код сервиса:</b> <code>{html.escape(cfg.service_code or '—')}</code>")
     lines.append(f"<b>Profile ID:</b> <code>{html.escape(cfg.profile_id or '—')}</code>")
     lines.append(
@@ -477,8 +475,7 @@ async def api_team_field_save(message: Message, state: FSMContext) -> None:
     if field == "team_key":
         await state.clear()
         await message.answer(
-            f"{html_emoji('fail')} Team-ключ задаётся только на сервере "
-            f"(Railway Variables: <code>GOO_TEAM_KEY</code>).",
+            f"{html_emoji('fail')} Team-ключ задаётся только на сервере, не в боте.",
             parse_mode="HTML",
         )
         return

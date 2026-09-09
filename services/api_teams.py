@@ -113,7 +113,7 @@ async def set_team_field(session, user: User, team_id: str, field: str, value: s
     if not tid:
         raise ValueError(f"Unknown team: {team_id!r}")
     if field == "team_key":
-        raise ValueError("Team-ключ задаётся глобально на сервере (Railway Variables)")
+        raise ValueError("Team-ключ задаётся только на сервере")
     if field == "api_key":
         value = clean_secret(value)
     elif field == "link_type":

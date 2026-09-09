@@ -10,11 +10,16 @@ import aiohttp
 
 logger = logging.getLogger(__name__)
 
-GOO_API_BASE = (
-    os.getenv("GOO_API_BASE")
-    or os.getenv("EVOLEUM_API_BASE")
-    or "https://api.goo.network"
-).strip().rstrip("/")
+def goo_api_base() -> str:
+    return (
+        os.getenv("GOO_API_BASE")
+        or os.getenv("EVOLEUM_API_BASE")
+        or "https://api.goo.network"
+    ).strip().rstrip("/")
+
+
+# backward-compat for imports/tests
+GOO_API_BASE = goo_api_base()
 
 
 class GooError(Exception):
@@ -22,18 +27,18 @@ class GooError(Exception):
 
 
 def _auth_headers(*, user_api_key: str, team_api_key: str = "") -> dict[str, str]:
-    from urllib.parse import urlparse
-
     user = (user_api_key or "").strip()
-    team = (team_api_key or "").strip() or user
+    team = (team_api_key or "").strip()
     if not user:
         raise GooError("Не задан API-ключ")
-    host = urlparse(GOO_API_BASE).hostname or "api.goo.network"
+    if not team:
+        raise GooError("Не задан Team-ключ на сервере")
+    # Host не задаём вручную — aiohttp ставит его из URL (ручной Host часто ломает запрос).
     return {
         "Authorization": f"Apikey {user}",
         "X-Team-Key": team,
         "Content-Type": "application/json",
-        "Host": host,
+        "Accept": "application/json",
     }
 
 
@@ -53,7 +58,8 @@ def _extract_link(data: dict[str, Any]) -> str:
 
 
 async def _post_json(path: str, body: dict[str, Any], *, headers: dict[str, str], timeout_sec: float = 45.0) -> dict[str, Any]:
-    url = f"{GOO_API_BASE}{path}"
+    base = goo_api_base()
+    url = f"{base}{path}"
     timeout = aiohttp.ClientTimeout(total=timeout_sec)
     try:
         async with aiohttp.ClientSession(timeout=timeout) as session:
@@ -67,7 +73,14 @@ async def _post_json(path: str, body: dict[str, Any], *, headers: dict[str, str]
                     msg = ""
                     if isinstance(data, dict):
                         msg = str(data.get("message") or data.get("error") or "")
-                    raise GooError(f"HTTP {resp.status}: {msg or text[:300]}")
+                    detail = (msg or text[:300]).strip()
+                    if resp.status == 401:
+                        raise GooError(
+                            "invalid credentials — проверь личный API-ключ Evoleum "
+                            "(должен быть от той же команды, что и GOO_TEAM_KEY на сервере). "
+                            f"Ответ API: {detail[:200]}"
+                        )
+                    raise GooError(f"HTTP {resp.status}: {detail}")
                 if not isinstance(data, dict):
                     raise GooError(f"Bad JSON: {text[:300]}")
                 return data

@@ -42,9 +42,21 @@ class GooGenerateTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(GooError):
             await goo_generate_parse(
                 user_api_key="k",
+                team_api_key="team-key",
                 service="marktplaats_nl",
                 listing_url="",
                 profile_id="p",
+            )
+
+    async def test_requires_team_key(self):
+        with self.assertRaises(GooError):
+            await goo_generate_no_parse(
+                user_api_key="user-key",
+                team_api_key="",
+                service="marktplaats_nl",
+                name="Bike",
+                price="100",
+                profile_id="gA0XGRof08x",
             )
 
 

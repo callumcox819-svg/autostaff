@@ -15,9 +15,23 @@ class AquaHtmlRoutingTests(unittest.TestCase):
             import services.aqua_keys as ak
 
             importlib.reload(ak)
-            self.assertEqual(ak.AQUA_SERVICE_CHOICES, ())
             self.assertIsNone(ak.normalize_aqua_service("ricardo_ch"))
             self.assertIsNone(ak.normalize_aqua_service("tutti_ch"))
+
+    def test_html_dir_auto_service(self):
+        with patch.dict(os.environ, {"AQUA_SERVICES": "", "HTML_DATA_DIR": "HTML"}, clear=False):
+            import importlib
+            import services.aqua_keys as ak
+            import services.html_templates as ht
+            import region as region_mod
+
+            importlib.reload(region_mod)
+            importlib.reload(ak)
+            importlib.reload(ht)
+            self.assertIn("marktplaats_nl", ak.AQUA_SERVICE_CHOICES)
+            self.assertEqual(ak.normalize_aqua_service("marktplaats_nl"), "marktplaats_nl")
+            self.assertEqual(ht.html_subdir_for_service("marktplaats_nl"), "marktplaats_nl")
+            self.assertTrue(ht.html_template_path("marktplaats_nl", "confirmation.html"))
 
     def test_env_services_and_html_dir(self):
         with patch.dict(os.environ, {"AQUA_SERVICES": "demo_mkt", "HTML_DATA_DIR": "HTML"}, clear=False):

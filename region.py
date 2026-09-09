@@ -8,8 +8,8 @@ BOT_DISPLAY_NAME = (os.getenv("BOT_DISPLAY_NAME") or "Mail Bot").strip() or "Mai
 MARKETPLACE_NAME = (os.getenv("MARKETPLACE_NAME") or "").strip()
 TEAM_NAME = (os.getenv("TEAM_NAME") or "").strip()
 
-# Код сервиса по умолчанию (пустой — выбрать в профиле / AQUA_SERVICES)
-AQUA_DEFAULT_SERVICE = (os.getenv("AQUA_DEFAULT_SERVICE") or "").strip()
+# Код сервиса по умолчанию (пустой — первая папка data/HTML/ или AQUA_SERVICES)
+AQUA_DEFAULT_SERVICE = (os.getenv("AQUA_DEFAULT_SERVICE") or "marktplaats_nl").strip()
 
 # HTML-ответы: data/HTML/<service>/…
 HTML_DATA_DIR = (os.getenv("HTML_DATA_DIR") or "HTML").strip() or "HTML"

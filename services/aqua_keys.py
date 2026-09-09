@@ -1,13 +1,14 @@
-"""Сервисы и ключи для генерации ссылок (каркас; список сервисов — AQUA_SERVICES)."""
+"""Сервисы и ключи для генерации ссылок (список: AQUA_SERVICES или папки data/HTML/)."""
 
 from __future__ import annotations
 
 import os
 import re
+from pathlib import Path
 
 from config import config
 from models import User
-from region import AQUA_DEFAULT_SERVICE, TEAM_NAME
+from region import AQUA_DEFAULT_SERVICE, HTML_DATA_DIR, TEAM_NAME
 from services.user_settings import get_user_setting, set_user_setting
 from utils.secrets import clean_secret
 
@@ -37,7 +38,24 @@ def _services_from_env() -> tuple[str, ...]:
     return tuple(out)
 
 
-AQUA_SERVICE_CHOICES: tuple[str, ...] = _services_from_env()
+def _services_from_html_dirs() -> tuple[str, ...]:
+    """Авто-сервисы: папки data/HTML/<code>/ с confirmation.html."""
+    root = Path("data") / (HTML_DATA_DIR or "HTML")
+    if not root.is_dir():
+        return ()
+    out: list[str] = []
+    for p in sorted(root.iterdir()):
+        if not p.is_dir():
+            continue
+        name = p.name.strip().lower()
+        if not name or name.startswith("."):
+            continue
+        if (p / "confirmation.html").is_file():
+            out.append(name)
+    return tuple(out)
+
+
+AQUA_SERVICE_CHOICES: tuple[str, ...] = _services_from_env() or _services_from_html_dirs()
 
 
 def normalize_aqua_service(code: str | None) -> str | None:
@@ -49,7 +67,6 @@ def normalize_aqua_service(code: str | None) -> str | None:
         return None
     if AQUA_SERVICE_CHOICES:
         return s if s in AQUA_SERVICE_CHOICES else None
-    # Без AQUA_SERVICES сервисы ещё не подключены
     return None
 
 

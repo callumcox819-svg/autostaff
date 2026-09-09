@@ -142,16 +142,7 @@ async def _generate_goo(session, user: User, cfg, offer: Offer | None, *, listin
     if not listing and offer is not None:
         listing = (getattr(offer, "link", None) or getattr(offer, "item_link", None) or "").strip()
 
-    try:
-        if _is_http_url(listing):
-            return await goo_generate_parse(
-                user_api_key=cfg.api_key,
-                team_api_key=cfg.team_key,
-                service=cfg.service_code,
-                listing_url=listing,
-                profile_id=cfg.profile_id,
-            )
-
+    async def _no_parse() -> str:
         title = offer_effective_title(offer)
         if not title:
             raise AquaError("Нет названия объявления")
@@ -168,6 +159,27 @@ async def _generate_goo(session, user: User, cfg, offer: Offer | None, *, listin
             profile_id=cfg.profile_id,
             image=image or None,
         )
+
+    try:
+        if _is_http_url(listing):
+            try:
+                return await goo_generate_parse(
+                    user_api_key=cfg.api_key,
+                    team_api_key=cfg.team_key,
+                    service=cfg.service_code,
+                    listing_url=listing,
+                    profile_id=cfg.profile_id,
+                )
+            except GooError as e:
+                msg = str(e).lower()
+                # Парсер часто валится на битых/устаревших URL MP — как в finland-bot, уходим в no-parse.
+                if "401" in msg or "403" in msg or "invalid credentials" in msg:
+                    raise
+                try:
+                    return await _no_parse()
+                except AquaError:
+                    raise AquaError(str(e)) from e
+        return await _no_parse()
     except GooError as e:
         raise AquaError(str(e)) from e
 

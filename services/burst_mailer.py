@@ -39,37 +39,38 @@ BURST_RETRY_PAUSE_SEC = max(
     0.0, min(1.0, float(os.getenv("BURST_RETRY_PAUSE_SEC", "0.06")))
 )
 BURST_MAX_INFLIGHT = max(
-    4, min(120, int(os.getenv("BURST_MAX_INFLIGHT", "30")))
+    4, min(120, int(os.getenv("BURST_MAX_INFLIGHT", "40")))
 )
-# Один sticky-прокси: как в обычных мейлерах 2–3 потока, не 30 параллельных SMTP.
+# Один sticky-прокси + много Gmail: параллель по ящикам (как в быстрых мейлерах),
+# не 2–3 — иначе 300 писем растягиваются на минуты.
 BURST_SINGLE_PROXY_INFLIGHT = max(
-    1, min(8, int(os.getenv("BURST_SINGLE_PROXY_INFLIGHT", "3")))
+    8, min(80, int(os.getenv("BURST_SINGLE_PROXY_INFLIGHT", "40")))
 )
 
 
 def burst_per_letter_timeout_sec(sticky_proxy=None, *, num_proxies: int = 1) -> int:
-    """Должен быть ≥ SMTP×ретраи; иначе asyncio обрежет Loma на 24 с."""
+    """Жёсткий потолок на одно письмо — не держать волну 90с из‑за мёртвого коннекта."""
     raw_env = (os.getenv("BURST_PER_LETTER_TIMEOUT_SEC") or "").strip()
     if raw_env.isdigit():
         return max(8, min(240, int(raw_env)))
 
-    # Для "трафика" не даём burst застрять на residential/Loma.
-    # Если их SMTP-timeout в env высокий — режем до разумного потолка.
-    cap_fast = int(os.getenv("BURST_FAST_SMTP_TIMEOUT_CAP_SEC", "15"))
-    smtp_t = min(int(MAIL_FAST_SMTP_TIMEOUT_SEC), cap_fast)
-    # Один прокси: полный send (AUTH+DATA) часто >15с — иначе UNEXPECTED_EOF/timeout.
+    # Быстрый SMTP; при одном прокси чуть выше (AUTH+DATA), но без x2×ретраи.
+    smtp_t = int(MAIL_FAST_SMTP_TIMEOUT_SEC)
     if int(num_proxies) <= 1:
         smtp_t = max(
             smtp_t,
-            min(60, int(os.getenv("BURST_SINGLE_PROXY_SMTP_TIMEOUT_SEC", "45"))),
+            min(35, int(os.getenv("BURST_SINGLE_PROXY_SMTP_TIMEOUT_SEC", "25"))),
         )
+    else:
+        cap_fast = int(os.getenv("BURST_FAST_SMTP_TIMEOUT_CAP_SEC", "15"))
+        smtp_t = min(smtp_t, cap_fast)
+
     if sticky_proxy is not None and is_residential_gateway(sticky_proxy):
         boosted = int(residential_smtp_timeout_sec())
-        # максимум в 2x от базового fast-потолка
-        smtp_t = min(max(smtp_t, boosted), max(smtp_t * 2, 60))
-    inner = smtp_t * max(1, MAIL_FAST_SEND_RETRIES)
-    outer = inner * BURST_SMTP_RETRIES + 2
-    return max(8, min(90, outer))
+        smtp_t = max(smtp_t, min(40, boosted))
+
+    # Один круг SMTP + небольшой запас (ретраи внутри уже короткие).
+    return max(12, min(45, smtp_t + 5))
 
 
 def burst_wave_size_for_proxy(
@@ -79,7 +80,8 @@ def burst_wave_size_for_proxy(
     if int(num_proxies) <= 1:
         cap = min(cap, BURST_SINGLE_PROXY_INFLIGHT)
     if is_residential_gateway(proxy):
-        cap = min(cap, residential_burst_inflight())
+        # Residential тоже можно гнать по числу ящиков, но с потолком env.
+        cap = min(cap, max(residential_burst_inflight(), BURST_SINGLE_PROXY_INFLIGHT // 2))
     return max(1, min(int(num_accounts), cap))
 
 
@@ -244,29 +246,26 @@ async def run_burst_mailing(
     )
     if (n_proxies or 1) <= 1:
         logger.info(
-            "single proxy burst: wave=%s letter_tmo=%ss (cap parallel SMTP like classic mailers)",
+            "single proxy burst: wave=%s letter_tmo=%ss accounts=%s (parallel by mailbox)",
             wave_size,
             per_letter_tmo,
+            len(acc_ordered),
         )
     if is_residential_gateway(sticky_px):
         logger.info(
-            "residential proxy %s:%s — wave=%s smtp_tmo~%ss letter_cap=%ss",
+            "residential proxy %s:%s — wave=%s letter_cap=%ss",
             sticky_px.host,
             sticky_px.port,
             wave_size,
-            max(MAIL_FAST_SMTP_TIMEOUT_SEC, residential_smtp_timeout_sec()),
             per_letter_tmo,
         )
     pairs = pair_targets_with_accounts(targets, acc_ordered)
     waves = split_into_waves(pairs, wave_size=wave_size)
-    # Оценка длительности волны нужна только для расчёта паузы между волнами.
-    # per_letter_tmo включает ретраи и таймауты, поэтому давал завышение и превращал BURST
-    # в "полуинстант". Ставим меньшую оценку, чтобы burst был ближе к 2–10 секундам.
-    est_wave = min(
-        float(per_letter_tmo) * 0.08,
-        6.0,
-    )
+    est_wave = min(float(per_letter_tmo) * 0.05, 4.0)
     wave_gap = burst_wave_gap_sec(len(waves), estimated_wave_sec=est_wave)
+    # При одном прокси и большой волне — без искусственных пауз между волнами.
+    if (n_proxies or 1) <= 1 and wave_size >= 12:
+        wave_gap = min(wave_gap, float(os.getenv("BURST_SINGLE_PROXY_WAVE_GAP_SEC", "0.05")))
     stagger_s = inbox_stagger_ms() / 1000.0
 
     sent = failed = 0

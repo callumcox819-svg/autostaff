@@ -361,19 +361,15 @@ async def send_email_via_account_with_proxy_isolated(
     if mailing_fast and sticky_proxy_id is not None and len(order) <= 1:
         smtp_tmo = max(
             int(smtp_tmo),
-            min(60, int(os.getenv("BURST_SINGLE_PROXY_SMTP_TIMEOUT_SEC", "45"))),
+            min(35, int(os.getenv("BURST_SINGLE_PROXY_SMTP_TIMEOUT_SEC", "25"))),
         )
     if mailing_fast and order:
         from services.residential_proxy import is_residential_gateway, residential_smtp_timeout_sec
 
         if is_residential_gateway(order[0]):
-            base_fast = min(
-                int(smtp_tmo), int(os.getenv("BURST_FAST_SMTP_TIMEOUT_CAP_SEC", "20"))
-            )
-            if sticky_proxy_id is not None and len(order) <= 1:
-                base_fast = int(smtp_tmo)
+            base_fast = int(smtp_tmo)
             boosted = int(residential_smtp_timeout_sec())
-            smtp_tmo = min(max(base_fast, boosted), max(base_fast * 2, int(smtp_tmo)))
+            smtp_tmo = min(40, max(base_fast, boosted))
     last_err: str | None = None
     last_msgid: str | None = None
     tried = 0

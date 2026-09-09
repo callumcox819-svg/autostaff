@@ -39,6 +39,13 @@ MAIL_SMTP_TIMEOUT_SEC = max(20, min(90, int(os.getenv("MAIL_SMTP_TIMEOUT_SEC", "
 MAIL_FAST_SMTP_TIMEOUT_SEC = max(
     8, min(120, int(os.getenv("MAIL_FAST_SMTP_TIMEOUT_SEC", "15")))
 )
+# Sticky/ротирующий прокси: при EOF/timeout — новое соединение (новый IP), не сразу fail.
+MAIL_STICKY_PROXY_RECONNECTS = max(
+    1, min(5, int(os.getenv("MAIL_STICKY_PROXY_RECONNECTS", "3")))
+)
+MAIL_STICKY_PROXY_RECONNECT_PAUSE_SEC = max(
+    0.0, min(3.0, float(os.getenv("MAIL_STICKY_PROXY_RECONNECT_PAUSE_SEC", "0.35")))
+)
 MAIL_SMTP_MAX_PROXIES = max(1, min(12, int(os.getenv("MAIL_SMTP_MAX_PROXIES", "10"))))
 # Явный id ротирующего SOCKS5 в БД (опционально; иначе первый 🟢).
 _ROTATING_PROXY_ID_RAW = (os.getenv("ROTATING_PROXY_ID") or "").strip()
@@ -373,73 +380,97 @@ async def send_email_via_account_with_proxy_isolated(
     last_err: str | None = None
     last_msgid: str | None = None
     tried = 0
+    sticky_reconnects = (
+        MAIL_STICKY_PROXY_RECONNECTS
+        if sticky_proxy_id is not None
+        else 1
+    )
 
     for proxy in order:
         pid = int(proxy.id)
-        tried += 1
-        logger.info(
-            "[SMTP isolated] try proxy_id=%s %s:%s account=%s -> %s (%s/%s tmo=%ss)",
-            pid,
-            proxy.host,
-            proxy.port,
-            account.email,
-            to_email,
-            tried,
-            len(order),
-            smtp_tmo,
-        )
-        ok, err, msgid = await send_email_via_isolated_proxy(
-            proxy,
-            account,
-            to_email,
-            subject,
-            body,
-            sender_name=sender_name,
-            is_html=is_html,
-            smtp_timeout_sec=smtp_tmo,
-            for_mailing=True,
-        )
-        err = normalize_send_error(err)
-        if ok:
-            _LAST_OK_PROXY_ID[int(user_id)] = pid
-            _LAST_OK_PROXY_BY_ACCOUNT[(int(user_id), int(account.id))] = pid
+        for reconnect in range(1, sticky_reconnects + 1):
+            tried += 1
+            logger.info(
+                "[SMTP isolated] try proxy_id=%s %s:%s account=%s -> %s "
+                "(%s/%s tmo=%ss reconnect=%s/%s)",
+                pid,
+                proxy.host,
+                proxy.port,
+                account.email,
+                to_email,
+                tried,
+                max(len(order), 1) * sticky_reconnects,
+                smtp_tmo,
+                reconnect,
+                sticky_reconnects,
+            )
+            ok, err, msgid = await send_email_via_isolated_proxy(
+                proxy,
+                account,
+                to_email,
+                subject,
+                body,
+                sender_name=sender_name,
+                is_html=is_html,
+                smtp_timeout_sec=smtp_tmo,
+                for_mailing=True,
+            )
+            err = normalize_send_error(err)
+            if ok:
+                _LAST_OK_PROXY_ID[int(user_id)] = pid
+                _LAST_OK_PROXY_BY_ACCOUNT[(int(user_id), int(account.id))] = pid
+                try:
+                    await ProxyManager.note_proxy_success(session, pid)
+                except Exception:
+                    pass
+                return True, err, msgid
+
+            last_err = err
+            last_msgid = msgid
+            logger.warning(
+                "[SMTP isolated] fail proxy_id=%s account=%s reconnect=%s/%s err=%s",
+                pid,
+                account.email,
+                reconnect,
+                sticky_reconnects,
+                (err or "")[:200],
+            )
+
+            dead = _proxy_deactivate_on_fail(mailing_fast=mailing_fast, err=err)
             try:
-                await ProxyManager.note_proxy_success(session, pid)
+                await ProxyManager.note_proxy_failure(
+                    session,
+                    pid,
+                    (err or "")[:500],
+                    deactivate=dead,
+                    from_mailing=True,
+                )
             except Exception:
                 pass
-            return True, err, msgid
 
-        last_err = err
-        last_msgid = msgid
-        logger.warning(
-            "[SMTP isolated] fail proxy_id=%s account=%s err=%s",
-            pid,
-            account.email,
-            (err or "")[:200],
-        )
+            if not should_retry_send_with_other_proxy(err):
+                return False, err, last_msgid
 
-        dead = _proxy_deactivate_on_fail(mailing_fast=mailing_fast, err=err)
-        try:
-            await ProxyManager.note_proxy_failure(
-                session,
-                pid,
-                (err or "")[:500],
-                deactivate=dead,
-                from_mailing=True,
-            )
-        except Exception:
-            pass
+            # EOF/timeout на ротаторе — пауза и новое TCP (часто новый IP).
+            if reconnect < sticky_reconnects:
+                if MAIL_STICKY_PROXY_RECONNECT_PAUSE_SEC > 0:
+                    import asyncio
 
-        if not should_retry_send_with_other_proxy(err):
-            return False, err, last_msgid
-        # Фаст + один ротирующий gateway: не переключаемся на 2-й прокси из БД
-        if mailing_fast and sticky_proxy_id is not None:
+                    await asyncio.sleep(MAIL_STICKY_PROXY_RECONNECT_PAUSE_SEC)
+                continue
             break
 
-    if sticky_proxy_id is not None and tried <= 1:
+        # Sticky: только этот gateway; без sticky — следующий прокси из списка.
+        if mailing_fast and sticky_proxy_id is not None:
+            break
+        if not should_retry_send_with_other_proxy(last_err):
+            break
+
+    if sticky_proxy_id is not None:
         hint = (
             f"Прокси proxy_id={sticky_proxy_id} — нет ответа от Gmail SMTP "
-            f"({last_err or 'timeout'}). Повтор даст новый IP (ротация)."
+            f"после {tried} попыток ({last_err or 'timeout'}). "
+            f"Повтор даёт новый IP (ротация)."
         )
     else:
         hint = (

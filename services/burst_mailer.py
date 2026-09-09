@@ -49,12 +49,16 @@ BURST_SINGLE_PROXY_INFLIGHT = max(
 
 
 def burst_per_letter_timeout_sec(sticky_proxy=None, *, num_proxies: int = 1) -> int:
-    """Жёсткий потолок на одно письмо — не держать волну 90с из‑за мёртвого коннекта."""
+    """Потолок на письмо с учётом reconnect sticky-прокси (EOF → новый IP)."""
     raw_env = (os.getenv("BURST_PER_LETTER_TIMEOUT_SEC") or "").strip()
     if raw_env.isdigit():
         return max(8, min(240, int(raw_env)))
 
-    # Быстрый SMTP; при одном прокси чуть выше (AUTH+DATA), но без x2×ретраи.
+    from services.smtp_proxy_send import (
+        MAIL_STICKY_PROXY_RECONNECTS,
+        MAIL_STICKY_PROXY_RECONNECT_PAUSE_SEC,
+    )
+
     smtp_t = int(MAIL_FAST_SMTP_TIMEOUT_SEC)
     if int(num_proxies) <= 1:
         smtp_t = max(
@@ -69,8 +73,10 @@ def burst_per_letter_timeout_sec(sticky_proxy=None, *, num_proxies: int = 1) -> 
         boosted = int(residential_smtp_timeout_sec())
         smtp_t = max(smtp_t, min(40, boosted))
 
-    # Один круг SMTP + небольшой запас (ретраи внутри уже короткие).
-    return max(12, min(45, smtp_t + 5))
+    reconnects = MAIL_STICKY_PROXY_RECONNECTS if int(num_proxies) <= 1 else 1
+    pause = MAIL_STICKY_PROXY_RECONNECT_PAUSE_SEC * max(0, reconnects - 1)
+    # smtp×попытки + паузы + небольшой запас (без x MAIL_FAST_SEND_RETRIES)
+    return max(15, min(100, int(smtp_t * reconnects + pause + 5)))
 
 
 def burst_wave_size_for_proxy(

@@ -32,6 +32,8 @@ class AquaHtmlRoutingTests(unittest.TestCase):
             self.assertEqual(ak.normalize_aqua_service("marktplaats_nl"), "marktplaats_nl")
             self.assertEqual(ht.html_subdir_for_service("marktplaats_nl"), "marktplaats_nl")
             self.assertTrue(ht.html_template_path("marktplaats_nl", "confirmation.html"))
+            # чужой сервис без папки — не валиден
+            self.assertIsNone(ak.normalize_aqua_service("kleinanzeigen_de"))
 
     def test_env_services_and_html_dir(self):
         with patch.dict(os.environ, {"AQUA_SERVICES": "demo_mkt", "HTML_DATA_DIR": "HTML"}, clear=False):

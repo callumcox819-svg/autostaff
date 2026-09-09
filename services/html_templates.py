@@ -58,22 +58,21 @@ async def load_html_for_user(
     aqua_service_key: str,
     filename: str,
 ) -> tuple[str, str | None, str | None]:
-    from services.aqua_keys import AQUA_SERVICE_KEY, get_user_aqua_service
-    from services.user_settings import get_user_setting
+    from services.aqua_keys import resolve_html_service
 
-    raw = (await get_user_aqua_service(session, user)).strip()
-    if not raw:
-        raw = (await get_user_setting(session, user, aqua_service_key or AQUA_SERVICE_KEY) or "").strip()
+    raw = (await resolve_html_service(session, user) or "").strip()
     if not is_valid_aqua_service(raw):
         return (
             "",
             None,
-            "Не выбран сервис. Открой профиль → сервис (задаётся через AQUA_SERVICES).",
+            "Не выбран сервис с HTML. Выбери площадку в Команды API "
+            "(например Marktplaats → NL) или Профиль → Сервис. "
+            f"Папка: <code>data/{HTML_DATA_DIR}/&lt;service&gt;/</code>.",
         )
     sub = html_subdir_for_service(raw)
     p = html_template_path(raw, filename)
     if not p:
-        label = service_label_for_path(sub or "")
+        label = service_label_for_path(sub or raw)
         return (
             "",
             sub,

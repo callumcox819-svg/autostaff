@@ -2904,17 +2904,20 @@ async def cb_mail_reply_html_send(callback: CallbackQuery, state: FSMContext):
 
     async with Session() as session:
         user_pre = await get_or_create_user(session, tg_id)
-        service_raw = (await get_user_setting(session, user_pre, AQUA_SERVICE_KEY) or "").strip()
-        if not is_valid_aqua_service(service_raw):
+        from services.aqua_keys import resolve_html_service
+
+        html_svc = await resolve_html_service(session, user_pre)
+        if not is_valid_aqua_service(html_svc):
             return await callback.answer(
-                f"Сначала заполните профиль: {menu_path(('settings', ''), ('profile', 'Профиль'))}",
+                f"Сначала выбери площадку с HTML (Команды API) или "
+                f"{menu_path(('settings', ''), ('profile', 'Профиль'))} → Сервис",
                 show_alert=True,
             )
         from services.html_templates import html_template_path, service_label_for_path
 
-        sub = aqua_service_for_html_dir(service_raw)
-        if not html_template_path(service_raw, filename):
-            label = service_label_for_path(sub or "")
+        sub = aqua_service_for_html_dir(html_svc)
+        if not html_template_path(html_svc, filename):
+            label = service_label_for_path(sub or html_svc)
             return await callback.answer(
                 f"Нет шаблона {filename} для {label}",
                 show_alert=True,

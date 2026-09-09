@@ -55,6 +55,11 @@ def _services_from_html_dirs() -> tuple[str, ...]:
     return tuple(out)
 
 
+def _html_confirmation_exists(code: str) -> bool:
+    root = Path("data") / (HTML_DATA_DIR or "HTML") / code
+    return (root / "confirmation.html").is_file()
+
+
 AQUA_SERVICE_CHOICES: tuple[str, ...] = _services_from_env() or _services_from_html_dirs()
 
 
@@ -65,8 +70,11 @@ def normalize_aqua_service(code: str | None) -> str | None:
     # Удалённые CH-сервисы GAG — не принимаем
     if s in {"ricardo_ch", "tutti_ch", "ricardo", "tutti", "ricardo.ch", "tutti.ch"}:
         return None
-    if AQUA_SERVICE_CHOICES:
-        return s if s in AQUA_SERVICE_CHOICES else None
+    if AQUA_SERVICE_CHOICES and s in AQUA_SERVICE_CHOICES:
+        return s
+    # Папка добавлена позже (без рестарта) — data/HTML/<service>/confirmation.html
+    if _html_confirmation_exists(s):
+        return s
     return None
 
 
@@ -107,6 +115,47 @@ async def get_user_aqua_service(session, user: User) -> str:
     if AQUA_SERVICE_CHOICES:
         return AQUA_SERVICE_CHOICES[0]
     return ""
+
+
+async def resolve_html_service(session, user: User) -> str:
+    """
+    HTML только из папки выбранной площадки:
+    1) service_code выбранной команды API (CSM/Evoleum), если есть data/HTML/<code>/
+    2) иначе aqua_service из профиля
+    Verify (*_verify_all) HTML не использует — остаётся профиль.
+    """
+    try:
+        from services.api_teams import get_selected_team_config
+        from services.csm_catalog import is_verify_service
+
+        cfg = await get_selected_team_config(session, user)
+        sc = (cfg.service_code or "").strip().lower()
+        if sc and not is_verify_service(sc):
+            n = normalize_aqua_service(sc)
+            if n:
+                return n
+    except Exception:
+        pass
+    return await get_user_aqua_service(session, user)
+
+
+async def sync_html_service_from_code(session, user: User, service_code: str | None) -> str | None:
+    """При выборе площадки синхронизировать aqua_service, если есть HTML-папка."""
+    sc = (service_code or "").strip().lower()
+    if not sc:
+        return None
+    try:
+        from services.csm_catalog import is_verify_service
+
+        if is_verify_service(sc):
+            return None
+    except Exception:
+        pass
+    n = normalize_aqua_service(sc)
+    if not n:
+        return None
+    await set_user_setting(session, user, AQUA_SERVICE_KEY, n)
+    return n
 
 
 async def get_user_generate_domain(session, user: User) -> int | None:

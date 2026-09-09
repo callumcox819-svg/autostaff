@@ -264,6 +264,11 @@ async def api_team_pick(callback: CallbackQuery, state: FSMContext) -> None:
         user = await get_or_create_user(session, callback.from_user.id)
         try:
             selected = await set_selected_team_id(session, user, tid)
+            from services.api_teams import get_team_config
+            from services.aqua_keys import sync_html_service_from_code
+
+            cfg = await get_team_config(session, user, selected)
+            await sync_html_service_from_code(session, user, cfg.service_code)
             await session.commit()
         except ValueError:
             await callback.answer(toast("fail", "Неизвестная команда"), show_alert=True)
@@ -350,6 +355,9 @@ async def api_team_csm_svc(callback: CallbackQuery, state: FSMContext) -> None:
         user = await get_or_create_user(session, callback.from_user.id)
         try:
             await set_team_field(session, user, tid, "service_code", sk)
+            from services.aqua_keys import sync_html_service_from_code
+
+            await sync_html_service_from_code(session, user, sk)
             await session.commit()
             cfg = await get_team_config(session, user, tid)
         except ValueError as e:
@@ -478,6 +486,10 @@ async def api_team_field_save(message: Message, state: FSMContext) -> None:
         user = await get_or_create_user(session, message.from_user.id)
         try:
             await set_team_field(session, user, tid, field, raw)
+            if field == "service_code":
+                from services.aqua_keys import sync_html_service_from_code
+
+                await sync_html_service_from_code(session, user, raw)
             await session.commit()
             cfg = await get_team_config(session, user, tid)
         except ValueError as e:

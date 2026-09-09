@@ -52,6 +52,9 @@ _VOID_EXPORT_FIELD_ORDER: tuple[str, ...] = (
     "item_link",
     "person_link",
     "item_person_name",
+    "service",
+    "service_label",
+    "service_code",
 )
 
 _VOID_EXPORT_DUP_KEYS = frozenset({"title", "link", "price", "name", "person_name"})
@@ -1204,31 +1207,106 @@ def offer_effective_link(offer: Offer | None) -> str:
     return str(getattr(offer, "link", None) or "").strip()
 
 
+# host/path needle → (display label for IMAP card, bot service_code)
+_MARKETPLACE_SERVICE_RULES: tuple[tuple[str, str, str], ...] = (
+    ("ricardo.ch", "ricardo.ch", "ricardo_ch"),
+    ("tutti.ch", "tutti.ch", "tutti_ch"),
+    ("kleinanzeigen.de", "Kleinanzeigen", "kleinanzeigen_de"),
+    ("ebay-kleinanzeigen", "Kleinanzeigen", "kleinanzeigen_de"),
+    ("2dehands.be", "2dehands.be", "2dehands_be"),
+    ("2ememain.be", "2dehands.be", "2dehands_be"),
+    ("link.marktplaats.nl", "marktplaats.nl", "marktplaats_nl"),
+    ("marktplaats.nl", "marktplaats.nl", "marktplaats_nl"),
+    ("marktplaats.com", "marktplaats.nl", "marktplaats_nl"),
+    ("anibis.ch", "anibis.ch", "anibis_ch"),
+    ("willhaben.at", "willhaben.at", "willhaben_at"),
+    ("leboncoin.fr", "leboncoin.fr", "leboncoin_fr"),
+    ("subito.it", "subito.it", "subito_it"),
+    ("wallapop.", "wallapop", "wallapop"),
+    ("gumtree.", "gumtree", "gumtree_uk"),
+    ("blocket.se", "blocket.se", "blocket_se"),
+    ("dba.dk", "dba.dk", "dba_dk"),
+    ("post.ch", "post.ch", "post_ch"),
+    ("posta.ch", "post.ch", "post_ch"),
+    ("ebay.", "ebay", "ebay"),
+    ("facebook.com", "Facebook.com", "facebook"),
+    ("fb.com", "Facebook.com", "facebook"),
+    ("fb.me", "Facebook.com", "facebook"),
+)
+
+
+def marketplace_service_from_link(link: str) -> tuple[str, str]:
+    """Из URL объявления → (service_label для карточки, service_code бота)."""
+    u = (link or "").strip().lower()
+    if not u:
+        return "", ""
+    for needle, label, code in _MARKETPLACE_SERVICE_RULES:
+        if needle in u:
+            return label, code
+    return "", ""
+
+
 def marketplace_service_label_from_link(link: str) -> str:
-    u = (link or "").lower()
-    if "ricardo.ch" in u:
-        return "ricardo.ch"
-    if "tutti.ch" in u:
-        return "tutti.ch"
-    if "kleinanzeigen.de" in u or "ebay-kleinanzeigen" in u:
-        return "Kleinanzeigen"
-    if "2dehands.be" in u or "2ememain.be" in u:
-        return "2dehands.be"
-    if "marktplaats.nl" in u:
-        return "marktplaats.nl"
-    if "anibis.ch" in u:
-        return "anibis.ch"
-    if "post.ch" in u or "posta.ch" in u:
-        return "post.ch"
-    if "ebay." in u:
-        return "ebay"
-    if "facebook.com" in u or "fb.com" in u:
-        return "Facebook.com"
-    return ""
+    label, _code = marketplace_service_from_link(link)
+    return label
+
+
+def marketplace_service_code_from_link(link: str) -> str:
+    _label, code = marketplace_service_from_link(link)
+    return code
+
+
+def stamp_marketplace_service_on_payload(payload: dict[str, Any], *, link: str = "") -> dict[str, Any]:
+    """Записать service / service_label / service_code в VOID-blob (не затирать явные поля)."""
+    if not isinstance(payload, dict):
+        return {}
+    url = (
+        (link or "").strip()
+        or str(payload.get("item_link") or payload.get("link") or payload.get("url") or "").strip()
+    )
+    label, code = marketplace_service_from_link(url)
+    existing_label = str(
+        payload.get("service_label") or payload.get("service") or payload.get("marketplace") or ""
+    ).strip()
+    existing_code = str(payload.get("service_code") or "").strip()
+    if not existing_label and label:
+        payload["service"] = label
+        payload["service_label"] = label
+    elif existing_label and not payload.get("service_label"):
+        payload["service_label"] = existing_label
+        payload.setdefault("service", existing_label)
+    if not existing_code and code:
+        payload["service_code"] = code
+    return payload
 
 
 def marketplace_service_label_from_offer(offer: Offer | None) -> str:
+    """Сервис лота: сначала то, что сохранили при валидации/отправке, иначе из URL."""
+    if not offer:
+        return ""
+    raw = parse_offer_raw(getattr(offer, "raw_json", None))
+    for key in ("service_label", "service", "marketplace"):
+        v = str(raw.get(key) or "").strip()
+        if v:
+            return v
+    code = str(raw.get("service_code") or "").strip()
+    if code:
+        # marktplaats_nl → marktplaats.nl для карточки
+        pretty = code.replace("_", ".")
+        if pretty.endswith(".nl") or pretty.endswith(".be") or pretty.endswith(".ch") or pretty.endswith(".de"):
+            return pretty
+        return code
     return marketplace_service_label_from_link(offer_effective_link(offer))
+
+
+def marketplace_service_code_from_offer(offer: Offer | None) -> str:
+    if not offer:
+        return ""
+    raw = parse_offer_raw(getattr(offer, "raw_json", None))
+    code = str(raw.get("service_code") or "").strip()
+    if code:
+        return code
+    return marketplace_service_code_from_link(offer_effective_link(offer))
 
 
 async def find_offer_by_link(session, *, user_id: int, ad_url: str) -> Offer | None:
@@ -1457,19 +1535,17 @@ async def save_all_offers_from_import(
             payload["item_title"] = void_title
         if picked:
             payload["validated_emails"] = list(picked)
+        stamp_marketplace_service_on_payload(payload, link=void_link or fields["link"])
 
         lk_save = link_key(fields["link"] or void_link)
         offer = by_link.get(lk_save) if lk_save else None
         if offer is None and canon in reserved_emails:
             prev = by_email.get(canon)
             if prev is not None:
-                payload["offer_id"] = int(prev.id)
-                payload["validated_emails"] = list(picked)
-                output_rows.append(payload)
+                # Тот же email уже в БД — обновляем лот полным VOID JSON, не выкидываем.
+                offer = prev
                 if lk_save:
-                    seen_link_keys.add(lk_save)
-                continue
-            # reserved без лота (старый skip после /reset) — не выкидываем находку
+                    by_link[lk_save] = offer
 
         raw_dump = json.dumps(payload, ensure_ascii=False)
         if offer is not None:
@@ -1478,6 +1554,15 @@ async def save_all_offers_from_import(
             offer.price = fields["price"] or offer.price
             offer.link = fields["link"] or offer.link
             offer.photo = fields["photo"] or offer.photo
+            # Мержим со старым raw_json, чтобы новый JSON не затирал лишние поля.
+            prev_raw = parse_offer_raw(getattr(offer, "raw_json", None))
+            if prev_raw:
+                merged = dict(prev_raw)
+                merged.update(payload)
+                payload = stamp_marketplace_service_on_payload(
+                    merged, link=void_link or fields["link"] or offer_effective_link(offer)
+                )
+                raw_dump = json.dumps(payload, ensure_ascii=False)
             offer.raw_json = raw_dump
         else:
             offer = Offer(
@@ -1494,6 +1579,8 @@ async def save_all_offers_from_import(
                 by_link[lk_save] = offer
         if fields["link"]:
             ensure_offer_link_column(offer, fields["link"])
+        if canon:
+            by_email.setdefault(canon, offer)
         offers_saved += 1
 
         queued = list(picked[:max_emails_per_offer])
@@ -1567,6 +1654,7 @@ async def save_all_offers_from_import(
         if off.title or payload.get("item_title"):
             payload["item_title"] = str(off.title or payload.get("item_title") or "")
         payload["validated_emails"] = emails
+        stamp_marketplace_service_on_payload(payload, link=offer_effective_link(off))
         payload["offer_id"] = oid
         output_rows.append(payload)
         emitted_oids.add(oid)

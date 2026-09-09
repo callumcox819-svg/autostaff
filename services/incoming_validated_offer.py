@@ -41,14 +41,14 @@ def inbound_card_inbox_label(
 
 
 def offer_inbound_snapshot(offer: Offer) -> dict:
-    from services.offer_storage import marketplace_service_label_from_link
+    from services.offer_storage import marketplace_service_label_from_offer
 
     link = (offer_effective_link(offer) or "").strip()
     return {
         "product_title": (offer_effective_title(offer) or "").strip(),
         "offer_price": (offer_effective_price(offer, default="") or "").strip(),
         "photo_url": (offer_effective_photo(offer) or "").strip(),
-        "service_label": marketplace_service_label_from_link(link),
+        "service_label": marketplace_service_label_from_offer(offer) or "",
         "listing_url": link,
     }
 

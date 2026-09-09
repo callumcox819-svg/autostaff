@@ -23,13 +23,17 @@ def _snapshot_from_mailed_offer(
     offer: Offer,
     *,
     outgoing_mail_subject: str = "",
+    service_label_override: str = "",
 ) -> dict:
+    from services.offer_storage import marketplace_service_label_from_offer
+
     link = (offer_effective_link(offer) or "").strip()
+    service = (service_label_override or "").strip() or marketplace_service_label_from_offer(offer)
     return {
         "product_title": (offer_effective_title(offer) or "").strip(),
         "offer_price": (offer_effective_price(offer, default="") or "").strip(),
         "photo_url": (offer_effective_photo(offer) or "").strip(),
-        "service_label": _service_label_from_link(link) or "",
+        "service_label": service or _service_label_from_link(link) or "",
         "outgoing_mail_subject": (outgoing_mail_subject or "").strip(),
         "mailing_bound": True,
     }
@@ -88,11 +92,58 @@ def _finish_lead(
     how: str,
     *,
     outgoing_mail_subject: str = "",
+    service_label_override: str = "",
 ) -> tuple[Offer, str, str, dict]:
     link = (offer_effective_link(off) or "").strip()
-    snap = _snapshot_from_mailed_offer(off, outgoing_mail_subject=outgoing_mail_subject)
+    snap = _snapshot_from_mailed_offer(
+        off,
+        outgoing_mail_subject=outgoing_mail_subject,
+        service_label_override=service_label_override,
+    )
     snap["mailing_bound"] = True
     return off, link, how, snap
+
+
+async def _service_label_from_send_log(
+    session,
+    *,
+    user_id: int,
+    contact_email: str,
+    offer_id: int,
+) -> str:
+    """Сервис с той отправки /send, к которой привязан входящий ответ."""
+    from sqlalchemy import select
+
+    from models import MailingSendLog
+    from services.offer_storage import normalize_incoming_seller_email
+
+    contact = normalize_incoming_seller_email(contact_email) or (contact_email or "").strip().lower()
+    if not contact or not offer_id:
+        return ""
+    row = (
+        await session.execute(
+            select(MailingSendLog.service_label, MailingSendLog.mail_subject)
+            .where(MailingSendLog.user_id == int(user_id))
+            .where(MailingSendLog.offer_id == int(offer_id))
+            .where(MailingSendLog.recipient_email == contact)
+            .order_by(MailingSendLog.sent_at.desc(), MailingSendLog.id.desc())
+            .limit(1)
+        )
+    ).first()
+    if row and (row[0] or "").strip():
+        return str(row[0]).strip()
+    # fallback: любой лог по offer_id (переадресация yahoo и т.п.)
+    row2 = (
+        await session.execute(
+            select(MailingSendLog.service_label)
+            .where(MailingSendLog.user_id == int(user_id))
+            .where(MailingSendLog.offer_id == int(offer_id))
+            .where(MailingSendLog.service_label.isnot(None))
+            .order_by(MailingSendLog.sent_at.desc(), MailingSendLog.id.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    return str(row2 or "").strip()
 
 
 async def is_incoming_seller_lead(
@@ -206,7 +257,13 @@ async def resolve_offer_for_incoming_lead(
         inbox_email=inbox_email,
     )
     if off_pick:
-        return _finish_lead(off_pick, "validated_email_pick")
+        svc = await _service_label_from_send_log(
+            session,
+            user_id=int(user_id),
+            contact_email=contact_email,
+            offer_id=int(off_pick.id),
+        )
+        return _finish_lead(off_pick, "validated_email_pick", service_label_override=svc)
 
     if resolved_offer_id:
         from services.offer_matching import _load_offer
@@ -215,7 +272,13 @@ async def resolve_offer_for_incoming_lead(
             session, user_id=int(user_id), offer_id=int(resolved_offer_id)
         )
         if off and inbound_thread_binds_offer(subject, body_text, off):
-            return _finish_lead(off, "stored_offer_id")
+            svc = await _service_label_from_send_log(
+                session,
+                user_id=int(user_id),
+                contact_email=contact_email,
+                offer_id=int(off.id),
+            )
+            return _finish_lead(off, "stored_offer_id", service_label_override=svc)
 
     off_mail, how_mail = await _resolve_offer_from_mailing_thread(
         session,
@@ -226,7 +289,13 @@ async def resolve_offer_for_incoming_lead(
         inbox_email=inbox_email,
     )
     if off_mail:
-        return _finish_lead(off_mail, how_mail)
+        svc = await _service_label_from_send_log(
+            session,
+            user_id=int(user_id),
+            contact_email=contact_email,
+            offer_id=int(off_mail.id),
+        )
+        return _finish_lead(off_mail, how_mail, service_label_override=svc)
 
     from services.incoming_validated_offer import resolve_inbound_by_validated_email
 
@@ -238,7 +307,10 @@ async def resolve_offer_for_incoming_lead(
         body_text=(body_text or "").strip(),
     )
     if off and inbound_thread_binds_offer(subject, body_text, off):
-        return _finish_lead(off, how or "validated_email")
+        svc = await _service_label_from_send_log(
+            session, user_id=int(user_id), contact_email=contact_email, offer_id=int(off.id)
+        )
+        return _finish_lead(off, how or "validated_email", service_label_override=svc)
 
     prior_oid = await prior_resolved_offer_id_for_seller(
         session,
@@ -252,7 +324,10 @@ async def resolve_offer_for_incoming_lead(
             session, user_id=int(user_id), offer_id=int(prior_oid)
         )
         if off_p and inbound_thread_binds_offer(subject, body_text, off_p):
-            return _finish_lead(off_p, "prior_inbound_same_seller")
+            svc = await _service_label_from_send_log(
+                session, user_id=int(user_id), contact_email=contact_email, offer_id=int(off_p.id)
+            )
+            return _finish_lead(off_p, "prior_inbound_same_seller", service_label_override=svc)
 
     from services.offer_storage import find_offer_for_mailed_seller_reply
 
@@ -265,7 +340,10 @@ async def resolve_offer_for_incoming_lead(
         inbox_email=(inbox_email or "").strip(),
     )
     if off_fb and inbound_thread_binds_offer(subject, body_text, off_fb):
-        return _finish_lead(off_fb, "mailed_seller_reply")
+        svc = await _service_label_from_send_log(
+            session, user_id=int(user_id), contact_email=contact_email, offer_id=int(off_fb.id)
+        )
+        return _finish_lead(off_fb, "mailed_seller_reply", service_label_override=svc)
 
     from services.offer_matching import is_seller_reply_subject, subject_is_informative
     from services.offer_storage import find_offer_by_product_title_in_subject
@@ -278,6 +356,9 @@ async def resolve_offer_for_incoming_lead(
             contact_email=contact_email,
         )
         if off_subj and inbound_thread_binds_offer(subject, body_text, off_subj):
-            return _finish_lead(off_subj, "subject_title_db")
+            svc = await _service_label_from_send_log(
+                session, user_id=int(user_id), contact_email=contact_email, offer_id=int(off_subj.id)
+            )
+            return _finish_lead(off_subj, "subject_title_db", service_label_override=svc)
 
     return None, "", "", empty_snap

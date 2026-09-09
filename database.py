@@ -230,9 +230,15 @@ async def _ensure_mailing_send_log_table() -> None:
                     mail_subject VARCHAR,
                     from_account_email VARCHAR,
                     offer_email_id INTEGER,
+                    service_label VARCHAR(80),
                     sent_at TIMESTAMP WITHOUT TIME ZONE DEFAULT (NOW() AT TIME ZONE 'utc')
                 )
                 """
+            )
+        )
+        await conn.execute(
+            text(
+                "ALTER TABLE mailing_send_log ADD COLUMN IF NOT EXISTS service_label VARCHAR(80)"
             )
         )
         await conn.execute(

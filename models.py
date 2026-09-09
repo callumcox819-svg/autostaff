@@ -248,6 +248,7 @@ class MailingSendLog(Base):
     mail_subject = Column(String, nullable=True)
     from_account_email = Column(String, nullable=True)
     offer_email_id = Column(Integer, nullable=True)
+    service_label = Column(String(80), nullable=True)
     sent_at = Column(DateTime, default=datetime.utcnow, index=True)
 
     user = relationship("User")

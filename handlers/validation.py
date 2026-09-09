@@ -266,19 +266,25 @@ def _collect_raw_emails(raw: dict) -> list[str]:
 async def _load_json_from_telegram_doc(message: Message) -> Any:
     file = await message.bot.download(message.document)
     raw = file.read()
-    try:
-        return json.loads(raw.decode("utf-8"))
-    except Exception:
-        return json.loads(raw.decode("latin-1"))
+    for enc in ("utf-8-sig", "utf-8", "cp1251", "latin-1"):
+        try:
+            text = raw.decode(enc)
+            return json.loads(text)
+        except Exception:
+            continue
+    # последняя попытка — как есть
+    return json.loads(raw.decode("utf-8", errors="replace"))
 
 
 async def _load_text_from_telegram_doc(message: Message) -> str:
     file = await message.bot.download(message.document)
     raw = file.read()
-    try:
-        return raw.decode("utf-8")
-    except Exception:
-        return raw.decode("latin-1")
+    for enc in ("utf-8-sig", "utf-8", "cp1251", "latin-1"):
+        try:
+            return raw.decode(enc)
+        except Exception:
+            continue
+    return raw.decode("utf-8", errors="replace")
 
 
 # ===================== PARSERS =====================
@@ -347,14 +353,21 @@ def _normalize_items(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
 
 
 def _extract_items(data: Any) -> List[Dict[str, Any]]:
-    """Вытащить список офферов из произвольного JSON."""
+    """Вытащить список офферов из произвольного JSON (VOID / xproject void_parser)."""
     if isinstance(data, list):
-        return data
+        return [x for x in data if isinstance(x, dict)]
     if isinstance(data, dict):
-        if isinstance(data.get("items"), list):
-            return data["items"]
-        if isinstance(data.get("data"), dict) and isinstance(data["data"].get("items"), list):
-            return data["data"]["items"]
+        for key in ("items", "offers", "ads", "results", "data", "listings"):
+            val = data.get(key)
+            if isinstance(val, list):
+                return [x for x in val if isinstance(x, dict)]
+            if isinstance(val, dict):
+                nested = val.get("items") or val.get("offers") or val.get("ads")
+                if isinstance(nested, list):
+                    return [x for x in nested if isinstance(x, dict)]
+        # одиночный лот
+        if any(k in data for k in ("item_link", "item_title", "link", "title")):
+            return [data]
     return []
 
 
@@ -750,12 +763,13 @@ async def _run_validation_pipeline_inner(
     eligible = int(live_stats.get("offers_eligible") or 0)
 
     append_to_active_mailing = False
+    total_in_db = 0
 
     async with db_session() as session:
         user = await get_or_create_user(session, tg_id)
 
         append_to_active_mailing = await is_user_mailing_active(tg_id)
-        # Не сносим offers: тот же item_link = тот же id (фото/ссылка после деплоя).
+        # Не сносим offers: тот же item_link = тот же id; новый JSON только добавляет/обновляет.
 
         offers_saved, offers_with_email, saved_email_count, output = await save_all_offers_from_import(
             session,
@@ -766,6 +780,14 @@ async def _run_validation_pipeline_inner(
             max_emails_per_offer=MAX_EMAILS_PER_OFFER,
         )
         await session.commit()
+
+        from sqlalchemy import func as sql_func
+
+        total_in_db = (
+            await session.execute(
+                select(sql_func.count(Offer.id)).where(Offer.user_id == user.id)
+            )
+        ).scalar() or 0
 
         from services.seller_blacklist import (
             add_seller_name_blacklist_bulk,
@@ -778,8 +800,6 @@ async def _run_validation_pipeline_inner(
             await session.commit()
 
         if append_to_active_mailing and saved_email_count > 0:
-            from sqlalchemy import func as sql_func
-
             pending_now = (
                 await session.execute(
                     select(sql_func.count(OfferEmail.id))
@@ -814,7 +834,9 @@ async def _run_validation_pipeline_inner(
         if append_to_active_mailing
         else ""
     )
-    skip_note = ""
+    skip_note = (
+        f" · в БД всего лотов: <b>{int(total_in_db)}</b> (накопительно, не сбрасывается)"
+    )
 
     live_stats["phase"] = "export"
     try:

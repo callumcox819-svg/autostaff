@@ -197,8 +197,9 @@ async def record_mailing_send(
     mail_subject: str = "",
     from_account_email: str = "",
     offer_email_id: int | None = None,
+    service_label: str = "",
 ) -> None:
-    """Записать: этому email ушло письмо по конкретному offer_id."""
+    """Записать: этому email ушло письмо по конкретному offer_id (+ сервис площадки)."""
     from services.offer_storage import normalize_incoming_seller_email
 
     rcpt = normalize_incoming_seller_email(recipient_email) or _canon_recipient(recipient_email)
@@ -211,6 +212,7 @@ async def record_mailing_send(
         mail_subject=(mail_subject or "").strip()[:500] or None,
         from_account_email=(from_account_email or "").strip().lower()[:255] or None,
         offer_email_id=int(offer_email_id) if offer_email_id else None,
+        service_label=(service_label or "").strip()[:80] or None,
     )
     session.add(row)
 

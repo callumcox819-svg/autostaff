@@ -139,8 +139,31 @@ async def _record_successful_send(
     from_account_email: str,
 ) -> bool:
     from services.mailing_send_log import record_mailing_send
+    from services.offer_storage import (
+        append_contact_email_to_offer_raw,
+        live_user_offer,
+        marketplace_service_label_from_offer,
+        parse_offer_raw,
+        stamp_marketplace_service_on_payload,
+        offer_effective_link,
+    )
+    import json
 
     try:
+        offer = await live_user_offer(session, user_id=int(user_id), offer_id=int(tgt.offer_id))
+        service_label = marketplace_service_label_from_offer(offer) if offer else ""
+        if offer and not service_label:
+            raw = parse_offer_raw(getattr(offer, "raw_json", None))
+            stamp_marketplace_service_on_payload(raw, link=offer_effective_link(offer))
+            offer.raw_json = json.dumps(raw, ensure_ascii=False)
+            service_label = marketplace_service_label_from_offer(offer)
+        elif offer and service_label:
+            # закрепить service в raw_json на момент отправки
+            raw = parse_offer_raw(getattr(offer, "raw_json", None))
+            if not str(raw.get("service_label") or raw.get("service") or "").strip():
+                stamp_marketplace_service_on_payload(raw, link=offer_effective_link(offer))
+                offer.raw_json = json.dumps(raw, ensure_ascii=False)
+
         await record_mailing_send(
             session,
             user_id=int(user_id),
@@ -149,9 +172,8 @@ async def _record_successful_send(
             mail_subject=subject,
             from_account_email=from_account_email,
             offer_email_id=int(tgt.id),
+            service_label=service_label,
         )
-        from services.offer_storage import append_contact_email_to_offer_raw
-
         await append_contact_email_to_offer_raw(
             session,
             offer_id=int(tgt.offer_id),

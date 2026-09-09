@@ -6,11 +6,13 @@ import re
 import unicodedata
 from typing import Any
 
-# Слова короче 4 букв не участвуют в first.last; ник / одно слово — ≥5 букв.
+# Слова короче 4 букв не участвуют в first.last.
+# Ник с цифрой ≥5 букв; одно слово без цифр ≥8 (mariasto), частые имена — нет.
 MIN_NAME_TOKEN_LEN = 4
 MIN_SELLER_LETTERS = 5
+MIN_SINGLE_LOCAL_NO_DIGIT = 8
 
-# Однословные local-part: бренды, города NL, мусор — не пробиваем.
+# Однословные local-part: бренды, города NL, бизнес-слова — не пробиваем.
 _BLOCKED_SINGLE_LOCALS = frozenset(
     {
         # бренды / авто / магазин
@@ -30,6 +32,8 @@ _BLOCKED_SINGLE_LOCALS = frozenset(
         "motor",
         "automotive",
         "autobedrijf",
+        "autogroep",
+        "autocentrum",
         "dealer",
         "dealers",
         "parts",
@@ -41,6 +45,8 @@ _BLOCKED_SINGLE_LOCALS = frozenset(
         "services",
         "company",
         "handel",
+        "handelsonderneming",
+        "onderneming",
         "verkoop",
         "verhuur",
         "online",
@@ -60,6 +66,48 @@ _BLOCKED_SINGLE_LOCALS = frozenset(
         "particulier",
         "hobby",
         "hobbyist",
+        # бизнес / роль / «магазинное» слово как ник
+        "specialist",
+        "juweliers",
+        "juwelier",
+        "boekhandel",
+        "kantoor",
+        "products",
+        "product",
+        "used",
+        "groep",
+        "group",
+        "centrum",
+        "bedrijf",
+        "design",
+        "meubilair",
+        "transport",
+        "cars",
+        "car",
+        "exclusive",
+        "xclusive",
+        "speelgoed",
+        "kinderspeelgoed",
+        "tweewielers",
+        "boomkwekerij",
+        "kwekerij",
+        "mangrove",
+        "schuurtje",
+        "tropisch",
+        "ruimt",
+        "lifestyle",
+        "benelux",
+        "alarmering",
+        "personenalarmering",
+        "designmeubilair",
+        "waalwijk",
+        "hoofddorp",
+        "katwijk",
+        "leudal",
+        "brabant",
+        "zuithof",
+        "biemans",
+        "digo",
         # частые города NL (как ник на MP)
         "amsterdam",
         "rotterdam",
@@ -93,8 +141,385 @@ _BLOCKED_SINGLE_LOCALS = frozenset(
         "oss",
         "emmen",
         "deventer",
+        "borne",
     }
 )
+
+# Частые имена: как единственный local на gmail/hotmail SMTP почти всегда врёт.
+_COMMON_FIRST_NAME_LOCALS = frozenset(
+    {
+        "jan",
+        "henk",
+        "hans",
+        "piet",
+        "kees",
+        "jos",
+        "rob",
+        "tim",
+        "tom",
+        "bas",
+        "rick",
+        "mark",
+        "paul",
+        "peter",
+        "john",
+        "mike",
+        "anna",
+        "anne",
+        "emma",
+        "lisa",
+        "sara",
+        "sarah",
+        "maria",
+        "marie",
+        "laura",
+        "linda",
+        "susan",
+        "sandra",
+        "monique",
+        "ingrid",
+        "anita",
+        "carla",
+        "diana",
+        "ellen",
+        "irene",
+        "joyce",
+        "karen",
+        "nancy",
+        "patricia",
+        "angela",
+        "amanda",
+        "andrea",
+        "albert",
+        "alexander",
+        "alex",
+        "andrew",
+        "anthony",
+        "antonio",
+        "arthur",
+        "astrid",
+        "barbara",
+        "benjamin",
+        "bernard",
+        "bert",
+        "brian",
+        "bruce",
+        "bryan",
+        "carl",
+        "carlos",
+        "carol",
+        "caroline",
+        "catherine",
+        "charles",
+        "chris",
+        "christian",
+        "christina",
+        "christine",
+        "christopher",
+        "claire",
+        "clara",
+        "claude",
+        "claus",
+        "colin",
+        "daniel",
+        "danny",
+        "david",
+        "dennis",
+        "derek",
+        "diane",
+        "dirk",
+        "donald",
+        "douglas",
+        "edward",
+        "edwin",
+        "eric",
+        "erik",
+        "ernest",
+        "eugene",
+        "eva",
+        "eve",
+        "felix",
+        "fernando",
+        "francis",
+        "frank",
+        "franz",
+        "fred",
+        "frederick",
+        "gabriel",
+        "gary",
+        "george",
+        "gerald",
+        "giovanni",
+        "glenn",
+        "gordon",
+        "gregory",
+        "harold",
+        "harry",
+        "harvey",
+        "helen",
+        "helmut",
+        "henry",
+        "herman",
+        "howard",
+        "hugo",
+        "ian",
+        "ivan",
+        "jack",
+        "jacob",
+        "jacques",
+        "james",
+        "jason",
+        "jeffrey",
+        "jennifer",
+        "jeremy",
+        "jerry",
+        "jesse",
+        "jessica",
+        "jim",
+        "jimmy",
+        "joe",
+        "joel",
+        "johan",
+        "johannes",
+        "john",
+        "johnny",
+        "jonathan",
+        "jordan",
+        "jose",
+        "joseph",
+        "josh",
+        "joshua",
+        "juan",
+        "judith",
+        "julia",
+        "julian",
+        "julie",
+        "justin",
+        "karl",
+        "kate",
+        "katherine",
+        "kathleen",
+        "keith",
+        "kelly",
+        "kenneth",
+        "kevin",
+        "kim",
+        "kyle",
+        "larry",
+        "lawrence",
+        "lee",
+        "leo",
+        "leon",
+        "leonard",
+        "leroy",
+        "leslie",
+        "lewis",
+        "louis",
+        "lucas",
+        "luis",
+        "luke",
+        "manuel",
+        "marc",
+        "marcel",
+        "marco",
+        "marcus",
+        "margaret",
+        "maria",
+        "marianne",
+        "marie",
+        "mario",
+        "marion",
+        "mark",
+        "martin",
+        "martina",
+        "marvin",
+        "mary",
+        "matthew",
+        "maureen",
+        "maurice",
+        "max",
+        "megan",
+        "melissa",
+        "michael",
+        "michelle",
+        "miguel",
+        "mike",
+        "mohamed",
+        "mohammed",
+        "monica",
+        "nathan",
+        "neil",
+        "nicholas",
+        "nick",
+        "nicole",
+        "nina",
+        "norman",
+        "oliver",
+        "olivia",
+        "oscar",
+        "patrick",
+        "paul",
+        "paula",
+        "pedro",
+        "peter",
+        "philip",
+        "philippe",
+        "phillip",
+        "pierre",
+        "ralph",
+        "ramon",
+        "randy",
+        "raymond",
+        "rebecca",
+        "rene",
+        "ricardo",
+        "richard",
+        "rick",
+        "robert",
+        "robin",
+        "roger",
+        "roland",
+        "ronald",
+        "roy",
+        "ruben",
+        "russell",
+        "ruth",
+        "ryan",
+        "samuel",
+        "sandra",
+        "santiago",
+        "scott",
+        "sean",
+        "sebastian",
+        "sergio",
+        "sharon",
+        "shirley",
+        "simon",
+        "sophia",
+        "stefan",
+        "stephanie",
+        "stephen",
+        "steve",
+        "steven",
+        "stuart",
+        "susan",
+        "suzanne",
+        "thomas",
+        "timothy",
+        "tina",
+        "todd",
+        "tony",
+        "travis",
+        "tyler",
+        "victor",
+        "victoria",
+        "vincent",
+        "virginia",
+        "walter",
+        "wayne",
+        "wendy",
+        "william",
+        "willie",
+        "willy",
+        "wilson",
+        "wim",
+        "wolfgang",
+        "zachary",
+        # NL частые
+        "anneke",
+        "annelot",
+        "anneloes",
+        "angeline",
+        "anine",
+        "arnoud",
+        "aidan",
+        "joost",
+        "jeroen",
+        "marieke",
+        "ingrid",
+        "maarten",
+        "sander",
+        "bram",
+        "thijs",
+        "daan",
+        "sem",
+        "lucas",
+        "finn",
+        "noah",
+        "liam",
+        "milan",
+        "luuk",
+        "jesse",
+        "ruben",
+        "stijn",
+        "niels",
+        "koen",
+        "bart",
+        "dirk",
+        "gerrit",
+        "hendrik",
+        "willem",
+        "cornelis",
+        "johannes",
+        "pieter",
+        "franciscus",
+        "antonius",
+        "marinus",
+        "adrianus",
+        "wilhelmus",
+        "petronella",
+        "johanna",
+        "maria",
+        "anna",
+        "cornelia",
+        "wilhelmina",
+        "hendrika",
+        "catharina",
+        "geertruida",
+        "elizabeth",
+        "alida",
+        "joanna",
+        "christina",
+        "margaretha",
+        "andrea",
+        "albert",
+        "arthur",
+        "astrid",
+        "berry",
+        "bruno",
+        "eddy",
+        "ella",
+        "gast",
+        "inge",
+        "joana",
+        "jutte",
+        "nena",
+        "nikki",
+        "reiss",
+        "roos",
+        "tamara",
+        "toine",
+        "vic",
+        "wies",
+        "frans",
+        "karin",
+        "diana",
+        "hans",
+        "henk",
+        "jan",
+        "mar",
+    }
+)
+
+
+def is_business_token(token: str) -> bool:
+    s = re.sub(r"[^a-z0-9]", "", (token or "").lower())
+    return bool(s) and (s in _BLOCKED_SINGLE_LOCALS or is_blocked_single_local(s))
+
+
+def is_common_first_name_local(local: str) -> bool:
+    s = re.sub(r"[^a-z]", "", (local or "").lower())
+    return s in _COMMON_FIRST_NAME_LOCALS
 
 
 def is_blocked_single_local(local: str) -> bool:
@@ -121,7 +546,10 @@ def is_blocked_single_local(local: str) -> bool:
 
 
 def is_usable_single_local(local: str, *, min_letters: int = MIN_SELLER_LETTERS) -> bool:
-    """Одно слово как email-local: mariasto ок; jan/auto/amersfoort — нет."""
+    """
+    Одно слово как email-local.
+    С цифрой (ник): ≥5 букв. Без цифр: ≥8 (mariasto), не бренд/город/частое имя.
+    """
     raw = (local or "").strip().lower()
     if not raw or "." in raw or "+" in raw:
         return False
@@ -129,11 +557,27 @@ def is_usable_single_local(local: str, *, min_letters: int = MIN_SELLER_LETTERS)
     if not s:
         return False
     letters = sum(1 for c in s if c.isalpha())
-    if letters < int(min_letters):
-        return False
+    has_digit = any(c.isdigit() for c in s)
     if is_blocked_single_local(s):
         return False
+    if has_digit:
+        return letters >= int(min_letters)
+    # Без цифр — только длинные уникальные ники/имена, не sanne/petra/alexander
+    if letters < MIN_SINGLE_LOCAL_NO_DIGIT:
+        return False
+    if is_common_first_name_local(s):
+        return False
     return True
+
+
+def person_tokens_for_email(name: str) -> list[str]:
+    """Токены похожие на имя/фамилию (без shop/city/business)."""
+    out: list[str] = []
+    for t in pick_name_tokens_for_email(name):
+        if is_business_token(t) or is_blocked_single_local(t):
+            continue
+        out.append(t)
+    return out
 
 
 def seller_name_from_item(item: dict[str, Any]) -> str:
@@ -298,14 +742,14 @@ def pick_handle_locals(name: str) -> list[str]:
 
 
 def seller_name_eligible_for_validation(name: str, *, min_token_len: int = MIN_NAME_TOKEN_LEN) -> bool:
-    """Имя подходит: ник ≥5 букв (не бренд/город), слово ≥5, или пара слов (Andrey Porstad)."""
+    """Имя подходит: ник ≥5 (не бренд/город/частое имя), или пара person-токенов."""
     if seller_name_too_short(name):
         return False
     if pick_handle_locals(name):
         return True
-    tokens = pick_name_tokens(name, min_len=min_token_len)
-    if len(tokens) >= 2:
+    person = person_tokens_for_email(name)
+    if len(person) >= 2:
         return True
-    if len(tokens) == 1 and is_usable_single_local(tokens[0]):
+    if len(person) == 1 and is_usable_single_local(person[0]):
         return True
-    return len(pick_name_tokens(name, min_len=2)) >= 2
+    return False

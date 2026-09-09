@@ -31,11 +31,18 @@ class SellerDedupTests(unittest.TestCase):
         self.assertFalse(is_usable_single_local("auto"))
         self.assertFalse(is_usable_single_local("audi"))
         self.assertFalse(is_usable_single_local("amersfoort"))
-        self.assertTrue(is_usable_single_local("mariasto"))
+        self.assertFalse(is_usable_single_local("sanne"))
+        self.assertFalse(is_usable_single_local("petra"))
+        self.assertFalse(is_usable_single_local("alexander"))  # частое имя
+        self.assertFalse(is_usable_single_local("specialist"))
+        self.assertTrue(is_usable_single_local("mariasto"))  # 8 букв, не из частых имён
+        self.assertTrue(is_usable_single_local("semiuel2421"))
+        self.assertTrue(is_usable_single_local("helpman1"))
 
         self.assertFalse(seller_name_eligible_for_validation("Jan"))
         self.assertFalse(seller_name_eligible_for_validation("Auto"))
         self.assertFalse(seller_name_eligible_for_validation("Amersfoort"))
+        self.assertFalse(seller_name_eligible_for_validation("KINDERSPEELGOED SPECIALIST"))
         self.assertTrue(seller_name_eligible_for_validation("mariasto"))
 
         self.assertEqual(
@@ -50,14 +57,19 @@ class SellerDedupTests(unittest.TestCase):
             _make_local_part_variants("Amersfoort", require_first_and_last=False),
             [],
         )
+        self.assertEqual(
+            _make_local_part_variants("KINDERSPEELGOED SPECIALIST", require_first_and_last=False),
+            [],
+        )
         self.assertIn(
             "mariasto",
             _make_local_part_variants("mariasto", require_first_and_last=False),
         )
-        # короткие имя/фамилия по отдельности не пробиваем, first.last — да
         vs = _make_local_part_variants("Jan de Vries", require_first_and_last=False)
         self.assertIn("jan.vries", vs)
+        self.assertIn("janvries", vs)
         self.assertNotIn("jan", vs)
+        self.assertNotIn("vries", vs)
 
     def test_skip_already_in_db_is_not_blacklist(self):
         from services.validemail_validator import classify_json_seller_skip

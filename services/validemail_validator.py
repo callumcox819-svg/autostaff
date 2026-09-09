@@ -26,8 +26,10 @@ from utils.ui_emoji import html_emoji
 from services.seller_name import (
     MIN_NAME_TOKEN_LEN,
     MIN_SELLER_LETTERS,
+    is_business_token,
     is_usable_single_local,
     normalize_seller_name,
+    person_tokens_for_email,
     pick_handle_locals,
     pick_name_tokens,
     pick_name_tokens_for_email,
@@ -128,9 +130,8 @@ def _make_local_part_from_name(name: str, *, require_first_and_last: bool) -> st
 
 def _make_local_part_variants(name: str, *, require_first_and_last: bool) -> list[str]:
     """
-    Логины из имени продавца: Maria Johansen → maria.johansen; Martuis2 → martuis2.
-    Приоритет: ник (Semiuel2421) или first.last (Sam Day → sam.day), затем firstlast.
-    Однословные <5 букв и бренды/города не пробиваем.
+    Логины: Maria Johansen → maria.johansen / mariajohansen; ник mariasto2 → mariasto2.
+    Без голых maria@/henk@ и без shop-слов (specialist@, juweliers@).
     """
     out: list[str] = []
     seen: set[str] = set()
@@ -142,9 +143,13 @@ def _make_local_part_variants(name: str, *, require_first_and_last: bool) -> lis
         local = re.sub(r"\.+", ".", local).strip(".")
         if not local or local in seen:
             return
-        # одно слово — только ≥5 букв и не бренд/город
         if "." not in local and "_" not in local and "+" not in local:
             if not is_usable_single_local(local):
+                return
+        else:
+            # составной: обе стороны не должны быть чисто business
+            chunks = re.split(r"[._]", local)
+            if chunks and all(is_business_token(c) for c in chunks if c):
                 return
         seen.add(local)
         out.append(local)
@@ -155,7 +160,7 @@ def _make_local_part_variants(name: str, *, require_first_and_last: bool) -> lis
             _add(h)
         return out
 
-    tokens = _pick_alpha_tokens(name)
+    tokens = person_tokens_for_email(name)
     if require_first_and_last and len(tokens) < 2:
         for h in handles:
             _add(h)
@@ -177,17 +182,12 @@ def _make_local_part_variants(name: str, *, require_first_and_last: bool) -> lis
 
     for h in handles:
         _add(h)
-    # Только составные логины — одиночные maria@/henk@ SMTP часто врёт.
+    # Только надёжные составные — SMTP меньше врёт
     _add(f"{first}.{last}")
     _add(f"{first}{last}")
-    if len(first) >= 2 and len(last) >= 2:
-        _add(f"{first[0]}{last}")
+    if len(first) >= 2 and len(last) >= 3:
         _add(f"{first[0]}.{last}")
-    _add(f"{first}_{last}")
-    if len(last) >= 3 and len(first) >= 1:
-        _add(f"{last}{first[0]}")
-    if len(last) >= 3:
-        _add(f"{last}.{first}")
+        _add(f"{first[0]}{last}")
     return out
 
 

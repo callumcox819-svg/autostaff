@@ -163,6 +163,9 @@ def settings_menu_kb(flags: dict[str, bool]) -> InlineKeyboardMarkup:
                 inline_button("presets", "Пресеты", callback_data="presets_menu"),
             ],
             [
+                inline_button("presets", "Темы писем", callback_data="mail_subjects"),
+            ],
+            [
                 toggle_button(flags.get("smart_mode", False), "Умный режим", "ref_toggle:smart_mode"),
                 inline_button("presets", "Умные пресеты", callback_data="smart_presets_menu"),
             ],
@@ -608,70 +611,34 @@ async def ref_open_commands(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
 
 # =========================
-# Темы (OFFER)
+# Темы писем → handlers.mail_subjects
 # =========================
 
-@router.callback_query(F.data == "themes_menu")
-async def themes_menu(callback: CallbackQuery, state: FSMContext):
-    await state.clear()
-    from html import escape
-
-    from services.subject_offer import global_subject_template, render_subject_with_offer
-
-    tpl = global_subject_template()
-    preview = render_subject_with_offer(tpl, "Velo Zürich")
-    txt = (
-        f"{html_emoji('pin')} <b>Тема рассылки (/send)</b>\n\n"
-        "При рассылке — <b>15 вариантов</b> тем (DE, как у покупателя), "
-        "в каждом подставляется название товара (<code>OFFER</code>).\n"
-        "Отключить ротацию: <code>MAILING_ROTATE_SUBJECT=0</code> — тогда только шаблон ниже.\n\n"
-        "<code>OFFER</code> или <code>{{OFFER}}</code> — название из валид. объявления.\n\n"
-        f"Шаблон (если ротация выкл.): <code>{escape(tpl)}</code>\n"
-        f"Пример: <code>{escape(preview)}</code>\n\n"
-        "<code>GLOBAL_SUBJECT_TEMPLATE</code> в Railway / .env."
-    )
-    kb = InlineKeyboardMarkup(
-        inline_keyboard=[_back_kb("settings_open").inline_keyboard[0]],
-    )
-    await _safe_send(callback.message.edit_text(txt, reply_markup=kb, parse_mode="HTML"))
-    await callback.answer()
-
-
 @router.callback_query(F.data.startswith("themes_preset:"))
-async def themes_preset_set(callback: CallbackQuery, state: FSMContext) -> None:
-    await callback.answer(
-        "Тема рассылки задаётся глобально: GLOBAL_SUBJECT_TEMPLATE на сервере.",
-        show_alert=True,
-    )
-    await themes_menu(callback, state)
+async def themes_legacy_preset(callback: CallbackQuery, state: FSMContext) -> None:
+    from handlers.mail_subjects import mail_subjects_open
 
-@router.callback_query(F.data == "themes_edit")
-async def themes_edit(callback: CallbackQuery, state: FSMContext):
-    await state.clear()
-    await callback.answer(
-        "Тема рассылки — только GLOBAL_SUBJECT_TEMPLATE на сервере (Railway).",
-        show_alert=True,
-    )
-    await themes_menu(callback, state)
+    await mail_subjects_open(callback, state)
+
+
+@router.callback_query(F.data.in_({"themes_edit", "themes_clear"}))
+async def themes_legacy_redirect(callback: CallbackQuery, state: FSMContext) -> None:
+    from handlers.mail_subjects import mail_subjects_open
+
+    await mail_subjects_open(callback, state)
 
 
 @router.message(_SettingsInput.subject_template)
 async def themes_set(message: Message, state: FSMContext):
     await state.clear()
+    from handlers.mail_subjects import build_mail_subjects_view
+
+    text, kb = await build_mail_subjects_view(message.from_user.id, 0)
     await message.answer(
-        f"{html_emoji('info')} Тема рассылки задаётся глобально: "
-        "<code>GLOBAL_SUBJECT_TEMPLATE</code> в Railway (по умолчанию <code>Re: OFFER</code>).",
+        f"{html_emoji('info')} Список тем — в меню «Темы писем».\n\n{text}",
+        reply_markup=kb,
         parse_mode="HTML",
     )
-
-
-@router.callback_query(F.data == "themes_clear")
-async def themes_clear(callback: CallbackQuery, state: FSMContext):
-    await callback.answer(
-        "Тема рассылки — только GLOBAL_SUBJECT_TEMPLATE на сервере.",
-        show_alert=True,
-    )
-    await themes_menu(callback, state)
 
 # =========================
 # Тема для HTML (реально сохраняем html_theme)

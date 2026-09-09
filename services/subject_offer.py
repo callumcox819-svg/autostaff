@@ -79,9 +79,10 @@ def pick_mailing_subject(offer_title: str) -> str:
 
 
 async def mailing_subject_for_send(session, user, offer_title: str, **_) -> str:
-    """Совместимость: session/user игнорируются — тема только глобальная."""
-    del session, user
-    return pick_mailing_subject(offer_title)
+    """Тема /send: список пользователя (random/fixed) или глобальный fallback."""
+    from services.mailing_subjects import mailing_subject_for_user as _user_subj
+
+    return await _user_subj(session, user, offer_title)
 
 
 def subject_for_offer(offer_title: str, *, template: str | None = None) -> str:
@@ -90,13 +91,16 @@ def subject_for_offer(offer_title: str, *, template: str | None = None) -> str:
 
 
 async def resolve_mailing_subject_template(session, user) -> str:
-    del session, user
-    return global_subject_template()
+    from services.mailing_subjects import resolve_user_subject_template
+
+    tpl = await resolve_user_subject_template(session, user)
+    return tpl or global_subject_template()
 
 
 async def mailing_subject_for_user(session, user, offer_title: str) -> str:
-    del session, user
-    return pick_mailing_subject(offer_title)
+    from services.mailing_subjects import mailing_subject_for_user as _user_subj
+
+    return await _user_subj(session, user, offer_title)
 
 
 def _mailing_subject_templates() -> tuple[str, ...]:

@@ -265,9 +265,9 @@ async def _build_test_message(
         item_title = (row[0] if row else "") or "OFFER"
 
     from services.mailing_deliverability import finalize_inbox_mail
-    from services.subject_offer import pick_mailing_subject
+    from services.subject_offer import mailing_subject_for_user
 
-    subject = pick_mailing_subject(item_title or "")
+    subject = await mailing_subject_for_user(session, user, item_title or "")
 
     price = (getattr(offer, "price", "") or "").strip() if offer else ""
     link = (getattr(offer, "link", "") or "").strip() if offer else ""

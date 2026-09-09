@@ -112,9 +112,12 @@ def normalize_aqua_api_key(value: str | None) -> str:
 
 
 def get_global_aqua_team_key() -> str:
-    """Ключ команды — TEAM_API_KEY / GAG_TEAM_API_KEY (legacy)."""
+    """X-Team-Key глобально (Railway Variables) для всех пользователей."""
     raw = (
-        os.getenv("TEAM_API_KEY")
+        os.getenv("GOO_TEAM_KEY")
+        or os.getenv("EVOLEUM_TEAM_KEY")
+        or os.getenv("X_TEAM_KEY")
+        or os.getenv("TEAM_API_KEY")
         or os.getenv("GAG_TEAM_API_KEY")
         or os.getenv("AQUA_TEAM_API_KEY")
         or getattr(config, "GAG_TEAM_API_KEY", None)

@@ -74,6 +74,11 @@ async def aqua_generate_for_offer(
             f"Не задан API-ключ для <b>{cfg.label}</b>. "
             f"{menu_path(('settings', ''), ('key', 'Команды API'))} → {cfg.label}."
         )
+    if not (cfg.team_key or "").strip():
+        raise AquaError(
+            "Не задан Team-ключ на сервере "
+            "(Railway Variables: <code>GOO_TEAM_KEY</code> / <code>TEAM_API_KEY</code>)."
+        )
     if not (cfg.profile_id or "").strip():
         raise AquaError(
             f"Не задан Profile ID для <b>{cfg.label}</b>. "

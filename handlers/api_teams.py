@@ -14,8 +14,10 @@ from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMar
 from database import Session
 from services.api_teams import (
     API_TEAMS,
+    LINK_TYPES,
     get_selected_team_id,
     get_team_config,
+    link_type_label,
     set_selected_team_id,
     set_team_field,
     team_label,
@@ -26,6 +28,7 @@ from utils.ui_emoji import (
     html_emoji,
     inline_button,
     toast,
+    toggle_button,
     unicode_fallback,
 )
 
@@ -63,26 +66,65 @@ def _teams_list_text(selected_id: str, *, page: str = "1/1") -> str:
 def _team_detail_kb(team_id: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [inline_button("settings", "API-ключ", callback_data=f"api_team_edit:{team_id}:api_key")],
-            [inline_button("settings", "Team-ключ", callback_data=f"api_team_edit:{team_id}:team_key")],
-            [inline_button("settings", "Код сервиса", callback_data=f"api_team_edit:{team_id}:service_code")],
-            [inline_button("settings", "Profile ID", callback_data=f"api_team_edit:{team_id}:profile_id")],
-            [inline_button("settings", "Тип (card/lk)", callback_data=f"api_team_edit:{team_id}:link_type")],
+            [inline_button("key", "API-ключ", callback_data=f"api_team_edit:{team_id}:api_key")],
+            [inline_button("wrench", "Код сервиса", callback_data=f"api_team_edit:{team_id}:service_code")],
+            [inline_button("profile", "Profile ID", callback_data=f"api_team_edit:{team_id}:profile_id")],
+            [inline_button("link", "Тип ссылки", callback_data=f"api_team_type_menu:{team_id}")],
             [back_inline("api_teams")],
         ]
     )
 
 
+def _mask_secret(value: str) -> str:
+    v = (value or "").strip()
+    if not v:
+        return "—"
+    if len(v) <= 8:
+        return "•" * len(v)
+    return f"{v[:4]}…{v[-4:]}"
+
+
 def _team_detail_text(cfg) -> str:
-    key_show = (cfg.api_key or "—").strip() or "—"
-    team_show = (cfg.team_key or "—").strip() or "—"
+    team_ok = "задан на сервере" if (cfg.team_key or "").strip() else "не задан (Railway Variables)"
     return (
         f"{html_emoji('key')} <b>{html.escape(cfg.label)}</b>\n\n"
-        f"<b>API-ключ:</b> <code>{html.escape(key_show)}</code>\n"
-        f"<b>Team-ключ:</b> <code>{html.escape(team_show)}</code>\n"
+        f"<b>API-ключ:</b> <code>{html.escape(_mask_secret(cfg.api_key))}</code>\n"
+        f"<b>Team-ключ:</b> {html.escape(team_ok)}\n"
         f"<b>Код сервиса:</b> <code>{html.escape(cfg.service_code or '—')}</code>\n"
         f"<b>Profile ID:</b> <code>{html.escape(cfg.profile_id or '—')}</code>\n"
-        f"<b>Тип:</b> <code>{html.escape(cfg.link_type or 'lk')}</code>"
+        f"<b>Тип ссылки:</b> <b>{html.escape(link_type_label(cfg.link_type or 'lk'))}</b>"
+    )
+
+
+def _link_type_kb(team_id: str, current: str) -> InlineKeyboardMarkup:
+    rows: list[list[InlineKeyboardButton]] = []
+    for tid, label, emoji_key in LINK_TYPES:
+        on = tid == current
+        caption = f"{label}" + (" ✓" if on else "")
+        if on:
+            rows.append(
+                [toggle_button(True, caption, f"api_team_type:{team_id}:{tid}")]
+            )
+        else:
+            rows.append(
+                [
+                    inline_button(
+                        emoji_key,
+                        caption,
+                        callback_data=f"api_team_type:{team_id}:{tid}",
+                    )
+                ]
+            )
+    rows.append([back_inline(f"api_team_open:{team_id}")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def _link_type_text(team_id: str, current: str) -> str:
+    return (
+        f"{html_emoji('link')} <b>Тип ссылки</b>\n"
+        f"Команда: <b>{html.escape(team_label(team_id))}</b>\n\n"
+        f"Какая ссылка будет генерироваться:\n"
+        f"сейчас — <b>{html.escape(link_type_label(current))}</b>"
     )
 
 
@@ -142,11 +184,46 @@ async def api_team_open(callback: CallbackQuery, state: FSMContext) -> None:
 
 _FIELD_TITLES = {
     "api_key": "API-ключ",
-    "team_key": "Team-ключ (X-Team-Key)",
     "service_code": "Код сервиса",
     "profile_id": "Profile ID",
-    "link_type": "Тип (card или lk)",
 }
+
+
+@router.callback_query(F.data.startswith("api_team_type_menu:"))
+async def api_team_type_menu(callback: CallbackQuery, state: FSMContext) -> None:
+    await state.clear()
+    tid = (callback.data or "").split(":", 1)[-1].strip()
+    async with Session() as session:
+        user = await get_or_create_user(session, callback.from_user.id)
+        cfg = await get_team_config(session, user, tid)
+    if cfg.team_id not in {t for t, _ in API_TEAMS}:
+        await callback.answer(toast("fail", "Неизвестная команда"), show_alert=True)
+        return
+    cur = cfg.link_type or "lk"
+    await _edit(callback, _link_type_text(tid, cur), _link_type_kb(tid, cur))
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("api_team_type:"))
+async def api_team_type_set(callback: CallbackQuery, state: FSMContext) -> None:
+    await state.clear()
+    parts = (callback.data or "").split(":")
+    if len(parts) != 3:
+        await callback.answer()
+        return
+    _, tid, link_type = parts
+    async with Session() as session:
+        user = await get_or_create_user(session, callback.from_user.id)
+        try:
+            await set_team_field(session, user, tid, "link_type", link_type)
+            await session.commit()
+            cfg = await get_team_config(session, user, tid)
+        except ValueError as e:
+            await callback.answer(toast("fail", str(e)[:180]), show_alert=True)
+            return
+    cur = cfg.link_type or "lk"
+    await _edit(callback, _link_type_text(tid, cur), _link_type_kb(tid, cur))
+    await callback.answer(toast("ok", f"Тип: {link_type_label(cur)}"))
 
 
 @router.callback_query(F.data.startswith("api_team_edit:"))
@@ -156,15 +233,17 @@ async def api_team_edit(callback: CallbackQuery, state: FSMContext) -> None:
         await callback.answer()
         return
     _, tid, field = parts
+    if field == "link_type":
+        # совместимость со старыми callback → меню кнопок
+        callback.data = f"api_team_type_menu:{tid}"
+        return await api_team_type_menu(callback, state)
     if field not in _FIELD_TITLES:
         await callback.answer(toast("fail", "Поле"), show_alert=True)
         return
     await state.set_state(TeamFieldState.waiting)
     await state.update_data(team_id=tid, field=field)
     hint = ""
-    if field == "link_type":
-        hint = "\nОтправь <code>lk</code> или <code>card</code>."
-    elif field == "service_code" and tid == "evoleum":
+    if field == "service_code" and tid == "evoleum":
         hint = "\nДля NL обычно: <code>marktplaats_nl</code>."
     await _edit(
         callback,
@@ -186,6 +265,14 @@ async def api_team_field_save(message: Message, state: FSMContext) -> None:
     raw = (message.text or "").strip()
     if not tid or not field:
         await state.clear()
+        return
+    if field == "team_key":
+        await state.clear()
+        await message.answer(
+            f"{html_emoji('fail')} Team-ключ задаётся только на сервере "
+            f"(Railway Variables: <code>GOO_TEAM_KEY</code>).",
+            parse_mode="HTML",
+        )
         return
     async with Session() as session:
         user = await get_or_create_user(session, message.from_user.id)

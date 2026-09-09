@@ -92,8 +92,8 @@ def _env_on(name: str, *, default: str = "1") -> bool:
 
 
 def mailing_fast_mode() -> bool:
-    """Старый агрессивный BURST (почти без пауз)."""
-    return _env_on("MAILING_FAST_MODE", default="0")
+    """Быстрый BURST (почти без пауз). По умолчанию вкл. — нужен большой трафик."""
+    return _env_on("MAILING_FAST_MODE", default="1")
 
 
 def mailing_inbox_success_profile() -> bool:
@@ -147,8 +147,8 @@ def mailing_ehlo_name() -> str | None:
 
 
 def mailing_max_per_account_hour() -> int:
-    """Мягкий лимит писем с одного Gmail за скользящий час (0 = выкл.)."""
-    return max(0, min(500, int(os.getenv("MAILING_MAX_PER_ACCOUNT_HOUR", "40"))))
+    """Мягкий лимит писем с одного Gmail за час. По умолчанию 0 = выкл. (быстрый трафик)."""
+    return max(0, min(500, int(os.getenv("MAILING_MAX_PER_ACCOUNT_HOUR", "0"))))
 
 
 def inbox_stagger_ms() -> int:

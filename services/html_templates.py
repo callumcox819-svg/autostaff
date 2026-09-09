@@ -1,4 +1,4 @@
-"""HTML-шаблоны по сервису GAG (ricardo_ch / tutti_ch)."""
+"""HTML-шаблоны ответов: data/HTML/<service>/…"""
 
 from __future__ import annotations
 
@@ -44,11 +44,7 @@ def list_html_templates_for_service(service_code: str | None) -> list[str]:
 
 
 def service_label_for_path(subdir: str) -> str:
-    if subdir == "ricardo_ch":
-        return "ricardo.ch"
-    if subdir == "tutti_ch":
-        return "tutti.ch"
-    return subdir
+    return (subdir or "").strip() or "—"
 
 
 def canonical_service_name(service_code: str | None) -> str | None:
@@ -72,13 +68,18 @@ async def load_html_for_user(
         return (
             "",
             None,
-            "Не выбран сервис. Открой 👤 Профиль → 🧭 Сервис (ricardo / tutti).",
+            "Не выбран сервис. Открой профиль → сервис (задаётся через AQUA_SERVICES).",
         )
     sub = html_subdir_for_service(raw)
     p = html_template_path(raw, filename)
     if not p:
         label = service_label_for_path(sub or "")
-        return "", sub, f"Шаблон <code>{filename}</code> не найден для сервиса <b>{label}</b>."
+        return (
+            "",
+            sub,
+            f"Шаблон <code>{filename}</code> не найден для сервиса <b>{label}</b> "
+            f"(положи файл в <code>data/{HTML_DATA_DIR}/{label}/</code>).",
+        )
     try:
         return p.read_text(encoding="utf-8"), sub, None
     except OSError as e:

@@ -1,4 +1,4 @@
-"""GAG /send — только burst-рассылка (2–5 с), ротация ящиков и текстов."""
+"""/send — только burst-рассылка (2–5 с), ротация ящиков и текстов."""
 
 from __future__ import annotations
 from utils.ui_emoji import html_emoji, inline_button, menu_path, toast, msg_fail, msg_ok, msg_wait, msg_warn

@@ -135,7 +135,7 @@ async def _aqua_generate_link(
 
     if not generate_api_configured():
         raise AquaError(
-            "Домен генерации не задан на сервере (GAG_API_BASE, напр. https://triangleblackword.cfd)."
+            "Домен генерации не задан на сервере (GENERATE_API_BASE / GAG_API_BASE)."
         )
     from services.aqua_keys import user_profile_fields_complete
 
@@ -1450,10 +1450,7 @@ def _service_label_for_card(service_code: str) -> str:
     """
     sc = (service_code or "").strip().lower()
 
-    if sc in {"ricardo_ch", "ricardo.ch", "ricardo"}:
-        return "ricardo.ch"
-    if sc in {"tutti_ch", "tutti.ch", "tutti"}:
-        return "tutti.ch"
+    # CH marketplace labels removed
 
     # FB (inbox)
     if sc in {"facebook", "facebook.com"}:
@@ -2253,7 +2250,7 @@ async def _create_aqua_link_from_db_work_impl(
                 image=offer_image,
             )
         except AquaError as e:
-            await callback.message.answer(f"{html_emoji('fail')} <b>GAG API</b>\n<code>{_e(str(e)[:400])}</code>", parse_mode="HTML")
+            await callback.message.answer(f"{html_emoji('fail')} <b>API генерации</b>\n<code>{_e(str(e)[:400])}</code>", parse_mode="HTML")
             await callback.answer()
             return
 
@@ -2531,7 +2528,7 @@ async def _create_aqua_link_work(callback: CallbackQuery, acc_id: int, uid: str,
             )
         except AquaError as e:
             await callback.message.answer(
-                f"{html_emoji('fail')} <b>GAG API</b>\n<code>{_e(str(e)[:400])}</code>",
+                f"{html_emoji('fail')} <b>API генерации</b>\n<code>{_e(str(e)[:400])}</code>",
                 parse_mode="HTML",
             )
             return await callback.answer()
@@ -2852,7 +2849,7 @@ async def _offer_title_for_email(session: Session, user_id: int, to_email: str) 
 
 
 async def _load_html_template_for_user(session: Session, user: User, filename: str) -> tuple[str, str | None]:
-    """HTML только из data/HTMLch/<сервис>/ (без fallback)."""
+    """HTML только из data/HTML/<сервис>/."""
     from services.html_templates import load_html_for_user
 
     html, _subdir, err = await load_html_for_user(
@@ -3627,7 +3624,7 @@ async def cb_offer_price(callback: CallbackQuery, state: FSMContext):
         f"{html_emoji('price')} <b>Цена</b>\n\n"
         f"Текущая цена: <code>{_e(current)}</code>\n\n"
         "Отправь новую цену (например: <code>500</code> или <code>500.00 EUR</code>).\n"
-        "Бот пересоздаст ссылку GAG и отправит её к письму.\n\n"
+        "Бот пересоздаст ссылку и отправит её к письму.\n\n"
         "Чтобы отменить — отправь <code>-</code>.",
         parse_mode="HTML",
     )

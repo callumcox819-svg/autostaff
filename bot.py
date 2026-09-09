@@ -188,7 +188,7 @@ def _bind_priority_dispatcher_handlers(dp: Dispatcher) -> None:
         dp.callback_query.register(cb, flt)
 
     logger.info(
-        "Привязано к Dispatcher: reply-меню + %d callback настроек + %d admin (GAG / CH)",
+        "Привязано к Dispatcher: reply-меню + %d callback настроек + %d admin (bot)",
         len(bindings),
         len(admin_bindings),
     )
@@ -256,7 +256,7 @@ def _log_mailing_env_once() -> None:
     from utils.ui_emoji import log_emoji_profile
 
     subj = (getattr(config, "GLOBAL_SUBJECT_TEMPLATE", None) or "Re: OFFER").strip()
-    logger.info("GAG global mailing subject template: %r (OFFER = item title)", subj)
+    logger.info("global mailing subject template: %r (OFFER = item title)", subj)
     log_deliverability_profile(logger)
     log_emoji_profile()
 
@@ -403,7 +403,7 @@ async def main() -> None:
     if is_persistent_database_url(_db_url):
         logger.info("✅ БД готова (PostgreSQL, persistent) · %s", database_url_for_logs(_db_url))
     else:
-        logger.info("✅ БД готова (%s, локально) · GAG / CH", _db_engine.dialect.name)
+        logger.info("✅ БД готова (%s, локально) · bot", _db_engine.dialect.name)
 
     dp = Dispatcher()
     dp.startup.register(_on_startup)
@@ -433,7 +433,7 @@ async def main() -> None:
     )
 
     me = await bot.get_me()
-    logger.info("✅ Bot @%s (id=%s) · GAG / CH. Polling…", me.username, me.id)
+    logger.info("✅ Bot @%s (id=%s) · bot. Polling…", me.username, me.id)
 
     asyncio.create_task(_polling_heartbeat(bot))
     _start_event_loop_watchdog()

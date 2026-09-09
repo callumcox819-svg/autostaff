@@ -1,8 +1,9 @@
-"""GAG API — Швейцария: ricardo.ch, tutti.ch."""
+"""Сервисы и ключи для генерации ссылок (каркас; список сервисов — AQUA_SERVICES)."""
 
 from __future__ import annotations
 
 import os
+import re
 
 from config import config
 from models import User
@@ -20,23 +21,36 @@ AQUA_PROFILE_ADDRESS_KEY = "aqua_profile_address"
 
 AQUA_GENERATE_DOMAIN_KEY = "aqua_generate_domain"
 
-AQUA_SERVICE_CHOICES = ("ricardo_ch", "tutti_ch")
 
-_SERVICE_ALIASES: dict[str, str] = {
-    "ricardo_ch": "ricardo_ch",
-    "ricardo.ch": "ricardo_ch",
-    "ricardo": "ricardo_ch",
-    "tutti_ch": "tutti_ch",
-    "tutti.ch": "tutti_ch",
-    "tutti": "tutti_ch",
-}
+def _services_from_env() -> tuple[str, ...]:
+    raw = (os.getenv("AQUA_SERVICES") or "").strip()
+    if not raw:
+        return ()
+    out: list[str] = []
+    seen: set[str] = set()
+    for part in re.split(r"[,;\s]+", raw):
+        s = part.strip().lower()
+        if not s or s in seen:
+            continue
+        seen.add(s)
+        out.append(s)
+    return tuple(out)
+
+
+AQUA_SERVICE_CHOICES: tuple[str, ...] = _services_from_env()
 
 
 def normalize_aqua_service(code: str | None) -> str | None:
     s = (code or "").strip().lower()
     if not s:
         return None
-    return _SERVICE_ALIASES.get(s)
+    # Удалённые CH-сервисы GAG — не принимаем
+    if s in {"ricardo_ch", "tutti_ch", "ricardo", "tutti", "ricardo.ch", "tutti.ch"}:
+        return None
+    if AQUA_SERVICE_CHOICES:
+        return s if s in AQUA_SERVICE_CHOICES else None
+    # Без AQUA_SERVICES сервисы ещё не подключены
+    return None
 
 
 def is_valid_aqua_service(code: str | None) -> bool:
@@ -62,10 +76,7 @@ def aqua_service_matches(cur: str | None, choice: str) -> bool:
 
 def aqua_service_label(code: str | None) -> str:
     n = normalize_aqua_service(code) or (code or "").strip()
-    return {
-        "ricardo_ch": "ricardo.ch",
-        "tutti_ch": "tutti.ch",
-    }.get(n, n or "—")
+    return n or "—"
 
 
 async def get_user_aqua_service(session, user: User) -> str:
@@ -73,7 +84,12 @@ async def get_user_aqua_service(session, user: User) -> str:
     normalized = normalize_aqua_service(raw)
     if normalized:
         return normalized
-    return normalize_aqua_service(AQUA_DEFAULT_SERVICE) or AQUA_DEFAULT_SERVICE
+    default = normalize_aqua_service(AQUA_DEFAULT_SERVICE)
+    if default:
+        return default
+    if AQUA_SERVICE_CHOICES:
+        return AQUA_SERVICE_CHOICES[0]
+    return ""
 
 
 async def get_user_generate_domain(session, user: User) -> int | None:
@@ -96,9 +112,10 @@ def normalize_aqua_api_key(value: str | None) -> str:
 
 
 def get_global_aqua_team_key() -> str:
-    """Ключ команды GAG — GAG_TEAM_API_KEY."""
+    """Ключ команды — TEAM_API_KEY / GAG_TEAM_API_KEY (legacy)."""
     raw = (
-        os.getenv("GAG_TEAM_API_KEY")
+        os.getenv("TEAM_API_KEY")
+        or os.getenv("GAG_TEAM_API_KEY")
         or os.getenv("AQUA_TEAM_API_KEY")
         or getattr(config, "GAG_TEAM_API_KEY", None)
         or getattr(config, "AQUA_TEAM_API_KEY", None)
@@ -109,7 +126,7 @@ def get_global_aqua_team_key() -> str:
 
 
 def get_team_name() -> str:
-    return getattr(config, "TEAM_NAME", None) or TEAM_NAME
+    return getattr(config, "TEAM_NAME", None) or TEAM_NAME or ""
 
 
 def get_user_aqua_user_key(user: User) -> str:
@@ -118,11 +135,16 @@ def get_user_aqua_user_key(user: User) -> str:
 
 async def get_user_aqua_user_key_async(session, user: User) -> str:
     user_key = get_user_aqua_user_key(user)
-    if not user_key:
-        user_key = normalize_aqua_api_key(
-            await get_user_setting(session, user, AQUA_USER_API_KEY_SETTING) or ""
-        )
-    return user_key
+    if user_key:
+        return user_key
+    raw = (await get_user_setting(session, user, AQUA_USER_API_KEY_SETTING) or "").strip()
+    return normalize_aqua_api_key(raw)
+
+
+async def set_user_aqua_user_key(session, user: User, value: str) -> None:
+    key = normalize_aqua_api_key(value)
+    user.goo_user_api_key_aqua = key or None
+    await set_user_setting(session, user, AQUA_USER_API_KEY_SETTING, key)
 
 
 async def get_user_aqua_api_keys_async(session, user: User) -> tuple[str, str]:

@@ -1,4 +1,4 @@
-"""Ключ API и профиль для генерации ссылок GAG (Швейцария)."""
+"""???? API ? ??????? ??? ????????? ??????."""
 
 from __future__ import annotations
 
@@ -62,11 +62,11 @@ def _back_kb() -> InlineKeyboardMarkup:
 def profile_screen_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [inline_button("edit", "Заполнить / изменить", callback_data="aqua_profile_create")],
-            [inline_button("compass", "Сервис", callback_data="aqua_service_pick")],
-            [inline_button("link", "Домен GAG", callback_data="aqua_domain_pick")],
+            [inline_button("edit", "????????? / ????????", callback_data="aqua_profile_create")],
+            [inline_button("compass", "??????", callback_data="aqua_service_pick")],
+            [inline_button("link", "????? ?????????", callback_data="aqua_domain_pick")],
             [back_inline("settings_open")],
-            [inline_button("hide", "Скрыть", callback_data="aqua_hide")],
+            [inline_button("hide", "??????", callback_data="aqua_hide")],
         ]
     )
 
@@ -85,10 +85,10 @@ def _domain_mode_kb(current: str) -> InlineKeyboardMarkup:
 def _domain_menu_text(mode: str) -> str:
     _ = mode
     return (
-        f"{html_emoji('link')} <b>Домен GAG</b>\n\n"
-        f"• {html_emoji('profile')} <b>Домен команды</b> — без поля <code>domain</code> в API\n"
-        f"• {html_emoji('edit')} <b>Домен 1–4</b> — в API: "
-        f"<code>5</code>, <code>6</code>, <code>7</code>, <code>8</code> (слот + 4)"
+        f"{html_emoji('link')} <b>????? ?????????</b>\n\n"
+        f"? {html_emoji('profile')} <b>????? ???????</b> ? ??? ???? <code>domain</code> ? API\n"
+        f"? {html_emoji('edit')} <b>????? 1?4</b> ? ? API: "
+        f"<code>5</code>, <code>6</code>, <code>7</code>, <code>8</code> (???? + 4)"
     )
 
 
@@ -110,20 +110,20 @@ def service_picker_kb(current: str) -> InlineKeyboardMarkup:
 def key_screen_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [inline_button("wrench", "Установить ключ", callback_data="aqua_set:user_key")],
-            [inline_button("search", "Проверить ключ", callback_data="aqua_test_keys")],
+            [inline_button("wrench", "?????????? ????", callback_data="aqua_set:user_key")],
+            [inline_button("search", "????????? ????", callback_data="aqua_test_keys")],
             [back_inline("settings_open")],
-            [inline_button("hide", "Скрыть", callback_data="aqua_hide")],
+            [inline_button("hide", "??????", callback_data="aqua_hide")],
         ]
     )
 
 
 def _show_full(key: str | None) -> str:
-    return (key or "—").strip() or "—"
+    return (key or "?").strip() or "?"
 
 
 def _field_line(label: str, value: str) -> str:
-    v = (value or "").strip() or "—"
+    v = (value or "").strip() or "?"
     return f"{label}: <code>{v}</code>"
 
 
@@ -143,19 +143,19 @@ async def _render_profile_screen(callback: CallbackQuery) -> None:
         await session.commit()
         domain_line = profile_domain_label(mode)
         status = (
-            f"{html_emoji('green')} готов к генерации"
+            f"{html_emoji('green')} ????? ? ?????????"
             if complete
-            else f"{html_emoji('yellow')} заполните все поля"
+            else f"{html_emoji('yellow')} ????????? ??? ????"
         )
         text = (
-            f"{html_emoji('profile')} <b>Профиль</b>\n\n"
-            "Эти данные уходят в сгенерированную ссылку.\n\n"
-            f"{_field_line('Название профиля', title)}\n"
-            f"{_field_line('Имя получателя', buyer)}\n"
-            f"{_field_line('Адрес доставки', addr)}\n"
-            f"{_field_line('Сервис', aqua_service_label(service))}\n"
-            f"{_field_line('Домен GAG', domain_line)}\n\n"
-            f"Статус: {status}"
+            f"{html_emoji('profile')} <b>???????</b>\n\n"
+            "??? ?????? ?????? ? ??????????????? ??????.\n\n"
+            f"{_field_line('???????? ???????', title)}\n"
+            f"{_field_line('??? ??????????', buyer)}\n"
+            f"{_field_line('????? ????????', addr)}\n"
+            f"{_field_line('??????', aqua_service_label(service))}\n"
+            f"{_field_line('????? ?????????', domain_line)}\n\n"
+            f"??????: {status}"
         )
     try:
         await callback.message.edit_text(text, reply_markup=profile_screen_kb(), parse_mode="HTML")
@@ -169,14 +169,14 @@ async def _render_key_screen(callback: CallbackQuery) -> None:
         user = await get_or_create_user(session, callback.from_user.id)
         user_key = await get_user_aqua_user_key_async(session, user)
     base_ok = generate_api_configured()
-    base_show = generate_api_base() or "—"
+    base_show = generate_api_base() or "?"
     ok = html_emoji("ok")
     fail = html_emoji("fail")
     text = (
-        f"{html_emoji('key')} <b>API-ключ</b>\n\n"
-        f"Статус: {ok if user_key else fail} {'задан' if user_key else 'не задан'}\n"
+        f"{html_emoji('key')} <b>API-????</b>\n\n"
+        f"??????: {ok if user_key else fail} {'?????' if user_key else '?? ?????'}\n"
         f"<code>{_show_full(user_key)}</code>\n\n"
-        f"Сервер: {ok if base_ok else fail}\n"
+        f"??????: {ok if base_ok else fail}\n"
         f"<code>{html.escape(base_show)}</code>"
     )
     await callback.message.edit_text(text, reply_markup=key_screen_kb(), parse_mode="HTML")
@@ -185,7 +185,7 @@ async def _render_key_screen(callback: CallbackQuery) -> None:
 
 @router.callback_query(F.data == "aqua_hide")
 async def aqua_hide(callback: CallbackQuery) -> None:
-    await callback.message.edit_text(f"{html_emoji('ok')} Скрыто.")
+    await callback.message.edit_text(f"{html_emoji('ok')} ??????.")
     await callback.answer()
 
 
@@ -200,7 +200,7 @@ async def aqua_show_profile(callback: CallbackQuery, state: FSMContext) -> None:
         logging.getLogger(__name__).exception("aqua_show_profile failed tg=%s", callback.from_user.id)
         if callback.message:
             await callback.message.answer(
-                f"{html_emoji('fail')} Не удалось открыть профиль. Попробуй ещё раз или /start.",
+                f"{html_emoji('fail')} ?? ??????? ??????? ???????. ???????? ??? ??? ??? /start.",
                 parse_mode="HTML",
             )
     await callback.answer()
@@ -218,10 +218,26 @@ async def aqua_service_pick(callback: CallbackQuery, state: FSMContext) -> None:
     async with Session() as session:
         user = await get_or_create_user(session, callback.from_user.id)
         service = await get_user_aqua_service(session, user)
+    if not AQUA_SERVICE_CHOICES:
+        text = (
+            f"{html_emoji('compass')} <b>??????</b>\n\n"
+            "?????? ???????? ????. ?? ??????? ????? "
+            "<code>AQUA_SERVICES=code1,code2</code> ? ?????? HTML ? "
+            "<code>data/HTML/&lt;code&gt;/</code>."
+        )
+        await callback.message.edit_text(
+            text,
+            reply_markup=InlineKeyboardMarkup(
+                inline_keyboard=[[back_inline("aqua_show:profile")]]
+            ),
+            parse_mode="HTML",
+        )
+        await callback.answer()
+        return
     text = (
-        f"{html_emoji('compass')} <b>Сервис</b>\n\n"
-        f"Текущий: <b>{aqua_service_label(service)}</b>\n\n"
-        "Выберите сервис для генерации ссылок и HTML-шаблонов:"
+        f"{html_emoji('compass')} <b>??????</b>\n\n"
+        f"???????: <b>{aqua_service_label(service)}</b>\n\n"
+        "???????? ?????? ??? ????????? ?????? ? HTML-????????:"
     )
     await callback.message.edit_text(
         text,
@@ -250,7 +266,7 @@ async def aqua_domain_set(callback: CallbackQuery, state: FSMContext) -> None:
     code = (callback.data or "").split(":", 1)[1].strip().lower()
     allowed = {"team", "1", "2", "3", "4"}
     if code not in allowed:
-        return await callback.answer("Неизвестный домен", show_alert=True)
+        return await callback.answer("??????????? ?????", show_alert=True)
     async with Session() as session:
         user = await get_or_create_user(session, callback.from_user.id)
         await set_user_gag_domain_mode(session, user, code)
@@ -269,7 +285,7 @@ async def aqua_domain_set(callback: CallbackQuery, state: FSMContext) -> None:
 async def aqua_service_set(callback: CallbackQuery, state: FSMContext) -> None:
     code = (callback.data or "").split(":", 1)[1].strip()
     if code not in AQUA_SERVICE_CHOICES:
-        return await callback.answer("Неизвестный сервис", show_alert=True)
+        return await callback.answer("??????????? ??????", show_alert=True)
 
     async with Session() as session:
         user = await get_or_create_user(session, callback.from_user.id)
@@ -277,7 +293,7 @@ async def aqua_service_set(callback: CallbackQuery, state: FSMContext) -> None:
         await session.commit()
 
     await state.clear()
-    await callback.answer(f"Сервис: {aqua_service_label(code)}")
+    await callback.answer(f"??????: {aqua_service_label(code)}")
     await _render_profile_screen(callback)
 
 
@@ -285,23 +301,23 @@ async def aqua_service_set(callback: CallbackQuery, state: FSMContext) -> None:
 async def aqua_profile_create(callback: CallbackQuery, state: FSMContext) -> None:
     async with Session() as session:
         user = await get_or_create_user(session, callback.from_user.id)
-        cur_title = await get_user_profile_title(session, user) or "—"
-        cur_buyer = await get_user_profile_buyer_name(session, user) or "—"
-        cur_addr = await get_user_profile_address(session, user) or "—"
+        cur_title = await get_user_profile_title(session, user) or "?"
+        cur_buyer = await get_user_profile_buyer_name(session, user) or "?"
+        cur_addr = await get_user_profile_address(session, user) or "?"
 
     await state.clear()
     await state.set_state(ProfileState.title)
     await callback.message.edit_text(
-        f"{html_emoji('edit')} <b>Профиль</b>\n\n"
-        f"Сейчас:\n"
-        f"• Название: <code>{cur_title}</code>\n"
-        f"• Имя получателя: <code>{cur_buyer}</code>\n"
-        f"• Адрес: <code>{cur_addr}</code>\n\n"
-        "Отправь <b>название профиля</b> одним сообщением.\n"
-        "<i>Например: Anna</i>",
+        f"{html_emoji('edit')} <b>???????</b>\n\n"
+        f"??????:\n"
+        f"? ????????: <code>{cur_title}</code>\n"
+        f"? ??? ??????????: <code>{cur_buyer}</code>\n"
+        f"? ?????: <code>{cur_addr}</code>\n\n"
+        "??????? <b>???????? ???????</b> ????? ??????????.\n"
+        "<i>????????: Anna</i>",
         parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup(
-            inline_keyboard=[[back_inline("aqua_show:profile", text="Отмена")]]
+            inline_keyboard=[[back_inline("aqua_show:profile", text="??????")]]
         ),
     )
     await callback.answer()
@@ -311,13 +327,13 @@ async def aqua_profile_create(callback: CallbackQuery, state: FSMContext) -> Non
 async def profile_title_step(message: Message, state: FSMContext) -> None:
     title = (message.text or "").strip()
     if not title:
-        await message.answer(f"{html_emoji('fail')} Название пустое.")
+        await message.answer(f"{html_emoji('fail')} ???????? ??????.")
         return
     await state.update_data(title=title)
     await state.set_state(ProfileState.buyer_name)
     await message.answer(
-        "Отправь <b>имя получателя</b> — оно будет на сгенерированной ссылке.\n"
-        "<i>Например: Anna Johansen</i>",
+        "??????? <b>??? ??????????</b> ? ??? ????? ?? ??????????????? ??????.\n"
+        "<i>????????: Anna Johansen</i>",
         parse_mode="HTML",
     )
 
@@ -326,13 +342,13 @@ async def profile_title_step(message: Message, state: FSMContext) -> None:
 async def profile_buyer_step(message: Message, state: FSMContext) -> None:
     buyer = (message.text or "").strip()
     if not buyer:
-        await message.answer(f"{html_emoji('fail')} Имя пустое.")
+        await message.answer(f"{html_emoji('fail')} ??? ??????.")
         return
     await state.update_data(buyer_name=buyer)
     await state.set_state(ProfileState.address)
     await message.answer(
-        "Отправь <b>адрес доставки</b> одним сообщением.\n"
-        "<i>Например: Belgia 88 dom 33 ylica sosal</i>",
+        "??????? <b>????? ????????</b> ????? ??????????.\n"
+        "<i>????????: Belgia 88 dom 33 ylica sosal</i>",
         parse_mode="HTML",
     )
 
@@ -341,7 +357,7 @@ async def profile_buyer_step(message: Message, state: FSMContext) -> None:
 async def profile_address_step(message: Message, state: FSMContext) -> None:
     addr = (message.text or "").strip()
     if not addr:
-        await message.answer(f"{html_emoji('fail')} Адрес пустой.")
+        await message.answer(f"{html_emoji('fail')} ????? ??????.")
         return
     data = await state.get_data()
     title = (data.get("title") or "").strip()
@@ -355,32 +371,32 @@ async def profile_address_step(message: Message, state: FSMContext) -> None:
         await session.commit()
 
     await state.clear()
-    await message.answer(f"{html_emoji('ok')} Профиль сохранён.", reply_markup=profile_screen_kb())
+    await message.answer(f"{html_emoji('ok')} ??????? ????????.", reply_markup=profile_screen_kb())
 
 
 @router.callback_query(F.data == "aqua_test_keys")
 async def aqua_test_keys(callback: CallbackQuery) -> None:
-    await callback.answer("Проверяю…")
+    await callback.answer("?????????")
     async with Session() as session:
         user = await get_or_create_user(session, callback.from_user.id)
         user_key = await get_user_aqua_user_key_async(session, user)
         if not user_key:
             return await callback.message.answer(
-                f"{html_emoji('fail')} Личный ключ не задан. {menu_path(('settings', ''), ('key', 'Ключ'))}",
+                f"{html_emoji('fail')} ?????? ???? ?? ?????. {menu_path(('settings', ''), ('key', '????'))}",
                 parse_mode="HTML",
             )
         if not generate_api_configured():
             return await callback.message.answer(
-                f"{html_emoji('fail')} На сервере не задан GAG_API_BASE (домен генерации)."
+                f"{html_emoji('fail')} ?? ??????? ?? ????? GENERATE_API_BASE / GAG_API_BASE."
             )
         try:
             await verify_gag_auth(user_api_key=user_key)
         except AquaError as e:
             return await callback.message.answer(
-                f"{html_emoji('fail')} <b>GAG API</b>\n<code>{html.escape(str(e)[:400])}</code>",
+                f"{html_emoji('fail')} <b>API ?????????</b>\n<code>{html.escape(str(e)[:400])}</code>",
                 parse_mode="HTML",
             )
-    await callback.message.answer(f"{html_emoji('ok')} Ключи работают (GAG API).", parse_mode="HTML")
+    await callback.message.answer(f"{html_emoji('ok')} ????? ???????? (API ?????????).", parse_mode="HTML")
 
 
 @router.callback_query(F.data == "aqua_set:user_key")
@@ -388,28 +404,28 @@ async def aqua_set_user_key_begin(callback: CallbackQuery, state: FSMContext) ->
     await state.set_state(KeysState.waiting_value)
     try:
         await callback.message.edit_text(
-            f"{html_emoji('write')} <b>Личный API-ключ</b>\n\n"
-            "Отправь <b>apikey</b> из панели GAG <b>одним сообщением</b>.\n"
-            "<i>Пример: d1f491dce948267abdf321c800ec6c73</i>\n\n"
-            "Отмена: «Назад» в меню настроек.",
+            f"{html_emoji('write')} <b>?????? API-????</b>\n\n"
+            "??????? <b>apikey</b> ?? ?????? API <b>????? ??????????</b>.\n"
+            "<i>??????: d1f491dce948267abdf321c800ec6c73</i>\n\n"
+            "??????: �?????� ? ???? ????????.",
             reply_markup=_back_kb(),
             parse_mode="HTML",
         )
     except TelegramBadRequest:
         await callback.message.answer(
-            f"{html_emoji('write')} <b>Личный API-ключ</b>\n\n"
-            "Отправь <b>apikey</b> одним сообщением.",
+            f"{html_emoji('write')} <b>?????? API-????</b>\n\n"
+            "??????? <b>apikey</b> ????? ??????????.",
             reply_markup=_back_kb(),
             parse_mode="HTML",
         )
-    await callback.answer("Жду ключ…")
+    await callback.answer("??? ?????")
 
 
 @router.message(KeysState.waiting_value)
 async def keys_set_finish(message: Message, state: FSMContext) -> None:
     value = clean_secret((message.text or "").strip())
     if not value:
-        await message.answer(f"{html_emoji('fail')} Пустое значение.")
+        await message.answer(f"{html_emoji('fail')} ?????? ????????.")
         return
 
     async with Session() as session:
@@ -421,7 +437,7 @@ async def keys_set_finish(message: Message, state: FSMContext) -> None:
 
     await state.clear()
     await message.answer(
-        f"{html_emoji('ok')} Ключ сохранён.\n"
-        f"{menu_path(('settings', ''), ('key', 'Ключ'))} — «Проверить ключ».",
+        f"{html_emoji('ok')} ???? ????????.\n"
+        f"{menu_path(('settings', ''), ('key', '????'))} ? �????????? ????�.",
         parse_mode="HTML",
     )

@@ -146,9 +146,10 @@ class Config:
 
     GLOBAL_SUBJECT_TEMPLATE = os.getenv("GLOBAL_SUBJECT_TEMPLATE", "Re: OFFER").strip() or "Re: OFFER"
 
-    # GAG / APEX API — docs.domainforapi.com
+    # Generate API (личный apikey у пользователя; домен — GENERATE_API_BASE / GAG_API_BASE)
     GAG_API_BASE = (
-        os.getenv("GAG_API_BASE")
+        os.getenv("GENERATE_API_BASE")
+        or os.getenv("GAG_API_BASE")
         or os.getenv("APEX_API_BASE")
         or os.getenv("GOO_API_BASE")
         or ""
@@ -163,8 +164,8 @@ class Config:
     }
     TEAM_NAME = TEAM_NAME
     AQUA_DEFAULT_IMAGE_URL = (os.getenv("AQUA_DEFAULT_IMAGE_URL") or "").strip()
-    COUNTRY_CODE = "CH"
-    COUNTRY_LABEL = "Швейцария"
+    COUNTRY_CODE = (os.getenv("COUNTRY_CODE") or "").strip()
+    COUNTRY_LABEL = (os.getenv("COUNTRY_LABEL") or "").strip()
 
     DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "").strip()
     DEEPSEEK_API_BASE = (os.getenv("DEEPSEEK_API_BASE", "https://api.deepseek.com") or "").strip().rstrip("/")

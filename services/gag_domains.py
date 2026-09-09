@@ -1,4 +1,4 @@
-"""Домен GAG в профиле: команда (без domain в API) или Домен 1–4 → API 5–8."""
+"""Домен генерации в профиле: команда (без domain в API) или Домен 1–4 → API 5–8."""
 
 from __future__ import annotations
 
@@ -76,7 +76,7 @@ def domain_mode_menu_options() -> tuple[tuple[str, str], ...]:
 def finalize_gag_generated_url(url: str, *, mode: str) -> str:
     raw = (url or "").strip()
     if not raw:
-        raise ValueError("Пустая ссылка от GAG API")
+        raise ValueError("Пустая ссылка от API генерации")
     if not raw.lower().startswith(("http://", "https://")):
         raw = f"https://{raw.lstrip('/')}"
 
@@ -86,9 +86,9 @@ def finalize_gag_generated_url(url: str, *, mode: str) -> str:
 
     if (mode or "").strip().lower() == DOMAIN_MODE_TEAM:
         raise ValueError(
-            "GAG вернул некорректную ссылку. Выбери «Домен команды» в профиле и проверь apikey в панели GAG."
+            "API вернул некорректную ссылку. Выбери «Домен команды» в профиле и проверь apikey."
         )
-    raise ValueError(f"GAG вернул некорректную ссылку ({raw}). Попробуй другой «Домен 1–4» или команду.")
+    raise ValueError(f"API вернул некорректную ссылку ({raw}). Попробуй другой «Домен 1–4» или команду.")
 
 
 # Совместимость со старым кодом

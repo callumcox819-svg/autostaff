@@ -23,7 +23,7 @@ _START_DB_TIMEOUT_SEC = float(os.getenv("START_DB_TIMEOUT_SEC", "12"))
 def _welcome_html() -> str:
     return "\n".join(
         [
-            f"{html_emoji('burst')} <b>GAG · Швейцария</b>",
+            f"{html_emoji('burst')} <b>Mail Bot</b>",
             "Рассылка, входящие, валидация и ссылки.",
             "",
             f"{html_emoji('send')} <code>/send</code> — burst-рассылка",

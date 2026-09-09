@@ -1,4 +1,4 @@
-"""GAG API — POST /generate (triangleblackword и аналоги)."""
+"""Генерация ссылок — POST /generate (домен из GENERATE_API_BASE / GAG_API_BASE)."""
 
 from __future__ import annotations
 
@@ -29,7 +29,12 @@ def _truthy(name: str, default: str = "0") -> bool:
 
 def generate_api_base() -> str:
     """Базовый URL домена генерации (без /generate)."""
-    raw = (getattr(config, "GAG_API_BASE", None) or os.getenv("GAG_API_BASE") or "").strip().rstrip("/")
+    raw = (
+        getattr(config, "GAG_API_BASE", None)
+        or os.getenv("GENERATE_API_BASE")
+        or os.getenv("GAG_API_BASE")
+        or ""
+    ).strip().rstrip("/")
     if raw.endswith("/generate"):
         raw = raw[: -len("/generate")].rstrip("/")
     return raw
@@ -105,7 +110,7 @@ async def _post_generate(body: dict[str, Any], *, timeout_sec: float = 30.0) -> 
     base = generate_api_base()
     if not base:
         raise AquaError(
-            "Домен генерации не задан. На сервере: GAG_API_BASE=https://triangleblackword.cfd"
+            "Домен генерации не задан. На сервере: GENERATE_API_BASE или GAG_API_BASE"
         )
 
     apikey = normalize_aqua_api_key(str(body.get("apikey") or ""))
@@ -135,7 +140,7 @@ async def _post_generate(body: dict[str, Any], *, timeout_sec: float = 30.0) -> 
                     if resp.status in (401, 403):
                         raise AquaError(
                             f"HTTP {resp.status}: неверный apikey или доступ запрещён.\n\n"
-                            f"Проверь личный ключ в {_SETTINGS_KEY} (из панели GAG)."
+                            f"Проверь личный ключ в {_SETTINGS_KEY}."
                         ) from err
                     raise err
                 if not isinstance(data, dict):
@@ -153,18 +158,17 @@ async def verify_gag_auth(
     team_api_key: str = "",
     timeout_sec: float = 15.0,
 ) -> bool:
-    """Проверка: apikey пользователя + GAG_API_BASE на сервере."""
+    """Проверка: apikey пользователя + домен генерации на сервере."""
     _ = team_api_key  # legacy, не используется
     key = normalize_aqua_api_key(user_api_key)
     if not key:
         raise AquaError(f"Личный API key не задан ({_SETTINGS_KEY})")
     if not generate_api_base():
         raise AquaError(
-            "GAG_API_BASE не задан на сервере.\n"
-            "Пример: https://triangleblackword.cfd"
+            "Домен генерации не задан на сервере (GENERATE_API_BASE / GAG_API_BASE)."
         )
     if not re.fullmatch(r"[a-f0-9]{16,64}", key, flags=re.I):
-        logger.warning("GAG apikey не похож на hex-токен (длина/формат)")
+        logger.warning("apikey не похож на hex-токен (длина/формат)")
     return True
 
 
@@ -182,7 +186,7 @@ async def generate_aqua_link_no_parse(
     timeout_sec: float = 30.0,
     domain: int | None = None,
 ) -> str:
-    """POST {GAG_API_BASE}/generate — ссылка по названию/цене/фото."""
+    """POST {API_BASE}/generate — ссылка по названию/цене/фото."""
     _ = team_api_key
     title = (name or "").strip()
     if not title:
@@ -218,7 +222,7 @@ async def generate_aqua_link_no_parse(
 
     data = await _post_generate(body, timeout_sec=timeout_sec)
     logger.info(
-        "GAG /generate ok service=%s domain=%s version=%s title=%r",
+        "generate ok service=%s domain=%s version=%s title=%r",
         body.get("service"),
         body.get("domain", "team"),
         body.get("version"),

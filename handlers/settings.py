@@ -528,9 +528,7 @@ async def ref_open(callback: CallbackQuery, state: FSMContext):
         await state.clear()
         msg = (
             f"{html_emoji('write')} <b>Команды</b>\n\n"
-            "Страна: <b>Швейцария (CH)</b>\n"
-            "Команда: <b>GAG</b>\n"
-            "Режим: <b>burst</b> (2–5 с, ротация ящиков и текстов)\n\n"
+            "Режим: <b>burst</b> (ротация ящиков и текстов)\n\n"
             "/send — запустить рассылку\n"
             "/stop — остановить рассылку\n"
             "/reset — очистить очередь (лиды в БД остаются)\n"

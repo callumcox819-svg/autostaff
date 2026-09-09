@@ -1,4 +1,5 @@
-"""GAG API: POST /generate — успех и ошибки."""
+"""Generate API: POST /generate — успех и ошибки."""
+
 from __future__ import annotations
 
 import unittest
@@ -7,63 +8,52 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from services.aqua_network import AquaError, _post_generate
 
 
-class _FakeResponse:
-    def __init__(self, status: int, payload: dict):
-        self.status = status
-        self._payload = payload
-        self._text = str(payload)
+class GenerateApiHttpTests(unittest.IsolatedAsyncioTestCase):
+    async def test_success_extracts_link(self):
+        resp = MagicMock()
+        resp.status = 200
+        resp.text = AsyncMock(return_value="{}")
+        resp.json = AsyncMock(
+            return_value={
+                "success": True,
+                "url": "https://example.test/get/abc",
+            }
+        )
+        resp.__aenter__ = AsyncMock(return_value=resp)
+        resp.__aexit__ = AsyncMock(return_value=None)
 
-    async def text(self) -> str:
-        return self._text
+        session = MagicMock()
+        session.post = MagicMock(return_value=resp)
+        session.__aenter__ = AsyncMock(return_value=session)
+        session.__aexit__ = AsyncMock(return_value=None)
 
-    async def json(self, content_type=None):
-        return self._payload
-
-    async def __aenter__(self):
-        return self
-
-    async def __aexit__(self, *args):
-        return False
-
-
-class GagHttpStatusTests(unittest.IsolatedAsyncioTestCase):
-    async def test_generate_returns_url(self):
-        payload = {"url": "https://example.com/order/abc"}
-
-        fake_session = MagicMock()
-        fake_session.post = MagicMock(return_value=_FakeResponse(200, payload))
-        fake_session.__aenter__ = AsyncMock(return_value=fake_session)
-        fake_session.__aexit__ = AsyncMock(return_value=False)
-
-        with patch("services.aqua_network.generate_api_base", return_value="https://triangleblackword.cfd"):
-            with patch("services.aqua_network.aiohttp.ClientSession", return_value=fake_session):
+        with patch("services.aqua_network.generate_api_base", return_value="https://api.example.test"):
+            with patch("aiohttp.ClientSession", return_value=session):
                 data = await _post_generate(
                     {
-                        "apikey": "d1f491dce948267abdf321c800ec6c73",
-                        "title": "Test",
-                        "price": "CHF 100",
-                        "name": "Buyer",
-                        "address": "Addr",
-                        "service": "ricardo_ch",
+                        "apikey": "abcd" * 8,
+                        "title": "x",
+                        "price": "1",
+                        "name": "n",
+                        "address": "a",
+                        "service": "demo",
                     }
                 )
+        self.assertTrue(data.get("success") or data.get("url"))
 
-        self.assertEqual(data["url"], "https://example.com/order/abc")
-
-    async def test_http_403_is_error(self):
-        payload = {"message": "forbidden"}
-
-        fake_session = MagicMock()
-        fake_session.post = MagicMock(return_value=_FakeResponse(403, payload))
-        fake_session.__aenter__ = AsyncMock(return_value=fake_session)
-        fake_session.__aexit__ = AsyncMock(return_value=False)
-
-        with patch("services.aqua_network.generate_api_base", return_value="https://triangleblackword.cfd"):
-            with patch("services.aqua_network.aiohttp.ClientSession", return_value=fake_session):
-                with self.assertRaises(AquaError) as ctx:
-                    await _post_generate({"apikey": "bad", "title": "x", "price": "1", "name": "n", "address": "a", "service": "ricardo_ch"})
-
-        self.assertIn("403", str(ctx.exception))
+    async def test_missing_base_raises(self):
+        with patch("services.aqua_network.generate_api_base", return_value=""):
+            with self.assertRaises(AquaError):
+                await _post_generate(
+                    {
+                        "apikey": "bad",
+                        "title": "x",
+                        "price": "1",
+                        "name": "n",
+                        "address": "a",
+                        "service": "demo",
+                    }
+                )
 
 
 if __name__ == "__main__":

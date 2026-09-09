@@ -1,4 +1,4 @@
-"""Генерация ссылок GAG для оффера / входящих."""
+"""Генерация ссылок для оффера / входящих."""
 
 from __future__ import annotations
 
@@ -77,7 +77,7 @@ async def aqua_generate_for_offer(
 
     if not generate_api_configured():
         raise AquaError(
-            "Домен генерации не задан на сервере (GAG_API_BASE, напр. https://triangleblackword.cfd)."
+            "Домен генерации не задан на сервере (GENERATE_API_BASE / GAG_API_BASE)."
         )
 
     if not await user_profile_fields_complete(session, user):

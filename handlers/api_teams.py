@@ -451,6 +451,12 @@ async def api_team_edit(callback: CallbackQuery, state: FSMContext) -> None:
     hint = ""
     if field == "service_code" and tid == "evoleum":
         hint = "\nДля NL обычно: <code>marktplaats_nl</code>."
+    if field == "profile_id" and tid == "evoleum":
+        hint = (
+            "\n\nФИО и адрес на ссылке берутся из <b>этого</b> профиля в Evoleum "
+            "(Мой профиль → Профили). Вставь ID профиля с нужным ФИО "
+            "(например Maria Zeglier), не старое имя из настроек бота."
+        )
     await _edit(
         callback,
         f"{html_emoji('settings')} <b>{html.escape(_FIELD_TITLES[field])}</b>\n"

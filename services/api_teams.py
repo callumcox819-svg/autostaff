@@ -102,7 +102,7 @@ async def get_team_field(session, user: User, team_id: str, field: str) -> str:
     if val:
         return val
     if field == "service_code":
-        return default_service_for_team(tid)
+                return default_service_for_team(tid)
     if field == "link_type":
         return default_type_for_team(tid)
     return ""
@@ -121,9 +121,15 @@ async def set_team_field(session, user: User, team_id: str, field: str, value: s
         if v not in _LINK_TYPE_IDS:
             raise ValueError("Тип: lk, card или other")
         value = v
+    elif field == "profile_id":
+        value = clean_secret(value)
     else:
         value = (value or "").strip()
     await set_user_setting(session, user, _sk(tid, field), value)
+    if tid == "evoleum" and field == "profile_id":
+        from services.aqua_keys import bind_evoleum_profile_id
+
+        await bind_evoleum_profile_id(session, user, value)
 
 
 async def get_team_config(session, user: User, team_id: str) -> ApiTeamConfig:

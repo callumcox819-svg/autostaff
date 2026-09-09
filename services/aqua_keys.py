@@ -250,11 +250,48 @@ async def user_profile_fields_complete(session, user: User) -> bool:
 
 
 async def get_user_aqua_profile_display(session, user: User) -> str:
+    """Подпись профиля для карточки ссылки.
+
+    Для Evoleum ФИО на лендинге берётся из Profile ID в GOO, не из локального
+    кэша. Локальные title/name показываем только если они привязаны к тому же
+    Profile ID — иначе не светим чужое имя (типа старой Anna).
+    """
+    try:
+        from services.api_teams import get_selected_team_config, get_team_field
+
+        cfg = await get_selected_team_config(session, user)
+        if cfg.team_id == "evoleum":
+            pid = (cfg.profile_id or "").strip()
+            label = (await get_team_field(session, user, "evoleum", "profile_label") or "").strip()
+            if label:
+                return label
+            title = await get_user_profile_title(session, user)
+            name = await get_user_profile_buyer_name(session, user)
+            bound = get_user_goo_profile_id(user)
+            if pid and bound and bound == pid and (title or name):
+                if title and name:
+                    return f"{title} · {name}"
+                return title or name
+            if pid:
+                return pid
+    except Exception:
+        pass
     title = await get_user_profile_title(session, user)
     name = await get_user_profile_buyer_name(session, user)
     if title and name:
         return f"{title} · {name}"
     return title or name or get_user_goo_profile_id(user)
+
+
+async def bind_evoleum_profile_id(session, user: User, profile_id: str) -> None:
+    """Сохранить Profile ID Evoleum и сбросить устаревшее локальное ФИО."""
+    pid = (profile_id or "").strip()
+    prev = get_user_goo_profile_id(user)
+    user.goo_profile_id = pid or None
+    if pid and pid != prev:
+        await set_user_setting(session, user, AQUA_PROFILE_TITLE_KEY, "")
+        await set_user_setting(session, user, AQUA_PROFILE_NAME_KEY, "")
+        await set_user_setting(session, user, AQUA_PROFILE_ADDRESS_KEY, "")
 
 
 async def apply_aqua_profile_to_user(session, user: User, profile) -> None:

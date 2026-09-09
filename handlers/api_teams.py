@@ -22,14 +22,23 @@ from services.api_teams import (
     set_team_field,
     team_label,
 )
+from services.csm_catalog import (
+    country_label,
+    list_csm_countries,
+    list_csm_platforms,
+    make_service_key,
+    parse_service_key,
+    platform_label,
+    service_key_label,
+)
 from services.users import get_or_create_user
 from utils.ui_emoji import (
     back_inline,
     html_emoji,
+    icon_button,
     inline_button,
     toast,
     toggle_button,
-    unicode_fallback,
 )
 
 router = Router(name="api_teams")
@@ -43,11 +52,20 @@ class TeamFieldState(StatesGroup):
 def _teams_list_kb(selected_id: str) -> InlineKeyboardMarkup:
     rows: list[list[InlineKeyboardButton]] = []
     for tid, label in API_TEAMS:
-        mark = unicode_fallback("ok") if tid == selected_id else "×"
+        on = tid == selected_id
+        mark = icon_button(
+            "ok" if on else "fail",
+            callback_data=f"api_team_pick:{tid}",
+            style="success" if on else "danger",
+        )
         rows.append(
             [
-                InlineKeyboardButton(text=label, callback_data=f"api_team_open:{tid}"),
-                InlineKeyboardButton(text=mark, callback_data=f"api_team_pick:{tid}"),
+                inline_button(
+                    "key" if tid == "csm" else "link",
+                    label,
+                    callback_data=f"api_team_open:{tid}",
+                ),
+                mark,
             ]
         )
     rows.append([back_inline("settings_open")])
@@ -59,20 +77,42 @@ def _teams_list_text(selected_id: str, *, page: str = "1/1") -> str:
         f"{html_emoji('key')} <b>Команды API</b>\n"
         f"Стр. {html.escape(page)}\n\n"
         f"Выбрана: <b>{html.escape(team_label(selected_id))}</b>\n"
-        f"{html_emoji('ok')} — активна для генерации · × — нет"
+        f"{html_emoji('ok')} — активна для генерации · {html_emoji('fail')} — нет"
     )
 
 
 def _team_detail_kb(team_id: str) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [inline_button("key", "API-ключ", callback_data=f"api_team_edit:{team_id}:api_key")],
-            [inline_button("wrench", "Код сервиса", callback_data=f"api_team_edit:{team_id}:service_code")],
+    rows: list[list[InlineKeyboardButton]] = [
+        [inline_button("key", "API-ключ", callback_data=f"api_team_edit:{team_id}:api_key")],
+    ]
+    if team_id == "csm":
+        rows.append(
+            [
+                inline_button(
+                    "compass",
+                    "Площадка",
+                    callback_data=f"api_team_csm_plats:{team_id}",
+                )
+            ]
+        )
+    else:
+        rows.append(
+            [
+                inline_button(
+                    "wrench",
+                    "Код сервиса",
+                    callback_data=f"api_team_edit:{team_id}:service_code",
+                )
+            ]
+        )
+    rows.extend(
+        [
             [inline_button("profile", "Profile ID", callback_data=f"api_team_edit:{team_id}:profile_id")],
             [inline_button("link", "Тип ссылки", callback_data=f"api_team_type_menu:{team_id}")],
             [back_inline("api_teams")],
         ]
     )
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def _mask_secret(value: str) -> str:
@@ -85,15 +125,82 @@ def _mask_secret(value: str) -> str:
 
 
 def _team_detail_text(cfg) -> str:
-    team_ok = "задан на сервере" if (cfg.team_key or "").strip() else "не задан (Railway Variables)"
-    return (
-        f"{html_emoji('key')} <b>{html.escape(cfg.label)}</b>\n\n"
-        f"<b>API-ключ:</b> <code>{html.escape(_mask_secret(cfg.api_key))}</code>\n"
-        f"<b>Team-ключ:</b> {html.escape(team_ok)}\n"
-        f"<b>Код сервиса:</b> <code>{html.escape(cfg.service_code or '—')}</code>\n"
-        f"<b>Profile ID:</b> <code>{html.escape(cfg.profile_id or '—')}</code>\n"
+    lines = [
+        f"{html_emoji('key')} <b>{html.escape(cfg.label)}</b>\n",
+        f"<b>API-ключ:</b> <code>{html.escape(_mask_secret(cfg.api_key))}</code>",
+    ]
+    if cfg.team_id == "csm":
+        lines.append(
+            f"<b>Площадка:</b> <b>{html.escape(service_key_label(cfg.service_code))}</b>"
+            f" (<code>{html.escape(cfg.service_code or '—')}</code>)"
+        )
+    else:
+        team_ok = "задан на сервере" if (cfg.team_key or "").strip() else "не задан (Railway Variables)"
+        lines.append(f"<b>Team-ключ:</b> {html.escape(team_ok)}")
+        lines.append(f"<b>Код сервиса:</b> <code>{html.escape(cfg.service_code or '—')}</code>")
+    lines.append(f"<b>Profile ID:</b> <code>{html.escape(cfg.profile_id or '—')}</code>")
+    lines.append(
         f"<b>Тип ссылки:</b> <b>{html.escape(link_type_label(cfg.link_type or 'lk'))}</b>"
     )
+    return "\n".join(lines)
+
+
+def _csm_platforms_kb(team_id: str, current_service: str) -> InlineKeyboardMarkup:
+    cur_plat, _ = parse_service_key(current_service)
+    rows: list[list[InlineKeyboardButton]] = []
+    row: list[InlineKeyboardButton] = []
+    for pid, label, emoji_key in list_csm_platforms():
+        on = pid == cur_plat
+        btn = (
+            toggle_button(True, label, f"api_team_csm_plat:{team_id}:{pid}")
+            if on
+            else inline_button(emoji_key, label, callback_data=f"api_team_csm_plat:{team_id}:{pid}")
+        )
+        row.append(btn)
+        if len(row) == 2:
+            rows.append(row)
+            row = []
+    if row:
+        rows.append(row)
+    rows.append([back_inline(f"api_team_open:{team_id}")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def _csm_countries_kb(team_id: str, platform: str, current_service: str) -> InlineKeyboardMarkup:
+    cur_plat, cur_cc = parse_service_key(current_service)
+    rows: list[list[InlineKeyboardButton]] = []
+    row: list[InlineKeyboardButton] = []
+    for cid, label, emoji_key in list_csm_countries():
+        on = cur_plat == platform and cur_cc == cid
+        caption = label
+        btn = (
+            toggle_button(True, caption, f"api_team_csm_cc:{team_id}:{platform}:{cid}")
+            if on
+            else inline_button(
+                emoji_key, caption, callback_data=f"api_team_csm_cc:{team_id}:{platform}:{cid}"
+            )
+        )
+        row.append(btn)
+        if len(row) == 3:
+            rows.append(row)
+            row = []
+    if row:
+        rows.append(row)
+    # Verify
+    on_v = cur_plat == platform and cur_cc == "verify_all"
+    rows.append(
+        [
+            toggle_button(True, "Verify", f"api_team_csm_cc:{team_id}:{platform}:verify_all")
+            if on_v
+            else inline_button(
+                "ok",
+                "Verify",
+                callback_data=f"api_team_csm_cc:{team_id}:{platform}:verify_all",
+            )
+        ]
+    )
+    rows.append([back_inline(f"api_team_csm_plats:{team_id}")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def _link_type_kb(team_id: str, current: str) -> InlineKeyboardMarkup:
@@ -102,18 +209,10 @@ def _link_type_kb(team_id: str, current: str) -> InlineKeyboardMarkup:
         on = tid == current
         caption = f"{label}" + (" ✓" if on else "")
         if on:
-            rows.append(
-                [toggle_button(True, caption, f"api_team_type:{team_id}:{tid}")]
-            )
+            rows.append([toggle_button(True, caption, f"api_team_type:{team_id}:{tid}")])
         else:
             rows.append(
-                [
-                    inline_button(
-                        emoji_key,
-                        caption,
-                        callback_data=f"api_team_type:{team_id}:{tid}",
-                    )
-                ]
+                [inline_button(emoji_key, caption, callback_data=f"api_team_type:{team_id}:{tid}")]
             )
     rows.append([back_inline(f"api_team_open:{team_id}")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
@@ -182,6 +281,70 @@ async def api_team_open(callback: CallbackQuery, state: FSMContext) -> None:
     await callback.answer()
 
 
+@router.callback_query(F.data.startswith("api_team_csm_plats:"))
+async def api_team_csm_plats(callback: CallbackQuery, state: FSMContext) -> None:
+    await state.clear()
+    tid = (callback.data or "").split(":", 1)[-1].strip()
+    async with Session() as session:
+        user = await get_or_create_user(session, callback.from_user.id)
+        cfg = await get_team_config(session, user, tid)
+    text = (
+        f"{html_emoji('compass')} <b>Площадка CSM</b>\n"
+        f"Сейчас: <b>{html.escape(service_key_label(cfg.service_code))}</b>\n\n"
+        f"Выбери маркетплейс:"
+    )
+    await _edit(callback, text, _csm_platforms_kb(tid, cfg.service_code or "depop_us"))
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("api_team_csm_plat:"))
+async def api_team_csm_plat(callback: CallbackQuery, state: FSMContext) -> None:
+    await state.clear()
+    parts = (callback.data or "").split(":")
+    if len(parts) != 3:
+        await callback.answer()
+        return
+    _, tid, platform = parts
+    async with Session() as session:
+        user = await get_or_create_user(session, callback.from_user.id)
+        cfg = await get_team_config(session, user, tid)
+    text = (
+        f"{html_emoji('compass')} <b>{html.escape(platform_label(platform))}</b>\n"
+        f"Команда: CSM\n\n"
+        f"Выбери страну (или Verify):"
+    )
+    await _edit(
+        callback,
+        text,
+        _csm_countries_kb(tid, platform, cfg.service_code or make_service_key(platform, "us")),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("api_team_csm_cc:"))
+async def api_team_csm_cc(callback: CallbackQuery, state: FSMContext) -> None:
+    await state.clear()
+    parts = (callback.data or "").split(":")
+    if len(parts) != 4:
+        await callback.answer()
+        return
+    _, tid, platform, country = parts
+    sk = make_service_key(platform, country)
+    async with Session() as session:
+        user = await get_or_create_user(session, callback.from_user.id)
+        try:
+            await set_team_field(session, user, tid, "service_code", sk)
+            await session.commit()
+            cfg = await get_team_config(session, user, tid)
+        except ValueError as e:
+            await callback.answer(toast("fail", str(e)[:180]), show_alert=True)
+            return
+    await _edit(callback, _team_detail_text(cfg), _team_detail_kb(tid))
+    await callback.answer(
+        toast("ok", f"{platform_label(platform)} · {country_label(country)}")
+    )
+
+
 _FIELD_TITLES = {
     "api_key": "API-ключ",
     "service_code": "Код сервиса",
@@ -234,9 +397,11 @@ async def api_team_edit(callback: CallbackQuery, state: FSMContext) -> None:
         return
     _, tid, field = parts
     if field == "link_type":
-        # совместимость со старыми callback → меню кнопок
         callback.data = f"api_team_type_menu:{tid}"
         return await api_team_type_menu(callback, state)
+    if field == "service_code" and tid == "csm":
+        callback.data = f"api_team_csm_plats:{tid}"
+        return await api_team_csm_plats(callback, state)
     if field not in _FIELD_TITLES:
         await callback.answer(toast("fail", "Поле"), show_alert=True)
         return

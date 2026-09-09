@@ -128,54 +128,30 @@ async def _aqua_generate_link(
     listing_url: str | None,
     image: str | None = None,
 ) -> str:
-    from services.api_teams import get_selected_team_config
-    from services.goo_network import GooError, goo_generate_no_parse, goo_generate_parse
-    from services.aqua_link import resolve_aqua_image_url
-
-    cfg = await get_selected_team_config(session, user)
-    if not (cfg.api_key or "").strip():
-        raise AquaError(
-            f"Не задан API-ключ. {menu_path(('settings', ''), ('key', 'Команды API'))} → {cfg.label}."
-        )
-    if not (cfg.team_key or "").strip():
-        raise AquaError(
-            "Не задан Team-ключ на сервере "
-            "(Railway Variables: <code>GOO_TEAM_KEY</code> / <code>TEAM_API_KEY</code>)."
-        )
-    if not (cfg.profile_id or "").strip():
-        raise AquaError(
-            f"Не задан Profile ID. {menu_path(('settings', ''), ('key', 'Команды API'))} → {cfg.label}."
-        )
-    if not (cfg.service_code or "").strip():
-        raise AquaError(f"Не задан код сервиса ({cfg.label}).")
+    from services.aqua_link import aqua_generate_for_offer
+    from services.offer_storage import find_offer_by_link
+    from types import SimpleNamespace
 
     listing = (listing_url or "").strip()
-    try:
-        if listing.lower().startswith(("http://", "https://")):
-            return await goo_generate_parse(
-                user_api_key=cfg.api_key,
-                team_api_key=cfg.team_key,
-                service=cfg.service_code,
-                listing_url=listing,
-                profile_id=cfg.profile_id,
-            )
-        offer = None
-        if listing:
-            from services.offer_storage import find_offer_by_link
-
-            offer = await find_offer_by_link(session, user_id=int(user.id), ad_url=listing)
-        resolved_image = await resolve_aqua_image_url(session, user, offer, image)
-        return await goo_generate_no_parse(
-            user_api_key=cfg.api_key,
-            team_api_key=cfg.team_key,
-            service=cfg.service_code,
-            name=(title or "").strip() or "Item",
+    offer = None
+    if listing:
+        offer = await find_offer_by_link(session, user_id=int(user.id), ad_url=listing)
+    if offer is None:
+        offer = SimpleNamespace(
+            title=(title or "").strip() or "Item",
             price=(price or "").strip() or "0",
-            profile_id=cfg.profile_id,
-            image=resolved_image or None,
+            photo=(image or "").strip() or None,
+            link=listing or None,
+            item_link=listing or None,
+            raw_json=None,
         )
-    except GooError as e:
-        raise AquaError(str(e)) from e
+    return await aqua_generate_for_offer(
+        session,
+        user,
+        offer,
+        listing_url=listing or None,
+        price=(price or "").strip() or None,
+    )
 
 
 @dataclass

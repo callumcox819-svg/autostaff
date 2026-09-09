@@ -182,10 +182,9 @@ def settings_menu_kb(flags: dict[str, bool]) -> InlineKeyboardMarkup:
                 inline_button("proxy", "Прокси", callback_data="settings_proxies"),
             ],
             [
-                inline_button("key", "Ключ", callback_data="aqua_show:key"),
+                inline_button("key", "Команды API", callback_data="api_teams"),
             ],
             [
-                inline_button("profile", "Профиль", callback_data="aqua_show:profile"),
                 inline_button("hide", "Скрыть", callback_data="ref_hide"),
             ],
         ]

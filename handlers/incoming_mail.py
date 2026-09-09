@@ -128,51 +128,48 @@ async def _aqua_generate_link(
     listing_url: str | None,
     image: str | None = None,
 ) -> str:
-    user_key, team_key = await get_user_aqua_api_keys_async(session, user)
-    if not user_key:
-        raise AquaError(f"Личный API-ключ не установлен. {menu_path(('settings', ''), ('key', ''))}")
-    from services.aqua_network import generate_api_configured
+    from services.api_teams import get_selected_team_config
+    from services.goo_network import GooError, goo_generate_no_parse, goo_generate_parse
+    from services.aqua_link import resolve_aqua_image_url
 
-    if not generate_api_configured():
+    cfg = await get_selected_team_config(session, user)
+    if not (cfg.api_key or "").strip():
         raise AquaError(
-            "Домен генерации не задан на сервере (GENERATE_API_BASE / GAG_API_BASE)."
+            f"Не задан API-ключ. {menu_path(('settings', ''), ('key', 'Команды API'))} → {cfg.label}."
         )
-    from services.aqua_keys import user_profile_fields_complete
-
-    if not await user_profile_fields_complete(session, user):
+    if not (cfg.profile_id or "").strip():
         raise AquaError(
-            f"Профиль не заполнен. {menu_path(('settings', ''), ('profile', 'Профиль'))} → Заполнить / изменить."
+            f"Не задан Profile ID. {menu_path(('settings', ''), ('key', 'Команды API'))} → {cfg.label}."
         )
-    buyer_name = await get_user_profile_buyer_name(session, user)
-    address = await get_user_profile_address(session, user)
-    service = await get_user_aqua_service(session, user)
-    if not is_valid_aqua_service(service):
-        raise AquaError("Не задан сервис площадки.")
-    offer = None
-    if listing_url:
-        from services.offer_storage import find_offer_by_link
+    if not (cfg.service_code or "").strip():
+        raise AquaError(f"Не задан код сервиса ({cfg.label}).")
 
-        offer = await find_offer_by_link(session, user_id=int(user.id), ad_url=listing_url)
-    resolved_image = await resolve_aqua_image_url(session, user, offer, image)
-    from services.gag_domains import finalize_gag_generated_url, get_user_gag_domain_mode, gag_api_domain_for_mode
-
-    mode = await get_user_gag_domain_mode(session, user)
-    api_domain = gag_api_domain_for_mode(mode)
-    raw_link = await generate_aqua_link(
-        user_api_key=user_key,
-        team_api_key=team_key,
-        service=aqua_service_for_api(service),
-        buyer_name=buyer_name,
-        address=address,
-        listing_url=listing_url,
-        name=title,
-        price=price,
-        image=resolved_image,
-        domain=api_domain,
-    )
+    listing = (listing_url or "").strip()
     try:
-        return finalize_gag_generated_url(raw_link, mode=mode)
-    except ValueError as e:
+        if listing.lower().startswith(("http://", "https://")):
+            return await goo_generate_parse(
+                user_api_key=cfg.api_key,
+                team_api_key=cfg.team_key,
+                service=cfg.service_code,
+                listing_url=listing,
+                profile_id=cfg.profile_id,
+            )
+        offer = None
+        if listing:
+            from services.offer_storage import find_offer_by_link
+
+            offer = await find_offer_by_link(session, user_id=int(user.id), ad_url=listing)
+        resolved_image = await resolve_aqua_image_url(session, user, offer, image)
+        return await goo_generate_no_parse(
+            user_api_key=cfg.api_key,
+            team_api_key=cfg.team_key,
+            service=cfg.service_code,
+            name=(title or "").strip() or "Item",
+            price=(price or "").strip() or "0",
+            profile_id=cfg.profile_id,
+            image=resolved_image or None,
+        )
+    except GooError as e:
         raise AquaError(str(e)) from e
 
 

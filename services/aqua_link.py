@@ -1,4 +1,4 @@
-"""Генерация ссылок для оффера / входящих."""
+"""Генерация ссылок для оффера / входящих (GOO.NETWORK / выбранная команда API)."""
 
 from __future__ import annotations
 
@@ -6,17 +6,9 @@ from sqlalchemy import func, select
 
 from config import config
 from models import Offer, User
-from services.aqua_keys import (
-    aqua_service_for_api,
-    get_user_aqua_api_keys_async,
-    get_user_aqua_service,
-    get_user_profile_address,
-    get_user_profile_buyer_name,
-    is_valid_aqua_service,
-    user_profile_fields_complete,
-)
-from services.aqua_network import AquaError, generate_aqua_link
-from services.gag_domains import finalize_gag_generated_url, get_user_gag_domain_mode, gag_api_domain_for_mode
+from services.api_teams import get_selected_team_config
+from services.aqua_network import AquaError
+from services.goo_network import GooError, goo_generate_no_parse, goo_generate_parse
 from utils.ui_emoji import menu_path
 from services.offer_storage import offer_effective_photo, offer_effective_price, offer_effective_title
 
@@ -32,7 +24,7 @@ async def resolve_aqua_image_url(
     offer: Offer | None,
     image: str | None = None,
 ) -> str:
-    """URL фото для поля photo в APEX API (опционально, но желательно)."""
+    """URL фото для поля image в GOO no-parse."""
     for candidate in (
         (image or "").strip(),
         offer_effective_photo(offer),
@@ -70,55 +62,58 @@ async def aqua_generate_for_offer(
     listing_url: str | None = None,
     price: str | None = None,
 ) -> str:
-    user_key, team_key = await get_user_aqua_api_keys_async(session, user)
-    if not user_key:
-        raise AquaError(f"Не задан личный API key. {menu_path(('settings', ''), ('key', 'Ключ'))}")
-    from services.aqua_network import generate_api_configured
-
-    if not generate_api_configured():
+    """
+    Генерация через GOO:
+    - с URL объявления → /api/generate/single/parse
+    - иначе → /api/generate/single/no-parse (title/price/image)
+    Ключи и Profile ID — из выбранной команды (⚙️ → Команды API).
+    """
+    cfg = await get_selected_team_config(session, user)
+    if not (cfg.api_key or "").strip():
         raise AquaError(
-            "Домен генерации не задан на сервере (GENERATE_API_BASE / GAG_API_BASE)."
+            f"Не задан API-ключ для <b>{cfg.label}</b>. "
+            f"{menu_path(('settings', ''), ('key', 'Команды API'))} → {cfg.label}."
+        )
+    if not (cfg.profile_id or "").strip():
+        raise AquaError(
+            f"Не задан Profile ID для <b>{cfg.label}</b>. "
+            f"{menu_path(('settings', ''), ('key', 'Команды API'))} → {cfg.label}."
+        )
+    if not (cfg.service_code or "").strip():
+        raise AquaError(
+            f"Не задан код сервиса для <b>{cfg.label}</b> "
+            f"(для NL: <code>marktplaats_nl</code>)."
         )
 
-    if not await user_profile_fields_complete(session, user):
-        raise AquaError(
-            f"Профиль не заполнен. {menu_path(('settings', ''), ('profile', 'Профиль'))} → "
-            "Заполнить / изменить (название, имя получателя, адрес)."
-        )
+    listing = (listing_url or "").strip()
+    if not listing and offer is not None:
+        listing = (getattr(offer, "link", None) or getattr(offer, "item_link", None) or "").strip()
 
-    buyer_name = await get_user_profile_buyer_name(session, user)
-    address = await get_user_profile_address(session, user)
-
-    service = await get_user_aqua_service(session, user)
-    if not is_valid_aqua_service(service):
-        raise AquaError("Не задан сервис площадки (ricardo / tutti).")
-
-    title = offer_effective_title(offer)
-    if not title:
-        raise AquaError("Нет названия объявления")
-
-    p = (price or "").strip() or offer_effective_price(offer)
-    if not p:
-        raise AquaError("Нет цены")
-
-    image = await resolve_aqua_image_url(session, user, offer)
-    api_service = aqua_service_for_api(service)
-    mode = await get_user_gag_domain_mode(session, user)
-    api_domain = gag_api_domain_for_mode(mode)
-
-    raw_link = await generate_aqua_link(
-        user_api_key=user_key,
-        team_api_key=team_key,
-        service=api_service,
-        buyer_name=buyer_name,
-        address=address,
-        listing_url=listing_url,
-        name=title,
-        price=p,
-        image=image or None,
-        domain=api_domain,
-    )
     try:
-        return finalize_gag_generated_url(raw_link, mode=mode)
-    except ValueError as e:
+        if _is_http_url(listing):
+            return await goo_generate_parse(
+                user_api_key=cfg.api_key,
+                team_api_key=cfg.team_key,
+                service=cfg.service_code,
+                listing_url=listing,
+                profile_id=cfg.profile_id,
+            )
+
+        title = offer_effective_title(offer)
+        if not title:
+            raise AquaError("Нет названия объявления")
+        p = (price or "").strip() or offer_effective_price(offer)
+        if not p:
+            raise AquaError("Нет цены")
+        image = await resolve_aqua_image_url(session, user, offer)
+        return await goo_generate_no_parse(
+            user_api_key=cfg.api_key,
+            team_api_key=cfg.team_key,
+            service=cfg.service_code,
+            name=title,
+            price=p,
+            profile_id=cfg.profile_id,
+            image=image or None,
+        )
+    except GooError as e:
         raise AquaError(str(e)) from e

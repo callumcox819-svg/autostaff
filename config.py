@@ -144,7 +144,8 @@ class Config:
     )
     VALIDEMAIL_MAX_RETRIES = _validemail_max_retries_default()
 
-    GLOBAL_SUBJECT_TEMPLATE = os.getenv("GLOBAL_SUBJECT_TEMPLATE", "Re: OFFER").strip() or "Re: OFFER"
+    # Cold outreach: без фейкового Re: (нет истории треда). Пользовательские темы — в «Темы писем».
+    GLOBAL_SUBJECT_TEMPLATE = os.getenv("GLOBAL_SUBJECT_TEMPLATE", "OFFER").strip() or "OFFER"
 
     # Generate API (личный apikey у пользователя; домен — GENERATE_API_BASE / GAG_API_BASE)
     GAG_API_BASE = (

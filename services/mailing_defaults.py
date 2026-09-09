@@ -1,12 +1,13 @@
-"""Запасные тексты рассылки (CH/DE), если умные пресеты пусты."""
+"""Запасные тексты рассылки, если умные пресеты пусты."""
 
 from __future__ import annotations
 
 # Spintax + OFFER подставится в finalize_mailing_body / apply_offer_to_text
 MAILING_FALLBACK_BODIES: tuple[str, ...] = (
-    "{Grüezi|Hallo|Guten Tag}! Ist der Artikel «OFFER» noch verfügbar?",
-    "Hallo, ich interessiere mich für «OFFER». Ist es noch zu haben?",
-    "{Grüezi|Guten Tag} – noch verfügbar: OFFER? Besten Dank.",
-    "Kurze Frage: verkaufen Sie «OFFER» noch? Freundliche Grüsse.",
-    "Hallo, ich würde gerne wissen, ob «OFFER» noch aktuell ist. Danke!",
+    "{Beste|Hoi|Hallo}, is «OFFER» nog beschikbaar?",
+    "Hallo, ik heb interesse in «OFFER». Is het nog te koop?",
+    "{Beste|Hoi} – nog beschikbaar: OFFER? Alvast bedankt.",
+    "Korte vraag: verkoopt u «OFFER» nog? Groetjes.",
+    "Hallo, is «OFFER» nog actueel? Dank je wel!",
+    "Hi, is «OFFER» still available? Thanks!",
 )

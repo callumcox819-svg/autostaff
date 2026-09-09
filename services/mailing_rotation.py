@@ -35,6 +35,32 @@ async def last_sent_ts_by_account(session, user_id: int) -> dict[str, float]:
     return out
 
 
+async def sent_count_last_hour_by_account(session, user_id: int) -> dict[str, int]:
+    """email.lower() → число успешных отправок за последний час."""
+    from datetime import datetime, timedelta
+
+    since = datetime.utcnow() - timedelta(hours=1)
+    rows = (
+        await session.execute(
+            select(
+                MailingSendLog.from_account_email,
+                func.count(MailingSendLog.id),
+            )
+            .where(MailingSendLog.user_id == int(user_id))
+            .where(MailingSendLog.from_account_email.is_not(None))
+            .where(MailingSendLog.sent_at >= since)
+            .group_by(MailingSendLog.from_account_email)
+        )
+    ).all()
+    out: dict[str, int] = {}
+    for em, cnt in rows:
+        key = (em or "").strip().lower()
+        if not key:
+            continue
+        out[key] = int(cnt or 0)
+    return out
+
+
 def order_accounts_for_burst(
     accounts: Sequence[EmailAccount],
     *,

@@ -255,7 +255,7 @@ def _log_mailing_env_once() -> None:
     from services.mailing_deliverability import log_deliverability_profile
     from utils.ui_emoji import log_emoji_profile
 
-    subj = (getattr(config, "GLOBAL_SUBJECT_TEMPLATE", None) or "Re: OFFER").strip()
+    subj = (getattr(config, "GLOBAL_SUBJECT_TEMPLATE", None) or "OFFER").strip()
     logger.info("global mailing subject template: %r (OFFER = item title)", subj)
     log_deliverability_profile(logger)
     log_emoji_profile()

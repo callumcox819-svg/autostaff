@@ -40,8 +40,8 @@ def _usable_offer_title(offer_title: str) -> str:
 
 def global_subject_template() -> str:
     """Один шаблон на весь бот (Railway / .env)."""
-    tpl = (getattr(config, "GLOBAL_SUBJECT_TEMPLATE", None) or "Re: OFFER").strip()
-    return tpl or "Re: OFFER"
+    tpl = (getattr(config, "GLOBAL_SUBJECT_TEMPLATE", None) or "OFFER").strip()
+    return tpl or "OFFER"
 
 
 def render_subject_with_offer(subject_template: str, offer_title: str) -> str:
@@ -105,11 +105,11 @@ async def mailing_subject_for_user(session, user, offer_title: str) -> str:
 
 def _mailing_subject_templates() -> tuple[str, ...]:
     """Все шаблоны темы /send — OFFER = полное item_title из БД."""
-    from services.mailing_deliverability import CH_INBOX_SUBJECT_PRESETS
+    from services.mailing_deliverability import INBOX_SUBJECT_PRESETS
 
     seen: set[str] = set()
     out: list[str] = []
-    for tpl in (*CH_INBOX_SUBJECT_PRESETS, global_subject_template(), "Re: OFFER"):
+    for tpl in (*INBOX_SUBJECT_PRESETS, global_subject_template(), "OFFER"):
         t = sanitize_email_subject((tpl or "").strip())
         if not t or t in seen:
             continue

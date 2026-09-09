@@ -13,11 +13,19 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import db_session
 from models import EmailAccount, OfferEmail
-from services.mailing_deliverability import burst_wave_gap_sec, inbox_stagger_ms, log_deliverability_profile
+from services.mailing_deliverability import (
+    burst_single_proxy_wave_gap_sec,
+    burst_wave_gap_sec,
+    inbox_stagger_ms,
+    log_deliverability_profile,
+    mailing_fast_mode,
+    mailing_max_per_account_hour,
+)
 from services.mailing_rotation import (
     last_sent_ts_by_account,
     order_accounts_for_burst,
     pair_targets_with_accounts,
+    sent_count_last_hour_by_account,
 )
 from services.mailing_send import send_mailing_one_parallel
 from services.residential_proxy import (
@@ -164,9 +172,24 @@ async def _send_pair(
     on_failure: Callable[[OfferEmail, str, EmailAccount], Awaitable[bool]],
     start_delay_sec: float = 0.0,
     per_letter_timeout_sec: int = 90,
+    hour_counts: dict[str, int] | None = None,
+    hour_cap: int = 0,
+    hour_lock: asyncio.Lock | None = None,
 ) -> Tuple[int, int]:
     if start_delay_sec > 0:
         await asyncio.sleep(start_delay_sec)
+
+    em = (account.email or "").strip().lower()
+    if hour_cap > 0 and hour_counts is not None and em:
+        lock = hour_lock or asyncio.Lock()
+        async with lock:
+            if int(hour_counts.get(em, 0)) >= hour_cap:
+                await on_failure(
+                    tgt,
+                    f"ACCOUNT_SOFT_CAP|limit|{hour_cap}/hour",
+                    account,
+                )
+                return 0, 1
 
     try:
         async with db_session() as session:
@@ -183,6 +206,10 @@ async def _send_pair(
             per_letter_timeout_sec=per_letter_timeout_sec,
         )
         if ok:
+            if hour_counts is not None and em:
+                lock = hour_lock or asyncio.Lock()
+                async with lock:
+                    hour_counts[em] = int(hour_counts.get(em, 0)) + 1
             await on_success(tgt, subject, (account.email or "").strip())
             return 1, 0
         await on_failure(tgt, err, account)
@@ -236,6 +263,7 @@ async def run_burst_mailing(
     async with db_session() as session:
         sticky_px = await pick_sticky_proxy_for_fast_mailing(session, int(db_user_id))
         last_sent = await last_sent_ts_by_account(session, int(db_user_id))
+        hour_counts = await sent_count_last_hour_by_account(session, int(db_user_id))
         from services.smtp_proxy_send import _list_active_mailing_proxies
 
         n_proxies = len(await _list_active_mailing_proxies(session, int(db_user_id)))
@@ -244,8 +272,31 @@ async def run_burst_mailing(
 
     log_deliverability_profile(logger)
 
+    hour_cap = mailing_max_per_account_hour()
+    hour_lock = asyncio.Lock()
+
     sticky_proxy_id = int(sticky_px.id)
     acc_ordered = order_accounts_for_burst(list(accounts), last_sent=last_sent)
+    if hour_cap > 0:
+        eligible = [
+            a
+            for a in acc_ordered
+            if int(hour_counts.get((a.email or "").strip().lower(), 0)) < hour_cap
+        ]
+        if eligible:
+            skipped = len(acc_ordered) - len(eligible)
+            if skipped:
+                logger.info(
+                    "soft cap %s/h: skip %s accounts already at limit",
+                    hour_cap,
+                    skipped,
+                )
+            acc_ordered = eligible
+        else:
+            logger.warning(
+                "soft cap %s/h: all accounts at limit — sending anyway with first wave only",
+                hour_cap,
+            )
     per_letter_tmo = burst_per_letter_timeout_sec(sticky_px, num_proxies=n_proxies or 1)
     wave_size = burst_wave_size_for_proxy(
         sticky_px, len(acc_ordered), num_proxies=n_proxies or 1
@@ -269,9 +320,13 @@ async def run_burst_mailing(
     waves = split_into_waves(pairs, wave_size=wave_size)
     est_wave = min(float(per_letter_tmo) * 0.05, 4.0)
     wave_gap = burst_wave_gap_sec(len(waves), estimated_wave_sec=est_wave)
-    # При одном прокси и большой волне — без искусственных пауз между волнами.
+    # Один sticky-прокси + большая волна: в inbox не схлопывать паузу; в fast — старый потолок.
     if (n_proxies or 1) <= 1 and wave_size >= 12:
-        wave_gap = min(wave_gap, float(os.getenv("BURST_SINGLE_PROXY_WAVE_GAP_SEC", "0.05")))
+        single_gap = burst_single_proxy_wave_gap_sec()
+        if mailing_fast_mode():
+            wave_gap = min(wave_gap, single_gap)
+        else:
+            wave_gap = max(wave_gap, single_gap)
     stagger_s = inbox_stagger_ms() / 1000.0
 
     sent = failed = 0
@@ -295,6 +350,9 @@ async def run_burst_mailing(
                     on_failure=on_failure,
                     start_delay_sec=(stagger_s * j) + random.uniform(0, stagger_s * 0.25),
                     per_letter_timeout_sec=per_letter_tmo,
+                    hour_counts=hour_counts,
+                    hour_cap=hour_cap,
+                    hour_lock=hour_lock,
                 )
                 for j, (tgt, acc) in enumerate(wave)
             ],

@@ -204,8 +204,24 @@ async def _build_message_for_target(
     buyer_name = ((await get_user_setting(session, user, AQUA_PROFILE_NAME_KEY)) or "").strip()
     address = ((await get_user_setting(session, user, AQUA_PROFILE_ADDRESS_KEY)) or "").strip()
 
+    from services.mailing_deliverability import (
+        build_inbox_mailing_copy,
+        finalize_inbox_mail,
+        mailing_inbox_success_profile,
+        pick_inbox_success_body,
+    )
+    from services.mailing_subjects import get_subject_lines
     from services.subject_offer import mailing_subject_for_user
-    from services.mailing_deliverability import finalize_inbox_mail
+
+    # Короткий inbox-профиль (глобально вкл.) — лучше для Inbox.
+    # Пользовательские «Темы писем» сохраняем; тело берём короткое.
+    if mailing_inbox_success_profile():
+        custom = await get_subject_lines(session, user)
+        if custom:
+            subject = await mailing_subject_for_user(session, user, item_title or "")
+            body = pick_inbox_success_body()
+            return finalize_inbox_mail(subject, body, offer_title=item_title or "")
+        return build_inbox_mailing_copy(item_title or "")
 
     subject = await mailing_subject_for_user(session, user, item_title or "")
 

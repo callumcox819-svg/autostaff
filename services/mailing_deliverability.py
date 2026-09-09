@@ -1,7 +1,8 @@
 """
 Inbox placement — чтобы письма попадали в Inbox получателя, а не в Spam.
 
-Не «доставка SMTP» (250 OK), а контент + паттерн отправки под фильтры Gmail/Outlook.
+Глобально для всей рассылки (/send, тест-мейл): контент + паузы BURST + заголовки.
+Не привязано к площадке/локали сервиса.
 """
 
 from __future__ import annotations
@@ -10,98 +11,75 @@ import os
 import random
 import re
 
-from email.message import EmailMessage
-
 LINK_RE = re.compile(r"https?://[^\s<>\"']+", re.I)
 LINK_PLACEHOLDER_RE = re.compile(r"\{\{\s*LINK\s*\}\}", re.I)
 HTML_TAG_RE = re.compile(r"<[^>]+>")
-FAKE_REPLY_SUBJ_RE = re.compile(r"^\s*(re|aw|fwd|fw)\s*:\s*", re.I)
+FAKE_REPLY_SUBJ_RE = re.compile(r"^\s*(?:re|aw|fwd|fw|wg)\s*:\s*", re.I)
 _OFFER_TOKEN_RE = re.compile(r"\bOFFER\b", re.IGNORECASE)
-# Триггеры массовой рассылки / спама (DE + EN)
 _SPAM_PHRASES_RE = re.compile(
     r"\b("
     r"click here|act now|limited time|free money|winner|congratulations|"
     r"unsubscribe|klicken sie|jetzt kaufen|gratis|gewonnen|dringend|"
+    r"klik hier|nu kopen|beperkte tijd|"
     r"100%|!!!+|urgent|offer expires"
     r")\b",
     re.I,
 )
 _CAPS_WORD_RE = re.compile(r"\b[A-ZÄÖÜ]{5,}\b")
 
-# Темы как у обычного покупателя; в каждой MUST быть OFFER → название товара
-CH_INBOX_SUBJECT_PRESETS: tuple[str, ...] = (
+# Основные темы cold outreach (OFFER → название товара). Без фейкового Re:.
+INBOX_SUBJECT_PRESETS: tuple[str, ...] = (
     "OFFER",
-    "Kurze Frage zu OFFER",
-    "Noch verfügbar? OFFER",
-    "Interesse an OFFER",
-    "OFFER – noch da?",
-    "Frage zu OFFER",
-    "Anfrage: OFFER",
-    "OFFER – noch aktuell?",
-    "Kurze Anfrage zu OFFER",
-    "Haben Sie OFFER noch?",
-    "Ist OFFER noch zu haben?",
-    "Noch nicht verkauft? OFFER",
-    "Kaufinteresse: OFFER",
-    "OFFER – noch im Verkauf?",
-    "Guten Tag, OFFER noch verfügbar?",
+    "Vraag over OFFER",
+    "Nog beschikbaar? OFFER",
+    "Interesse in OFFER",
+    "OFFER – nog te koop?",
+    "Korte vraag over OFFER",
+    "OFFER nog actueel?",
+    "Is OFFER nog beschikbaar?",
+    "Nog niet verkocht? OFFER",
+    "Hallo, OFFER nog te koop?",
+    "Vraag: OFFER",
+    "OFFER – nog aanwezig?",
+    "Beste, OFFER nog beschikbaar?",
+    # короткие EN/универсальные — меньше «шаблонной» одинаковости
+    "Question about OFFER",
+    "Is OFFER still available?",
 )
+
+# Legacy alias (старые импорты)
+CH_INBOX_SUBJECT_PRESETS = INBOX_SUBJECT_PRESETS
 
 _INBOX_OPENERS: tuple[str, ...] = (
     "",
-    "Grüezi!\n\n",
-    "Guten Tag,\n\n",
+    "Beste,\n\n",
+    "Hoi,\n\n",
     "Hallo,\n\n",
+    "Goedemiddag,\n\n",
+    "Hi,\n\n",
 )
 
-# Лёгкая уникализация тела (каждое письмо чуть отличается)
 _INBOX_CLOSINGS: tuple[str, ...] = (
     "",
-    "Danke!",
-    "Freundliche Grüsse",
-    "Besten Dank",
-    "LG",
-    "Vielen Dank im Voraus",
+    "Dank je!",
+    "Alvast bedankt",
+    "Groetjes",
+    "Met vriendelijke groet",
+    "Bedankt!",
+    "Thanks!",
 )
 
-# Короткие тексты как в успешном inbox .eml (без OFFER/ссылок в теле)
+# Короткие тела как у успешных inbox-писем (без ссылок / OFFER в теле)
 INBOX_SUCCESS_BODIES: tuple[str, ...] = (
-    "Guten Tag, ist Ihr Inserat noch zu haben?",
-    "Hallo, ist Ihr Inserat noch verfügbar?",
-    "Grüezi, ist Ihr Inserat noch aktuell?",
-    "Guten Tag, ist der Artikel noch zu haben?",
-    "Hallo, noch zu verkaufen?",
+    "Beste, is uw advertentie nog beschikbaar?",
+    "Hallo, is uw advertentie nog te koop?",
+    "Hoi, is dit nog actueel?",
+    "Beste, is het artikel nog beschikbaar?",
+    "Hallo, nog te koop?",
+    "Goedemiddag, is dit nog niet verkocht?",
+    "Hi, is this still available?",
+    "Hello, is your listing still for sale?",
 )
-
-
-def mailing_inbox_success_profile() -> bool:
-    """Опционально: короткий inbox-текст без умных пресетов (выкл. по умолчанию)."""
-    return _env_on("MAILING_INBOX_SUCCESS_PROFILE", default="0")
-
-
-def pick_inbox_success_body() -> str:
-    return random.choice(INBOX_SUCCESS_BODIES)
-
-
-def mailing_subject_display_title(offer_title: str) -> str:
-    """В теме — короткая подпись; в спам уходит голое OFFER или простыня."""
-    t = (offer_title or "").strip()
-    if len(t) < 3 or t.upper() in ("OFFER", "TEST", "ARTIKEL", "—", "-"):
-        return "Anzeige"
-    if len(t) > 56:
-        return t[:53].rstrip() + "…"
-    return t
-
-
-def build_inbox_mailing_copy(offer_title: str) -> tuple[str, str]:
-    """
-    Subject + body как в успешном Kurze Anfrage zu Anzeige.eml:
-    plain, короткий DE, без Re: и без шаблонного OFFER в теле.
-    """
-    label = mailing_subject_display_title(offer_title)
-    subj = pick_rotating_subject(label, presets_only=True)
-    body = pick_inbox_success_body()
-    return finalize_inbox_mail(subj, body, offer_title=label)
 
 
 def _env_on(name: str, *, default: str = "1") -> bool:
@@ -113,23 +91,51 @@ def _env_on(name: str, *, default: str = "1") -> bool:
     )
 
 
+def mailing_fast_mode() -> bool:
+    """Старый агрессивный BURST (почти без пауз)."""
+    return _env_on("MAILING_FAST_MODE", default="0")
+
+
+def mailing_inbox_success_profile() -> bool:
+    """Короткий inbox-текст вместо длинных умных пресетов. По умолчанию вкл."""
+    return _env_on("MAILING_INBOX_SUCCESS_PROFILE", default="1")
+
+
+def pick_inbox_success_body() -> str:
+    return random.choice(INBOX_SUCCESS_BODIES)
+
+
+def mailing_subject_display_title(offer_title: str) -> str:
+    t = (offer_title or "").strip()
+    if len(t) < 3 or t.upper() in ("OFFER", "TEST", "ARTIKEL", "—", "-", "ADVERTENTIE"):
+        return "advertentie"
+    if len(t) > 56:
+        return t[:53].rstrip() + "…"
+    return t
+
+
+def build_inbox_mailing_copy(offer_title: str) -> tuple[str, str]:
+    """Subject + body: короткий plain cold mail без Re: и без ссылок."""
+    label = mailing_subject_display_title(offer_title)
+    subj = pick_rotating_subject(label, presets_only=True)
+    body = pick_inbox_success_body()
+    return finalize_inbox_mail(subj, body, offer_title=label)
+
+
 def mailing_plain_only() -> bool:
-    """Plain text — HTML multipart чаще уходит в Spam на cold mail."""
     return _env_on("MAILING_PLAIN_ONLY", default="1")
 
 
 def mailing_minimal_headers() -> bool:
-    """True = только email в From (хуже для inbox). False = имя + Reply-To как у Gmail-клиента."""
     return _env_on("MAILING_MINIMAL_HEADERS", default="0")
 
 
 def mailing_body_variation() -> bool:
-    """Случайные приветствия/подписи — по умолчанию выкл., текст как в пресете."""
-    return _env_on("MAILING_BODY_VARIATION", default="0")
+    """Случайные приветствия/подписи — по умолчанию вкл."""
+    return _env_on("MAILING_BODY_VARIATION", default="1")
 
 
 def mailing_strip_link() -> bool:
-    """Без URL в первом касании — ссылка в ответе/HTML (inbox-safe)."""
     return _env_on("MAILING_STRIP_LINK", default="1")
 
 
@@ -137,43 +143,47 @@ def mailing_ehlo_name() -> str | None:
     raw = (os.getenv("MAILING_EHLO_NAME") or os.getenv("SMTP_EHLO_HOSTNAME") or "").strip()
     if raw:
         return raw[:253]
-    # Как у Gmail mobile при SMTP — не FQDN сервера Railway
     return "[127.0.0.1]"
 
 
+def mailing_max_per_account_hour() -> int:
+    """Мягкий лимит писем с одного Gmail за скользящий час (0 = выкл.)."""
+    return max(0, min(500, int(os.getenv("MAILING_MAX_PER_ACCOUNT_HOUR", "40"))))
+
+
 def inbox_stagger_ms() -> int:
-    """Микро-задержка старта каждого ящика внутри волны (не одновременный залп)."""
-    # По умолчанию — чуть меньше, чтобы BURST не выглядел "негновенным" при волнах.
-    return max(0, min(400, int(os.getenv("INBOX_STAGGER_MS", "0"))))
+    default = "0" if mailing_fast_mode() else "80"
+    return max(0, min(400, int(os.getenv("INBOX_STAGGER_MS", default))))
 
 
 def inbox_account_gap_sec() -> float:
-    """Пауза между волнами с одного Gmail (если адресов > ящиков)."""
-    return max(0.0, min(3.0, float(os.getenv("INBOX_ACCOUNT_GAP_SEC", "0.0"))))
+    default = "0.0" if mailing_fast_mode() else "0.4"
+    return max(0.0, min(3.0, float(os.getenv("INBOX_ACCOUNT_GAP_SEC", default))))
 
 
 def burst_target_max_sec() -> float:
-    """Целевое время burst на всю очередь (адаптивный gap между волнами)."""
-    return max(2.0, min(60.0, float(os.getenv("BURST_TARGET_MAX_SEC", "2"))))
+    default = "2" if mailing_fast_mode() else "18"
+    return max(2.0, min(120.0, float(os.getenv("BURST_TARGET_MAX_SEC", default))))
+
+
+def burst_single_proxy_wave_gap_sec() -> float:
+    default = "0.05" if mailing_fast_mode() else "0.35"
+    return max(0.0, min(2.0, float(os.getenv("BURST_SINGLE_PROXY_WAVE_GAP_SEC", default))))
 
 
 def burst_wave_gap_sec(num_waves: int, *, estimated_wave_sec: float = 3.0) -> float:
-    """
-    Inbox-safe пауза между волнами.
-    При BURST_ADAPTIVE_GAP=1 укладывается в BURST_TARGET_MAX_SEC (по умолчанию 10с).
-    """
     if num_waves <= 1:
         return 0.0
     base = inbox_account_gap_sec()
     if not _env_on("BURST_ADAPTIVE_GAP", default="1"):
         return base
     budget = max(0.0, burst_target_max_sec() - estimated_wave_sec)
+    min_default = "0.0" if mailing_fast_mode() else "0.15"
+    min_gap = max(0.0, min(1.0, float(os.getenv("BURST_MIN_WAVE_GAP_SEC", min_default))))
     if budget <= 0:
-        min_gap = max(0.0, min(1.0, float(os.getenv("BURST_MIN_WAVE_GAP_SEC", "0.0"))))
         return max(min_gap, base)
     adaptive = budget / max(1, num_waves - 1)
-    min_gap = max(0.0, min(1.0, float(os.getenv("BURST_MIN_WAVE_GAP_SEC", "0.0"))))
-    return max(min_gap, min(1.5, min(base + 0.05, adaptive)))
+    return max(min_gap, min(1.5, max(base, min(base + 0.15, adaptive))))
 
 
 def inbox_max_body_chars() -> int:
@@ -190,12 +200,14 @@ def strip_links_from_body(body: str) -> str:
 
 def sanitize_subject_for_inbox(subject: str) -> str:
     s = (subject or "").replace("\r\n", " ").replace("\n", " ").strip()
-    # Re: OFFER из GLOBAL_SUBJECT_TEMPLATE не снимаем — осознанный префикс для инбокса.
-    s = re.sub(r"^\s*betreff\s*:\s*", "", s, flags=re.I).strip()
+    # Cold outreach: снимаем фейковый Re:/Aw: (нет истории треда).
+    while FAKE_REPLY_SUBJ_RE.match(s):
+        s = FAKE_REPLY_SUBJ_RE.sub("", s).strip()
+    s = re.sub(r"^\s*(?:betreff|onderwerp|subject)\s*:\s*", "", s, flags=re.I).strip()
     s = re.sub(r"\s+", " ", s)
     if len(s) > 78:
         s = s[:75] + "…"
-    return s or "Anfrage"
+    return s or "Vraag"
 
 
 def sanitize_body_for_inbox(body: str) -> str:
@@ -212,12 +224,12 @@ def sanitize_body_for_inbox(body: str) -> str:
 
 
 def add_inbox_body_variation(body: str) -> str:
-    """Микро-уникализация — разные подписи и приветствия."""
     if not mailing_body_variation():
         return (body or "").strip()
     b = (body or "").strip()
     opener = random.choice(_INBOX_OPENERS)
-    if opener and not b.lower().startswith(("grüezi", "guten tag", "hallo", "hello")):
+    starts = ("beste", "hoi", "goedemiddag", "hallo", "hello", "hi", "grüezi", "guten tag")
+    if opener and not b.lower().startswith(starts):
         b = f"{opener.strip()}\n\n{b}" if opener.strip() else b
     closing = random.choice(_INBOX_CLOSINGS)
     if not closing:
@@ -236,7 +248,6 @@ def apply_mailing_body_policy(body: str) -> str:
 
 
 def finalize_inbox_mail(subject: str, body: str, *, offer_title: str = "") -> tuple[str, str]:
-    """Финальная обработка subject+body перед SMTP (inbox placement)."""
     subj = sanitize_subject_for_inbox(subject)
     b = apply_mailing_body_policy(body)
     subj, b = _scrub_offer_leaks(subj, b, offer_title)
@@ -244,7 +255,6 @@ def finalize_inbox_mail(subject: str, body: str, *, offer_title: str = "") -> tu
 
 
 def _scrub_offer_leaks(subject: str, body: str, offer_title: str) -> tuple[str, str]:
-    """Убрать необработанный Offer/OFFER только из тела (тема уже из GLOBAL_SUBJECT_TEMPLATE)."""
     title = (offer_title or "").strip()
 
     def _repl_body(text: str) -> str:
@@ -254,13 +264,12 @@ def _scrub_offer_leaks(subject: str, body: str, offer_title: str) -> tuple[str, 
             return text
         if title:
             return re_sub_literal(_OFFER_TOKEN_RE, title, text)
-        return re_sub_literal(_OFFER_TOKEN_RE, "Ihr Inserat", text)
+        return re_sub_literal(_OFFER_TOKEN_RE, "uw advertentie", text)
 
     return subject, _repl_body(body)
 
 
 def mailing_rotate_subject() -> bool:
-    """Случайная тема из CH_INBOX_SUBJECT_PRESETS (всегда с подстановкой OFFER)."""
     return _env_on("MAILING_ROTATE_SUBJECT", default="1")
 
 
@@ -272,7 +281,7 @@ def pick_rotating_subject(
 ) -> str:
     from services.subject_offer import global_subject_template, render_subject_with_offer
 
-    pool: list[str] = list(CH_INBOX_SUBJECT_PRESETS)
+    pool: list[str] = list(INBOX_SUBJECT_PRESETS)
     ut = (user_template or "").strip()
     if ut:
         pool = [ut]
@@ -286,16 +295,19 @@ def pick_rotating_subject(
 
 def log_deliverability_profile(logger) -> None:
     logger.info(
-        "Inbox placement: success_profile=%s rotate_subject=%s plain=%s minimal_hdr=%s body_var=%s no_links=%s "
-        "stagger_ms=%s wave_gap=%.2fs burst_target=%.0fs ehlo=%s",
+        "Inbox placement: success_profile=%s rotate_subject=%s plain=%s minimal_hdr=%s "
+        "body_var=%s no_links=%s fast=%s stagger_ms=%s wave_gap=%.2fs burst_target=%.0fs "
+        "max_per_acc_h=%s ehlo=%s",
         mailing_inbox_success_profile(),
         mailing_rotate_subject(),
         mailing_plain_only(),
         mailing_minimal_headers(),
         mailing_body_variation(),
         mailing_strip_link(),
+        mailing_fast_mode(),
         inbox_stagger_ms(),
         inbox_account_gap_sec(),
         burst_target_max_sec(),
+        mailing_max_per_account_hour(),
         mailing_ehlo_name() or "(default)",
     )

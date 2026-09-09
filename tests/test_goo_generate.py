@@ -2,10 +2,18 @@
 import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from services.goo_network import GooError, goo_generate_no_parse, goo_generate_parse
+from services.goo_network import GooError, goo_generate_no_parse, goo_generate_parse, price_to_api_number
 
 
 class GooGenerateTests(unittest.IsolatedAsyncioTestCase):
+    def test_price_to_api_number(self):
+        self.assertEqual(price_to_api_number(100), 100.0)
+        self.assertEqual(price_to_api_number("€ 1.250,50"), 1250.5)
+        self.assertEqual(price_to_api_number("100,-"), 100.0)
+        self.assertEqual(price_to_api_number("99.95"), 99.95)
+        with self.assertRaises(GooError):
+            price_to_api_number("abc")
+
     async def test_no_parse_ok(self):
         resp = MagicMock()
         resp.status = 200

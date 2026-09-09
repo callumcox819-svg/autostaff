@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 from typing import Any
 
 import aiohttp
@@ -93,6 +94,40 @@ async def _post_json(path: str, body: dict[str, Any], *, headers: dict[str, str]
         raise GooError(f"Сеть ({url}): {e}") from e
 
 
+def price_to_api_number(price: str | float | int | None) -> float:
+    """Число для body.price (GOO требует number, не строку)."""
+    if price is None:
+        raise GooError("Нет цены")
+    if isinstance(price, bool):
+        raise GooError(f"Некорректная цена: {price!r}")
+    if isinstance(price, (int, float)):
+        n = float(price)
+        if n < 0:
+            raise GooError("Некорректная цена")
+        return n
+    raw = str(price).strip()
+    if not raw:
+        raise GooError("Нет цены")
+    cleaned = re.sub(r"[^\d.,\-]", "", raw)
+    if not cleaned or cleaned in {".", ",", "-", "-.", "-,"}:
+        raise GooError(f"Не удалось разобрать цену: {price!r}")
+    if "," in cleaned and "." in cleaned:
+        # 1.250,50 (EU) vs 1,250.50 (US) — последний разделитель = дробная часть
+        if cleaned.rfind(",") > cleaned.rfind("."):
+            cleaned = cleaned.replace(".", "").replace(",", ".")
+        else:
+            cleaned = cleaned.replace(",", "")
+    elif "," in cleaned:
+        cleaned = cleaned.replace(",", ".")
+    m = re.search(r"-?\d+(?:\.\d+)?", cleaned)
+    if not m:
+        raise GooError(f"Не удалось разобрать цену: {price!r}")
+    n = float(m.group(0))
+    if n < 0:
+        raise GooError("Некорректная цена")
+    return n
+
+
 async def goo_generate_parse(
     *,
     user_api_key: str,
@@ -149,18 +184,10 @@ async def goo_generate_no_parse(
     if not pid:
         raise GooError("Не задан Profile ID")
     headers = _auth_headers(user_api_key=user_api_key, team_api_key=team_api_key)
-    if isinstance(price, (int, float)):
-        price_val: Any = float(price)
-    else:
-        raw_p = str(price).strip().replace(",", ".")
-        try:
-            price_val = float(raw_p)
-        except ValueError:
-            price_val = raw_p
     body: dict[str, Any] = {
         "service": svc,
         "name": title,
-        "price": price_val,
+        "price": price_to_api_number(price),
         "profileID": pid,
         "isNeedBalanceChecker": bool(balance_checker),
         "image": (image or "").strip() or "",

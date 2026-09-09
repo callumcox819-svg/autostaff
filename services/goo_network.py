@@ -11,10 +11,12 @@ import aiohttp
 logger = logging.getLogger(__name__)
 
 def goo_api_base() -> str:
+    # Evoleum / legacy GOO: как в finland-bot — api-old.goo.network
+    # (api.goo.network на этих же ключах отвечает 401 invalid credentials).
     return (
         os.getenv("GOO_API_BASE")
         or os.getenv("EVOLEUM_API_BASE")
-        or "https://api.goo.network"
+        or "https://api-old.goo.network"
     ).strip().rstrip("/")
 
 
@@ -27,18 +29,21 @@ class GooError(Exception):
 
 
 def _auth_headers(*, user_api_key: str, team_api_key: str = "") -> dict[str, str]:
+    from urllib.parse import urlparse
+
     user = (user_api_key or "").strip()
     team = (team_api_key or "").strip()
     if not user:
         raise GooError("Не задан API-ключ")
     if not team:
         raise GooError("Не задан Team-ключ на сервере")
-    # Host не задаём вручную — aiohttp ставит его из URL (ручной Host часто ломает запрос).
+    host = urlparse(goo_api_base()).hostname or "api-old.goo.network"
     return {
         "Authorization": f"Apikey {user}",
         "X-Team-Key": team,
         "Content-Type": "application/json",
         "Accept": "application/json",
+        "Host": host,
     }
 
 
@@ -144,10 +149,18 @@ async def goo_generate_no_parse(
     if not pid:
         raise GooError("Не задан Profile ID")
     headers = _auth_headers(user_api_key=user_api_key, team_api_key=team_api_key)
+    if isinstance(price, (int, float)):
+        price_val: Any = float(price)
+    else:
+        raw_p = str(price).strip().replace(",", ".")
+        try:
+            price_val = float(raw_p)
+        except ValueError:
+            price_val = raw_p
     body: dict[str, Any] = {
         "service": svc,
         "name": title,
-        "price": price if isinstance(price, (int, float)) else str(price).strip(),
+        "price": price_val,
         "profileID": pid,
         "isNeedBalanceChecker": bool(balance_checker),
         "image": (image or "").strip() or "",

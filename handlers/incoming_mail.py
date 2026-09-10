@@ -3009,6 +3009,12 @@ async def cb_mail_reply_html_send(callback: CallbackQuery, state: FSMContext):
             ctx = await build_offer_html_ctx(
                 session, int(user.id), to_email, link=link, mail=mail_row
             )
+            if not (ctx.get("BUYER_NAME") or "").strip() or not (ctx.get("ADDRESS") or "").strip():
+                return (
+                    False,
+                    "Для HTML заполни ФИО и адрес: Команды API → Evoleum → "
+                    "«ФИО для HTML» и «Адрес для HTML» (как в Profile ID на лендинге).",
+                )
             html_body = await prepare_html_body(_apply_link(raw_html, link), session, user)
             if html_signature:
                 html_body = html_body.replace("{{SIGNATURE}}", str(html_signature))
@@ -3232,6 +3238,12 @@ async def mail_reply_custom_html(message: Message, state: FSMContext):
             ctx = await build_offer_html_ctx(
                 session, int(user.id), to_email, link=link, mail=mail_row
             )
+            if not (ctx.get("BUYER_NAME") or "").strip() or not (ctx.get("ADDRESS") or "").strip():
+                return (
+                    False,
+                    "Для HTML заполни ФИО и адрес: Команды API → Evoleum → "
+                    "«ФИО для HTML» и «Адрес для HTML» (как в Profile ID на лендинге).",
+                )
             html_body = await prepare_html_body(_apply_link(html_text, link), session, user)
             if html_signature:
                 html_body = html_body.replace("{{SIGNATURE}}", str(html_signature))
@@ -3518,10 +3530,22 @@ async def _regenerate_aqua_link_after_price(
             return False, "Оффер не найден"
 
         offer.price = new_price
+        try:
+            from services.offer_storage import parse_offer_raw
+            import json as _json
+
+            raw = parse_offer_raw(getattr(offer, "raw_json", None)) or {}
+            if isinstance(raw, dict):
+                raw["item_price"] = new_price
+                offer.raw_json = _json.dumps(raw, ensure_ascii=False)
+        except Exception:
+            pass
         await session.flush()
 
         try:
-            aqua_url = await aqua_generate_for_offer(session, user, offer, price=new_price)
+            aqua_url = await aqua_generate_for_offer(
+                session, user, offer, price=new_price, force_no_parse=True
+            )
         except AquaError as e:
             await session.rollback()
             return False, str(e)
@@ -3541,7 +3565,7 @@ async def _regenerate_aqua_link_after_price(
             sa_update(IncomingMail)
             .where(IncomingMail.user_id == int(user.id))
             .where(IncomingMail.resolved_offer_id == int(offer.id))
-            .values(generated_link=aqua_url)
+            .values(generated_link=aqua_url, offer_price=new_price)
         )
         await session.commit()
 

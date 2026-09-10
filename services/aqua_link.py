@@ -117,7 +117,16 @@ async def _generate_csm(session, user: User, cfg, offer: Offer | None, *, listin
         raise AquaError(str(e)) from e
 
 
-async def _generate_goo(session, user: User, cfg, offer: Offer | None, *, listing_url: str | None, price: str | None) -> str:
+async def _generate_goo(
+    session,
+    user: User,
+    cfg,
+    offer: Offer | None,
+    *,
+    listing_url: str | None,
+    price: str | None,
+    force_no_parse: bool = False,
+) -> str:
     if not (cfg.api_key or "").strip():
         raise AquaError(
             f"Не задан API-ключ для <b>{cfg.label}</b>. "
@@ -160,6 +169,13 @@ async def _generate_goo(session, user: User, cfg, offer: Offer | None, *, listin
             image=image or None,
         )
 
+    # Кнопка «Цена» / явный force: только no-parse (parse не принимает price → часто 0 € с МП).
+    if force_no_parse:
+        try:
+            return await _no_parse()
+        except GooError as e:
+            raise AquaError(str(e)) from e
+
     try:
         if _is_http_url(listing):
             try:
@@ -191,6 +207,7 @@ async def aqua_generate_for_offer(
     *,
     listing_url: str | None = None,
     price: str | None = None,
+    force_no_parse: bool = False,
 ) -> str:
     """
     Генерация через выбранную команду:
@@ -200,4 +217,12 @@ async def aqua_generate_for_offer(
     cfg = await get_selected_team_config(session, user)
     if cfg.team_id == "csm":
         return await _generate_csm(session, user, cfg, offer, listing_url=listing_url, price=price)
-    return await _generate_goo(session, user, cfg, offer, listing_url=listing_url, price=price)
+    return await _generate_goo(
+        session,
+        user,
+        cfg,
+        offer,
+        listing_url=listing_url,
+        price=price,
+        force_no_parse=force_no_parse,
+    )

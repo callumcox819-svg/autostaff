@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+
 from models import User
 from services.html_spoof import apply_nick_to_html, get_spoof_display_name
 from services.subject_offer import sanitize_email_subject
@@ -56,10 +58,33 @@ def _format_eur_price(price: str) -> str:
     p = (price or "").strip()
     if not p:
         return ""
+    # «0» / «0 €» / «EUR 0» — для HTML считаем пустым (часто мусор после parse).
+    digits = re.sub(r"[^\d.,]", "", p).replace(",", ".")
+    try:
+        if digits and float(digits) == 0:
+            return ""
+    except ValueError:
+        pass
     up = p.upper()
-    if up.startswith("EUR") or up.startswith("€"):
+    if "EUR" in up or "€" in p:
+        # Убираем дубль вида «EUR 0 €» → нормализуем число + EUR
+        m = re.search(r"([\d]+(?:[.,]\d+)?)", p)
+        if m:
+            num = m.group(1).replace(",", ".")
+            try:
+                return f"EUR {float(num):.2f}"
+            except ValueError:
+                return f"EUR {m.group(1)}"
         return p
     return f"EUR {p}"
+
+
+def _pick_non_zero_price(*candidates: str) -> str:
+    for c in candidates:
+        formatted = _format_eur_price((c or "").strip())
+        if formatted:
+            return formatted
+    return ""
 
 
 async def build_offer_html_ctx(
@@ -71,7 +96,7 @@ async def build_offer_html_ctx(
     offer=None,
     mail=None,
 ) -> dict[str, str]:
-    """Контекст для HTML: лот (title/price/photo) + покупатель из Evoleum Profile ID + ссылка."""
+    """Контекст для HTML: лот (title/price/photo) + покупатель (поля HTML Evoleum) + ссылка."""
     from datetime import datetime
 
     from sqlalchemy import select
@@ -114,18 +139,33 @@ async def build_offer_html_ctx(
             ).scalars().first()
         if off:
             title = (offer_effective_title(off) or "").strip()
-            price = _format_eur_price((offer_effective_price(off, default="") or "").strip())
             photo = (offer_effective_photo(off) or "").strip()
     except Exception:
         pass
 
+    mail_price = ""
+    mail_title = ""
+    mail_photo = ""
     if mail is not None:
+        mail_title = (getattr(mail, "product_title", None) or "").strip()
+        mail_price = (getattr(mail, "offer_price", None) or "").strip()
+        mail_photo = (getattr(mail, "photo_url", None) or "").strip()
         if not title:
-            title = (getattr(mail, "product_title", None) or "").strip()
-        if not price:
-            price = _format_eur_price((getattr(mail, "offer_price", None) or "").strip())
+            title = mail_title
         if not photo:
-            photo = (getattr(mail, "photo_url", None) or "").strip()
+            photo = mail_photo
+
+    offer_price_raw = ""
+    try:
+        if off is not None:
+            offer_price_raw = (offer_effective_price(off, default="") or "").strip()
+            col_price = (getattr(off, "price", None) or "").strip()
+            offer_price_raw = offer_price_raw or col_price
+    except Exception:
+        pass
+
+    # Сначала цена с письма/кнопки «Цена», потом оффер (0 от parse отбрасываем).
+    price = _pick_non_zero_price(mail_price, offer_price_raw)
 
     buyer_name = ""
     address = ""

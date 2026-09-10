@@ -290,12 +290,14 @@ async def resolve_html_buyer_profile(session, user: User) -> tuple[str, str]:
     """
     Имя и адрес покупателя для HTML.
 
-    Evoleum: ФИО/адрес с Profile ID в GOO (как на сгенерированной ссылке),
-    не старый локальный кэш GAG (Anna / CH). Локальный кэш только если
-    привязан к текущему Profile ID и GOO недоступен.
+    GOO не отдаёт ФИО/адрес по Profile ID через публичный generate API
+    (list-профилей 404) — они есть только на лендинге. Для HTML нужны
+    поля «ФИО / Адрес» в Evoleum (те же, что в профиле GOO).
     """
-    from services.api_teams import get_selected_team_config, get_team_field
+    from services.api_teams import get_selected_team_config
 
+    name = await get_user_profile_buyer_name(session, user)
+    address = await get_user_profile_address(session, user)
     try:
         cfg = await get_selected_team_config(session, user)
     except Exception:
@@ -304,49 +306,16 @@ async def resolve_html_buyer_profile(session, user: User) -> tuple[str, str]:
     if cfg and cfg.team_id == "evoleum":
         pid = (cfg.profile_id or "").strip()
         bound = get_user_goo_profile_id(user)
-        local_name = await get_user_profile_buyer_name(session, user)
-        local_addr = await get_user_profile_address(session, user)
+        # Если Profile ID сменили, а ФИО не обновили — не подставляем чужое.
+        if pid and bound and bound != pid:
+            return "", ""
+        return (name or "").strip(), (address or "").strip()
 
-        if pid and (cfg.api_key or "").strip() and (cfg.team_key or "").strip():
-            from services.aqua_profiles import find_goo_profile_by_id
-
-            prof = await find_goo_profile_by_id(
-                user_api_key=cfg.api_key,
-                team_api_key=cfg.team_key,
-                profile_id=pid,
-                service=(cfg.service_code or "").strip() or None,
-            )
-            if prof and (prof.full_name or prof.address):
-                await apply_aqua_profile_to_user(session, user, prof)
-                label = " · ".join(p for p in (prof.title, prof.full_name) if p) or pid
-                await set_user_setting(
-                    session, user, "api_team_evoleum_profile_label", label
-                )
-                try:
-                    await session.commit()
-                except Exception:
-                    logger.exception("resolve_html_buyer_profile: commit failed")
-                return (prof.full_name or "").strip(), (prof.address or "").strip()
-
-        if pid and bound == pid and local_name and local_addr:
-            return local_name, local_addr
-
-        label = (await get_team_field(session, user, "evoleum", "profile_label") or "").strip()
-        name = ""
-        if label and " · " in label:
-            name = label.split(" · ", 1)[-1].strip()
-        elif label and pid and label != pid:
-            name = label
-        # Без свежего GOO/кэша не подставляем чужой CH-адрес из старого GAG.
-        return name, ""
-
-    name = await get_user_profile_buyer_name(session, user)
-    address = await get_user_profile_address(session, user)
-    return name, address
+    return (name or "").strip(), (address or "").strip()
 
 
 async def bind_evoleum_profile_id(session, user: User, profile_id: str) -> None:
-    """Сохранить Profile ID Evoleum и подтянуть ФИО/адрес из GOO (сброс старого кэша)."""
+    """Сохранить Profile ID Evoleum и сбросить устаревшее локальное ФИО для HTML."""
     pid = (profile_id or "").strip()
     prev = get_user_goo_profile_id(user)
     user.goo_profile_id = pid or None
@@ -355,27 +324,6 @@ async def bind_evoleum_profile_id(session, user: User, profile_id: str) -> None:
         await set_user_setting(session, user, AQUA_PROFILE_NAME_KEY, "")
         await set_user_setting(session, user, AQUA_PROFILE_ADDRESS_KEY, "")
         await set_user_setting(session, user, "api_team_evoleum_profile_label", "")
-        try:
-            from services.api_teams import get_team_config
-
-            cfg = await get_team_config(session, user, "evoleum")
-            if (cfg.api_key or "").strip() and (cfg.team_key or "").strip():
-                from services.aqua_profiles import find_goo_profile_by_id
-
-                prof = await find_goo_profile_by_id(
-                    user_api_key=cfg.api_key,
-                    team_api_key=cfg.team_key,
-                    profile_id=pid,
-                    service=(cfg.service_code or "").strip() or None,
-                )
-                if prof:
-                    await apply_aqua_profile_to_user(session, user, prof)
-                    label = " · ".join(p for p in (prof.title, prof.full_name) if p) or pid
-                    await set_user_setting(
-                        session, user, "api_team_evoleum_profile_label", label
-                    )
-        except Exception:
-            logger.exception("bind_evoleum_profile_id: GOO profile sync failed pid=%s", pid)
 
 
 async def apply_aqua_profile_to_user(session, user: User, profile) -> None:

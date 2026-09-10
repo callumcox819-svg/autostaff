@@ -108,6 +108,29 @@ def _team_detail_kb(team_id: str) -> InlineKeyboardMarkup:
     rows.extend(
         [
             [inline_button("profile", "Profile ID", callback_data=f"api_team_edit:{team_id}:profile_id")],
+        ]
+    )
+    if team_id == "evoleum":
+        rows.extend(
+            [
+                [
+                    inline_button(
+                        "user",
+                        "ФИО для HTML",
+                        callback_data=f"api_team_edit:{team_id}:buyer_name",
+                    )
+                ],
+                [
+                    inline_button(
+                        "pin",
+                        "Адрес для HTML",
+                        callback_data=f"api_team_edit:{team_id}:address",
+                    )
+                ],
+            ]
+        )
+    rows.extend(
+        [
             [inline_button("link", "Тип ссылки", callback_data=f"api_team_type_menu:{team_id}")],
             [back_inline("api_teams")],
         ]
@@ -124,7 +147,7 @@ def _mask_secret(value: str) -> str:
     return f"{v[:4]}…{v[-4:]}"
 
 
-def _team_detail_text(cfg) -> str:
+def _team_detail_text(cfg, *, buyer_name: str = "", address: str = "") -> str:
     lines = [
         f"{html_emoji('key')} <b>{html.escape(cfg.label)}</b>\n",
         f"<b>API-ключ:</b> <code>{html.escape(_mask_secret(cfg.api_key))}</code>",
@@ -137,6 +160,13 @@ def _team_detail_text(cfg) -> str:
     else:
         lines.append(f"<b>Код сервиса:</b> <code>{html.escape(cfg.service_code or '—')}</code>")
     lines.append(f"<b>Profile ID:</b> <code>{html.escape(cfg.profile_id or '—')}</code>")
+    if cfg.team_id == "evoleum":
+        lines.append(
+            f"<b>ФИО для HTML:</b> <code>{html.escape(buyer_name or '—')}</code>\n"
+            f"<b>Адрес для HTML:</b> <code>{html.escape(address or '—')}</code>\n"
+            "<i>На лендинге ФИО/адрес из Profile ID. В HTML-письме — из этих полей "
+            "(GOO API не отдаёт их наружу).</i>"
+        )
     lines.append(
         f"<b>Тип ссылки:</b> <b>{html.escape(link_type_label(cfg.link_type or 'lk'))}</b>"
     )
@@ -275,6 +305,23 @@ async def api_team_pick(callback: CallbackQuery, state: FSMContext) -> None:
     await callback.answer(toast("ok", f"Выбрано: {team_label(selected)}"))
 
 
+async def _evoleum_html_profile_fields(session, user) -> tuple[str, str]:
+    from services.aqua_keys import get_user_profile_address, get_user_profile_buyer_name
+
+    return (
+        await get_user_profile_buyer_name(session, user),
+        await get_user_profile_address(session, user),
+    )
+
+
+async def _team_detail_payload(session, user, tid: str) -> tuple[object, str]:
+    cfg = await get_team_config(session, user, tid)
+    buyer = addr = ""
+    if cfg.team_id == "evoleum":
+        buyer, addr = await _evoleum_html_profile_fields(session, user)
+    return cfg, _team_detail_text(cfg, buyer_name=buyer, address=addr)
+
+
 @router.callback_query(F.data.startswith("api_team_open:"))
 async def api_team_open(callback: CallbackQuery, state: FSMContext) -> None:
     await state.clear()
@@ -282,14 +329,14 @@ async def api_team_open(callback: CallbackQuery, state: FSMContext) -> None:
     async with Session() as session:
         user = await get_or_create_user(session, callback.from_user.id)
         try:
-            cfg = await get_team_config(session, user, tid)
+            cfg, text = await _team_detail_payload(session, user, tid)
         except Exception:
             await callback.answer(toast("fail", "Ошибка"), show_alert=True)
             return
     if cfg.team_id not in {t for t, _ in API_TEAMS}:
         await callback.answer(toast("fail", "Неизвестная команда"), show_alert=True)
         return
-    await _edit(callback, _team_detail_text(cfg), _team_detail_kb(cfg.team_id))
+    await _edit(callback, text, _team_detail_kb(cfg.team_id))
     await callback.answer()
 
 
@@ -390,6 +437,8 @@ _FIELD_TITLES = {
     "api_key": "API-ключ",
     "service_code": "Код сервиса",
     "profile_id": "Profile ID",
+    "buyer_name": "ФИО для HTML",
+    "address": "Адрес для HTML",
 }
 
 
@@ -453,10 +502,14 @@ async def api_team_edit(callback: CallbackQuery, state: FSMContext) -> None:
         hint = "\nДля NL обычно: <code>marktplaats_nl</code>."
     if field == "profile_id" and tid == "evoleum":
         hint = (
-            "\n\nФИО и адрес на ссылке берутся из <b>этого</b> профиля в Evoleum "
-            "(Мой профиль → Профили). Вставь ID профиля с нужным ФИО "
-            "(например Maria Zeglier), не старое имя из настроек бота."
+            "\n\nФИО и адрес на <b>ссылке</b> берутся из этого профиля в Evoleum.\n"
+            "После сохранения обязательно заполни <b>ФИО для HTML</b> и <b>Адрес для HTML</b> "
+            "теми же данными — GOO API не отдаёт их в письмо."
         )
+    if field == "buyer_name" and tid == "evoleum":
+        hint = "\n\nКак в профиле Evoleum (например: <code>Maria Zeglier</code>)."
+    if field == "address" and tid == "evoleum":
+        hint = "\n\nКак в профиле Evoleum (улица, индекс, город, NL)."
     await _edit(
         callback,
         f"{html_emoji('settings')} <b>{html.escape(_FIELD_TITLES[field])}</b>\n"
@@ -488,19 +541,46 @@ async def api_team_field_save(message: Message, state: FSMContext) -> None:
     async with Session() as session:
         user = await get_or_create_user(session, message.from_user.id)
         try:
-            await set_team_field(session, user, tid, field, raw)
-            if field == "service_code":
-                from services.aqua_keys import sync_html_service_from_code
+            if tid == "evoleum" and field in {"buyer_name", "address"}:
+                from services.aqua_keys import (
+                    AQUA_PROFILE_ADDRESS_KEY,
+                    AQUA_PROFILE_NAME_KEY,
+                    get_user_goo_profile_id,
+                )
+                from services.user_settings import set_user_setting
 
-                await sync_html_service_from_code(session, user, raw)
+                key = (
+                    AQUA_PROFILE_NAME_KEY
+                    if field == "buyer_name"
+                    else AQUA_PROFILE_ADDRESS_KEY
+                )
+                await set_user_setting(session, user, key, raw)
+                cfg = await get_team_config(session, user, tid)
+                # Привязка к текущему Profile ID, чтобы HTML не считал ФИО «чужим».
+                if (cfg.profile_id or "").strip():
+                    user.goo_profile_id = (cfg.profile_id or "").strip()
+                elif not get_user_goo_profile_id(user) and (cfg.profile_id or "").strip():
+                    user.goo_profile_id = cfg.profile_id
+            else:
+                await set_team_field(session, user, tid, field, raw)
+                if field == "service_code":
+                    from services.aqua_keys import sync_html_service_from_code
+
+                    await sync_html_service_from_code(session, user, raw)
             await session.commit()
-            cfg = await get_team_config(session, user, tid)
+            cfg, detail = await _team_detail_payload(session, user, tid)
         except ValueError as e:
             await message.answer(f"{html_emoji('fail')} {html.escape(str(e))}", parse_mode="HTML")
             return
     await state.clear()
+    extra = ""
+    if tid == "evoleum" and field == "profile_id":
+        extra = (
+            f"\n\n{html_emoji('wait')} Теперь укажи <b>ФИО для HTML</b> и <b>Адрес для HTML</b> "
+            "как в этом профиле Evoleum."
+        )
     await message.answer(
-        f"{html_emoji('ok')} Сохранено.\n\n{_team_detail_text(cfg)}",
+        f"{html_emoji('ok')} Сохранено.{extra}\n\n{detail}",
         reply_markup=_team_detail_kb(tid),
         parse_mode="HTML",
     )

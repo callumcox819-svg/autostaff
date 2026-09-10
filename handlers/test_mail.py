@@ -15,7 +15,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
-from database import async_session
+from database import async_session, db_session
 from handlers.templates import pick_random_smart_preset
 from models import EmailAccount, Offer, OfferEmail, User
 from services.aqua_keys import AQUA_PROFILE_ADDRESS_KEY, AQUA_PROFILE_NAME_KEY
@@ -25,6 +25,7 @@ from services.smtp_block_control import is_smtp_account_block_error, mark_accoun
 from services.smtp_delivery_verify import verify_message_in_sent
 from services.smtp_proxy_send import send_email_via_account_with_proxy
 from services.user_settings import get_user_setting, set_user_setting
+from services.users import get_or_create_user
 from sqlalchemy import func, select
 from keyboards.main_menu import is_test_mail_trigger
 from utils.bg_jobs import is_running as bg_is_running, start as bg_start
@@ -127,15 +128,17 @@ async def _menu_text(session, user: User) -> str:
 
 
 async def _show_menu(message: Message, *, edit: bool = False) -> None:
-    async with async_session() as session:
-        user = (
-            await session.execute(select(User).where(User.telegram_id == int(message.from_user.id)))
-        ).scalars().first()
-        if not user:
-            return await message.answer(f"{html_emoji('fail')} Сначала /start")
-        text = await _menu_text(session, user)
-        saved = await _load_saved_recipients(session, user)
-        kb = _menu_kb(has_recipients=bool(saved))
+    try:
+        async with db_session() as session:
+            user = await get_or_create_user(session, int(message.from_user.id))
+            text = await _menu_text(session, user)
+            saved = await _load_saved_recipients(session, user)
+            kb = _menu_kb(has_recipients=bool(saved))
+    except Exception:
+        return await message.answer(
+            f"{html_emoji('fail')} БД не отвечает — подожди пару секунд и снова «Тест маил».",
+            parse_mode="HTML",
+        )
     if edit and getattr(message, "edit_text", None):
         try:
             return await message.edit_text(text, reply_markup=kb, parse_mode="HTML")
@@ -153,6 +156,7 @@ async def test_mail_start(message: Message, state: FSMContext) -> None:
 
 async def test_mail_open_cb(callback: CallbackQuery, state: FSMContext) -> None:
     await state.clear()
+    await callback.answer()
     await _show_menu(callback.message)
 
 
@@ -169,13 +173,10 @@ async def test_mail_close(call: CallbackQuery, state: FSMContext) -> None:
 @router.callback_query(F.data == "test_mail:clear")
 async def test_mail_clear(call: CallbackQuery, state: FSMContext) -> None:
     await state.clear()
-    async with async_session() as session:
-        user = (
-            await session.execute(select(User).where(User.telegram_id == int(call.from_user.id)))
-        ).scalars().first()
-        if user:
-            await _save_recipients(session, user, [])
-            await session.commit()
+    async with db_session() as session:
+        user = await get_or_create_user(session, int(call.from_user.id))
+        await _save_recipients(session, user, [])
+        await session.commit()
     await call.answer("Список очищен")
     await _show_menu(call.message, edit=True)
 
@@ -210,13 +211,8 @@ async def test_mail_save_recipients(message: Message, state: FSMContext) -> None
             parse_mode="HTML",
         )
 
-    async with async_session() as session:
-        user = (
-            await session.execute(select(User).where(User.telegram_id == int(message.from_user.id)))
-        ).scalars().first()
-        if not user:
-            await state.clear()
-            return await message.answer(f"{html_emoji('fail')} Сначала /start")
+    async with db_session() as session:
+        user = await get_or_create_user(session, int(message.from_user.id))
         await _save_recipients(session, user, emails)
         await session.commit()
 
@@ -322,12 +318,8 @@ async def _run_mass_test(message: Message, tg_id: int) -> None:
     if bg_is_running(tg_id, "test_mail"):
         return await message.answer(f"{html_emoji('wait')} Тест уже отправляется…")
 
-    async with async_session() as session:
-        user = (
-            await session.execute(select(User).where(User.telegram_id == tg_id))
-        ).scalars().first()
-        if not user:
-            return await message.answer(f"{html_emoji('fail')} Сначала /start")
+    async with db_session() as session:
+        user = await get_or_create_user(session, tg_id)
         recipients = await _load_saved_recipients(session, user)
         if not recipients:
             return await message.answer(
@@ -509,14 +501,8 @@ async def preview_imap_card(message: Message) -> None:
     """Демо-карточка входящего письма (тот же UI, что у IMAP)."""
     from services.incoming_mail_worker import build_kb, render_mail_text_chunks
 
-    async with async_session() as session:
-        user = (
-            await session.execute(
-                select(User).where(User.telegram_id == int(message.from_user.id)).limit(1)
-            )
-        ).scalars().first()
-        if not user:
-            return await message.answer("Сначала /start")
+    async with db_session() as session:
+        user = await get_or_create_user(session, int(message.from_user.id))
 
         acc = (
             await session.execute(

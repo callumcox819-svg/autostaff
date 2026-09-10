@@ -83,6 +83,15 @@ async def _start_load_user(tg_id: int) -> tuple[bool, bool, bool]:
         return False, is_admin, has_access
 
 
+async def _ensure_user_bg(tg_id: int) -> None:
+    """Создать User в БД без блокировки UI (кэш /start раньше мог пропустить create)."""
+    try:
+        async with db_session() as session:
+            await get_or_create_user(session, int(tg_id))
+    except Exception:
+        logger.exception("ensure user failed tg=%s", tg_id)
+
+
 @router.message(CommandStart())
 @router.message(F.text.in_({"/ping", "/health"}))
 async def cmd_start(message: Message, state: FSMContext) -> None:
@@ -97,6 +106,9 @@ async def cmd_start(message: Message, state: FSMContext) -> None:
         await state.clear()
     except Exception:
         pass
+
+    # Всегда досоздаём User (тест маил / настройки читают строку в БД).
+    asyncio.create_task(_ensure_user_bg(tg_id))
 
     if tg_id in config_admin_ids():
         _remember_access(tg_id, is_admin=True, has_access=True)

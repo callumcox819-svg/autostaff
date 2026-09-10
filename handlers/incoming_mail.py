@@ -2776,6 +2776,12 @@ async def cb_mail_reply_preset_send(callback: CallbackQuery, state: FSMContext):
             out_subject = _reply_subject(subject)
             from services.html_reply import account_sender_display_name
 
+            thread_kw = await _reply_thread_kwargs(
+                session,
+                acc_id=int(acc_id),
+                uid=str(mail_uid),
+                meta=FULL_META.get((acc_id, mail_uid)),
+            )
             return await send_email_via_account_with_proxy(
                 session,
                 int(user.id),
@@ -2785,6 +2791,7 @@ async def cb_mail_reply_preset_send(callback: CallbackQuery, state: FSMContext):
                 preset_body,
                 sender_name=account_sender_display_name(user),
                 fast=True,
+                **thread_kw,
             )
 
     meta_fm = FULL_META.get((acc_id, mail_uid)) or {}
@@ -2815,6 +2822,36 @@ def _reply_subject(subject: str) -> str:
     )
     out = f"Re: {subj_norm}" if subj_norm else "Re:"
     return sanitize_email_subject(out)
+
+
+async def _reply_thread_kwargs(
+    session,
+    *,
+    acc_id: int,
+    uid: str,
+    mail_id: int | None = None,
+    meta: dict | None = None,
+    mail_row=None,
+) -> dict:
+    """In-Reply-To / References from seller Message-ID (spoof subject/name unchanged)."""
+    from services.email_threading import (
+        normalize_rfc_message_id,
+        resolve_inbound_rfc_message_id,
+        threading_send_kwargs,
+    )
+
+    if mail_row is not None:
+        mid = normalize_rfc_message_id(getattr(mail_row, "rfc_message_id", None))
+        if mid:
+            return threading_send_kwargs(mid)
+    mid = await resolve_inbound_rfc_message_id(
+        session,
+        acc_id=acc_id,
+        uid=uid,
+        mail_id=mail_id,
+        meta=meta,
+    )
+    return threading_send_kwargs(mid)
 
 
 def _html_attachment_filename(subject: str) -> str:
@@ -3022,6 +3059,14 @@ async def cb_mail_reply_html_send(callback: CallbackQuery, state: FSMContext):
             sent_pkg["html"] = html_body
             sent_pkg["subject"] = subject
 
+            thread_kw = await _reply_thread_kwargs(
+                session,
+                acc_id=int(acc_id),
+                uid=str(mail_uid),
+                mail_id=data.get("mail_id"),
+                meta=FULL_META.get((acc_id, mail_uid)),
+                mail_row=mail_row,
+            )
             return await send_email_via_account_with_proxy(
                 session,
                 int(user.id),
@@ -3032,6 +3077,7 @@ async def cb_mail_reply_html_send(callback: CallbackQuery, state: FSMContext):
                 is_html=True,
                 sender_name=sender_name,
                 fast=True,
+                **thread_kw,
             )
 
     meta_fm = FULL_META.get((acc_id, uid)) or {}
@@ -3108,6 +3154,13 @@ async def mail_reply_text(message: Message, state: FSMContext):
                 return False, "Этот ящик не принадлежит вам."
             from services.html_reply import account_sender_display_name
 
+            thread_kw = await _reply_thread_kwargs(
+                session,
+                acc_id=int(acc_id),
+                uid=str(uid),
+                mail_id=data.get("mail_id"),
+                meta=FULL_META.get((acc_id, uid)),
+            )
             return await send_email_via_account_with_proxy(
                 session,
                 int(user.id),
@@ -3117,6 +3170,7 @@ async def mail_reply_text(message: Message, state: FSMContext):
                 text,
                 sender_name=account_sender_display_name(user),
                 fast=True,
+                **thread_kw,
             )
 
     meta_fm = FULL_META.get((acc_id, uid)) or {}
@@ -3251,6 +3305,14 @@ async def mail_reply_custom_html(message: Message, state: FSMContext):
             sent_pkg["html"] = html_body
             sent_pkg["subject"] = subject
 
+            thread_kw = await _reply_thread_kwargs(
+                session,
+                acc_id=int(acc_id),
+                uid=str(mail_uid),
+                mail_id=data.get("mail_id"),
+                meta=FULL_META.get((acc_id, mail_uid)),
+                mail_row=mail_row,
+            )
             return await send_email_via_account_with_proxy(
                 session,
                 int(user.id),
@@ -3261,6 +3323,7 @@ async def mail_reply_custom_html(message: Message, state: FSMContext):
                 is_html=True,
                 sender_name=sender_name,
                 fast=True,
+                **thread_kw,
             )
 
     meta_fm = FULL_META.get((acc_id, mail_uid)) or {}

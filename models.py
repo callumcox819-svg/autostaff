@@ -394,6 +394,9 @@ class IncomingMail(Base):
     # ID карточки в Telegram — не слать дубликат при повторном IMAP-опросе
     telegram_message_id = Column(Integer, nullable=True, index=True)
 
+    # RFC822 Message-ID входящего (для In-Reply-To / References при ответе)
+    rfc_message_id = Column(String(512), nullable=True)
+
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 

@@ -201,6 +201,8 @@ async def send_email_via_account_with_proxy(
     fast: bool = False,
     sticky_proxy_id: int | None = None,
     mailing_fast: bool = False,
+    in_reply_to: Optional[str] = None,
+    references: Optional[str] = None,
 ) -> Tuple[bool, Optional[str], Optional[str]]:
     proxies = await _list_active_mailing_proxies(session, user_id)
     if not proxies:
@@ -263,6 +265,8 @@ async def send_email_via_account_with_proxy(
                     sender_name=sender_name,
                     is_html=is_html,
                     smtp_timeout_sec=smtp_tmo,
+                    in_reply_to=in_reply_to,
+                    references=references,
                 )
             else:
                 async with ProxySMTPContext(proxy):
@@ -274,6 +278,8 @@ async def send_email_via_account_with_proxy(
                         sender_name=sender_name,
                         is_html=is_html,
                         smtp_timeout_sec=smtp_tmo,
+                        in_reply_to=in_reply_to,
+                        references=references,
                     )
             err = normalize_send_error(err)
             if ok:

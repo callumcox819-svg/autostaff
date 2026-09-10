@@ -697,17 +697,19 @@ def _imap_fetch_new_sync_raw(
     email_addr: str,
     password: str,
     last_uid: Optional[int],
-) -> tuple[List[Tuple[str, str, str, str, str, str]], Optional[int]]:
+) -> tuple[List[Tuple[str, str, str, str, str, str, str]], Optional[int]]:
     """Fetch new mails from INBOX and (for GMX only) from Spam/Junk.
 
     - INBOX: uses UID > last_uid (first run returns empty and sets last_uid=max_uid).
     - GMX Spam/Junk: fetches UNSEEN only, marks them as \\Seen to avoid repeats,
       and prefixes uid as 'S:<uid>' so the async layer can filter/handle separately.
+
+    Each mail tuple: (uid, from_email, from_name, subject, date_str, body, rfc_message_id)
     """
     M = None
 
-    def _fetch_uids(uids_list: list[int], *, uid_prefix: str = "") -> list[Tuple[str, str, str, str, str, str]]:
-        out: list[Tuple[str, str, str, str, str, str]] = []
+    def _fetch_uids(uids_list: list[int], *, uid_prefix: str = "") -> list[Tuple[str, str, str, str, str, str, str]]:
+        out: list[Tuple[str, str, str, str, str, str, str]] = []
         for uid in uids_list:
             typ2, msg_data = M.uid("fetch", str(uid), "(RFC822)")
             if typ2 != "OK" or not msg_data:
@@ -726,6 +728,9 @@ def _imap_fetch_new_sync_raw(
             from_raw = _decode_mime_words(msg.get("From", ""))
             subject = _decode_mime_words(msg.get("Subject", ""))
             date_str = msg.get("Date", "") or ""
+            from services.email_threading import normalize_rfc_message_id
+
+            rfc_message_id = normalize_rfc_message_id(msg.get("Message-ID") or msg.get("Message-Id") or "") or ""
 
             name, addr = parseaddr(from_raw)
             from_email = (addr or "").strip().lower()
@@ -736,7 +741,9 @@ def _imap_fetch_new_sync_raw(
 
             body = _extract_text_from_msg(msg)
 
-            out.append((f"{uid_prefix}{uid}", from_email, from_name, subject, date_str, body))
+            out.append(
+                (f"{uid_prefix}{uid}", from_email, from_name, subject, date_str, body, rfc_message_id)
+            )
         return out
 
     try:
@@ -751,7 +758,7 @@ def _imap_fetch_new_sync_raw(
             if data and data[0]:
                 inbox_uids = [int(x) for x in data[0].split() if x.isdigit()]
 
-        inbox_mails: list[Tuple[str, str, str, str, str, str]] = []
+        inbox_mails: list[Tuple[str, str, str, str, str, str, str]] = []
         max_uid = last_uid
 
         if inbox_uids:
@@ -774,7 +781,7 @@ def _imap_fetch_new_sync_raw(
             updated_last_uid = int(max_uid)
 
         # --- GMX Spam/Junk (UNSEEN only) ---
-        spam_mails: list[Tuple[str, str, str, str, str, str]] = []
+        spam_mails: list[Tuple[str, str, str, str, str, str, str]] = []
         is_gmx = ("gmx" in (host or "").lower()) or ("gmx" in (email_addr or "").lower())
         if is_gmx:
             spam_box_candidates = ["Spam", "Junk", "SPAM", "JUNK", "INBOX.Spam", "INBOX.Junk"]
@@ -1849,7 +1856,7 @@ async def _process_mails_for_account(
     tg_id: int,
     user_id: int,
     account_email: str,
-    mails: List[Tuple[str, str, str, str, str, str]],
+    mails: List[Tuple[str, str, str, str, str, str, str]],
     max_per_account: int,
     last_uid: Optional[int],
 ) -> int:
@@ -1872,7 +1879,7 @@ async def _process_mails_for_account_impl(
     tg_id: int,
     user_id: int,
     account_email: str,
-    mails: List[Tuple[str, str, str, str, str, str]],
+    mails: List[Tuple[str, str, str, str, str, str, str]],
     max_per_account: int,
     last_uid: Optional[int],
 ) -> int:
@@ -1893,7 +1900,13 @@ async def _process_mails_for_account_impl(
         LAST_UID[acc_id] = int(last_uid)
         await _set_last_seen_uid(acc_id, int(last_uid))
 
-    for uid, from_email, from_name, subject, date_str, body in (mails or [])[:max_per_account]:
+    for row in (mails or [])[:max_per_account]:
+        # Backward-compatible: old 6-tuples without Message-ID
+        if len(row) >= 7:
+            uid, from_email, from_name, subject, date_str, body, rfc_message_id = row[:7]
+        else:
+            uid, from_email, from_name, subject, date_str, body = row[:6]
+            rfc_message_id = ""
         uid_key = uid
         is_spam_box = False
         uid_num = None
@@ -1954,6 +1967,7 @@ async def _process_mails_for_account_impl(
             elif _is_mailer_daemon_notice(from_email_clean, subject or ""):
                 skip_telegram_notify = False
             inbox_email_clean = (account_email or "").strip().lower()
+            rfc_mid_clean = (rfc_message_id or "").strip()
 
             FULL_BODIES[(acc_id, uid_key)] = body_clean
             FULL_META[(acc_id, uid_key)] = {
@@ -1962,6 +1976,7 @@ async def _process_mails_for_account_impl(
                 "subject": subject or "",
                 "account_email": inbox_email_clean,
                 "date_str": date_str or "",
+                "rfc_message_id": rfc_mid_clean,
             }
 
             resolved_offer_id: int | None = None
@@ -2024,6 +2039,8 @@ async def _process_mails_for_account_impl(
                     existing.subject = (subject or "").strip() or None
                     existing.date_str = (date_str or "").strip() or None
                     existing.body = body_clean or None
+                    if rfc_mid_clean:
+                        existing.rfc_message_id = rfc_mid_clean[:512]
                     await session.flush()
                     mail_db_id = int(existing.id)
 

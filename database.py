@@ -182,6 +182,17 @@ async def _ensure_incoming_mail_telegram_message_id_column() -> None:
         )
 
 
+async def _ensure_incoming_mail_rfc_message_id_column() -> None:
+    """Message-ID входящего для reply-трединга (In-Reply-To / References)."""
+    if engine.dialect.name != "postgresql":
+        return
+
+    async with engine.begin() as conn:
+        await conn.execute(
+            text("ALTER TABLE incoming_mails ADD COLUMN IF NOT EXISTS rfc_message_id VARCHAR(512)")
+        )
+
+
 async def _ensure_incoming_mail_product_title_column() -> None:
     """Снимок лида на момент входящего (poputka88)."""
     if engine.dialect.name != "postgresql":
@@ -370,6 +381,11 @@ async def init_db() -> None:
         await _ensure_incoming_mail_telegram_message_id_column()
     except Exception as e:
         log.error("Failed incoming_mails.telegram_message_id migration: %s", e)
+
+    try:
+        await _ensure_incoming_mail_rfc_message_id_column()
+    except Exception as e:
+        log.error("Failed incoming_mails.rfc_message_id migration: %s", e)
 
     # затем — безопасное добавление колонки в conversation_links (для "Создать ссылку")
     try:

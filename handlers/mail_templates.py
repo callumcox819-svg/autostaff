@@ -86,6 +86,7 @@ def _meta_dict_from_mail(m: IncomingMail) -> dict:
         "subject": m.subject or "",
         "account_email": extract_email_address(m.account_email or ""),
         "date_str": m.date_str or "",
+        "rfc_message_id": (getattr(m, "rfc_message_id", None) or "").strip(),
         "_acc_id": int(m.account_id),
         "_uid": str(m.imap_uid),
         "_mail_id": int(m.id),
@@ -295,8 +296,22 @@ async def mail_tmpl_send(callback: CallbackQuery, state: FSMContext):
             if not user:
                 return False, "Пользователь не найден"
             out_subject = subject
+            thread_kw: dict = {}
             try:
                 from services.user_settings import get_user_setting
+                from services.email_threading import (
+                    resolve_inbound_rfc_message_id,
+                    threading_send_kwargs,
+                )
+
+                mid = await resolve_inbound_rfc_message_id(
+                    session,
+                    acc_id=acc_id,
+                    uid=uid,
+                    mail_id=mail_id or meta.get("_mail_id"),
+                    meta=meta,
+                )
+                thread_kw = threading_send_kwargs(mid)
 
                 subj_insert = str(await get_user_setting(session, user, "subj_insert") or "").strip().lower() in {
                     "1", "true", "yes", "on",
@@ -338,6 +353,7 @@ async def mail_tmpl_send(callback: CallbackQuery, state: FSMContext):
                 sender_name=getattr(user, "sender_name", None),
                 is_html=is_html_body or None,
                 fast=True,
+                **thread_kw,
             )
 
     data = await state.get_data()

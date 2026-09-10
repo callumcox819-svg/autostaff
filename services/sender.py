@@ -132,6 +132,8 @@ def _set_message_headers(
     disp_name: Optional[str],
     minimal: bool = False,
     for_mailing: bool = False,
+    in_reply_to: Optional[str] = None,
+    references: Optional[str] = None,
 ) -> None:
     domain = from_addr.split("@")[-1] if "@" in from_addr else None
     if for_mailing:
@@ -150,6 +152,10 @@ def _set_message_headers(
         msg["Date"] = msg_date
         msg["Message-ID"] = msg_id
         msg["Reply-To"] = from_addr
+        if in_reply_to:
+            msg["In-Reply-To"] = in_reply_to
+        if references:
+            msg["References"] = references
         return
     if disp_name:
         msg["From"] = formataddr((disp_name, from_addr))
@@ -160,6 +166,10 @@ def _set_message_headers(
     msg["Date"] = msg_date
     msg["Message-ID"] = msg_id
     msg["Reply-To"] = from_addr
+    if in_reply_to:
+        msg["In-Reply-To"] = in_reply_to
+    if references:
+        msg["References"] = references
 
 
 def _smtp_ehlo(s: smtplib.SMTP) -> None:
@@ -184,12 +194,25 @@ def _build_message(
     sender_name: Optional[str] = None,
     is_html: Optional[bool] = None,
     for_mailing: bool = False,
+    in_reply_to: Optional[str] = None,
+    references: Optional[str] = None,
 ):
+    from services.email_threading import normalize_rfc_message_id
+
     subj = _sanitize_header_line(subject or "")
     to_addr = _sanitize_email_addr(to_email)
     from_addr = _sanitize_email_addr(from_email)
     disp_name = _sanitize_header_line(sender_name) if sender_name else None
     b = body or ""
+    reply_to_hdr = normalize_rfc_message_id(in_reply_to)
+    refs_hdr = None
+    if references:
+        # Keep parent Message-ID; allow pre-normalized References string
+        refs_hdr = (references or "").strip() or None
+        if refs_hdr and not normalize_rfc_message_id(refs_hdr.split()[0]):
+            refs_hdr = reply_to_hdr
+    elif reply_to_hdr:
+        refs_hdr = reply_to_hdr
 
     minimal_headers = False
     if for_mailing:
@@ -238,6 +261,8 @@ def _build_message(
             disp_name=disp_name,
             minimal=minimal_headers,
             for_mailing=for_mailing,
+            in_reply_to=reply_to_hdr,
+            references=refs_hdr,
         )
         return msg
 
@@ -258,6 +283,8 @@ def _build_message(
         disp_name=disp_name,
         minimal=minimal_headers,
         for_mailing=for_mailing,
+        in_reply_to=reply_to_hdr,
+        references=refs_hdr,
     )
     return msg
 
@@ -620,6 +647,8 @@ def _send_plain_sync(
     is_html: Optional[bool] = None,
     smtp_timeout_sec: float | None = None,
     for_mailing: bool = False,
+    in_reply_to: Optional[str] = None,
+    references: Optional[str] = None,
 ) -> Tuple[bool, Optional[str], Optional[str]]:
     guard_err = smtp_proxy_required_error()
     if guard_err:
@@ -638,6 +667,8 @@ def _send_plain_sync(
         sender_name=sender_name,
         is_html=is_html,
         for_mailing=for_mailing,
+        in_reply_to=in_reply_to,
+        references=references,
     )
 
     if _env_flag("MAIL_DEBUG"):
@@ -712,6 +743,8 @@ def _send_plain_sync_via_isolated_proxy(
     is_html: Optional[bool] = None,
     smtp_timeout_sec: float | None = None,
     for_mailing: bool = False,
+    in_reply_to: Optional[str] = None,
+    references: Optional[str] = None,
 ) -> Tuple[bool, Optional[str], Optional[str]]:
     """SMTP через свой SOCKS/HTTP-сокет (без глобального PySocks) — можно параллелить ящики."""
     import ssl as _ssl
@@ -729,6 +762,8 @@ def _send_plain_sync_via_isolated_proxy(
         sender_name=sender_name,
         is_html=is_html,
         for_mailing=for_mailing,
+        in_reply_to=in_reply_to,
+        references=references,
     )
     tmo = float(smtp_timeout_sec if smtp_timeout_sec is not None else SMTP_TIMEOUT_SEC)
     last: Tuple[bool, Optional[str], Optional[str]] = (False, None, None)
@@ -815,6 +850,8 @@ async def send_email_via_account(
     *,
     smtp_timeout_sec: float | None = None,
     for_mailing: bool = True,
+    in_reply_to: Optional[str] = None,
+    references: Optional[str] = None,
 ) -> Tuple[bool, Optional[str], Optional[str]]:
     return await asyncio.to_thread(
         _send_plain_sync,
@@ -826,6 +863,8 @@ async def send_email_via_account(
         is_html,
         smtp_timeout_sec,
         for_mailing,
+        in_reply_to,
+        references,
     )
 
 
@@ -840,6 +879,8 @@ async def send_email_via_isolated_proxy(
     *,
     smtp_timeout_sec: float | None = None,
     for_mailing: bool = False,
+    in_reply_to: Optional[str] = None,
+    references: Optional[str] = None,
 ) -> Tuple[bool, Optional[str], Optional[str]]:
     return await asyncio.to_thread(
         _send_plain_sync_via_isolated_proxy,
@@ -852,6 +893,8 @@ async def send_email_via_isolated_proxy(
         is_html,
         smtp_timeout_sec,
         for_mailing,
+        in_reply_to,
+        references,
     )
 
 

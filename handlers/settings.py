@@ -15,7 +15,6 @@ from aiogram.exceptions import TelegramBadRequest
 from database import Session, db_session
 from services.users import get_or_create_user
 from services.user_settings import get_user_setting, set_user_setting
-from keyboards.main_menu import main_menu_kb
 from utils.callback_safe import callback_answer_safe
 from utils.ui_emoji import html_emoji, inline_button, menu_path, msg_fail, msg_ok, msg_wait, msg_warn
 

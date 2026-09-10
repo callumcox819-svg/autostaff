@@ -264,8 +264,8 @@ async def send_cmd(message: Message):
     await start_sending(message)
 
 
-async def start_sending(message: Message):
-    tg_user_id = message.from_user.id
+async def start_sending(message: Message, *, tg_user_id: int | None = None):
+    tg_user_id = int(tg_user_id if tg_user_id is not None else message.from_user.id)
     chat_id = message.chat.id
     bot = message.bot
 

@@ -11,10 +11,13 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_BOT_COMMANDS: tuple[BotCommand, ...] = (
     BotCommand(command="start", description="Запустить бота"),
+    BotCommand(command="menu", description="Меню кнопок"),
+    BotCommand(command="settings", description="Настройки"),
     BotCommand(command="send", description="Запустить рассылку"),
     BotCommand(command="stop", description="Остановить рассылку"),
     BotCommand(command="reset", description="Очистить очередь рассылки"),
     BotCommand(command="stat", description="Статус рассылки"),
+    BotCommand(command="testmail", description="Тест маил"),
 )
 
 

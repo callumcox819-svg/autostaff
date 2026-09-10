@@ -352,14 +352,17 @@ async def cmd_imap_diag(message: Message) -> None:
 @router.message(Command("stat", "status", "statussend"))
 @router.message(F.text.func(lambda m: is_status_trigger(getattr(m, "text", None))))
 async def cmd_statussend(message: Message) -> None:
-    tg_user_id = message.from_user.id
-    st = get_sending_state(tg_user_id)
+    await cmd_statussend_for(message, tg_user_id=int(message.from_user.id))
+
+
+async def cmd_statussend_for(message: Message, *, tg_user_id: int) -> None:
+    st = get_sending_state(int(tg_user_id))
 
     # Быстрый отклик, пока считаем БД (рассылка не блокирует, но /stat тяжёлый на SQLite).
     wait_msg = await message.answer(f"{html_emoji('wait')} Считаю статистику…")
 
     offers_total, pending_now, acc_total, acc_active, inbox_bounces, inbox_seller = (
-        await _collect_db_stats(tg_user_id)
+        await _collect_db_stats(int(tg_user_id))
     )
 
     text = render_status_text(

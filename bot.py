@@ -126,6 +126,7 @@ def _bind_priority_dispatcher_handlers(dp: Dispatcher) -> None:
         _dp_settings_message,
         F.func(lambda m: match_settings_menu_text(getattr(m, "text", None))),
     )
+    dp.message.register(_dp_settings_message, Command("settings"))
 
     dp.message.register(send_cmd, Command("send"))
     dp.message.register(send_cmd, F.func(lambda m: is_send_trigger(getattr(m, "text", None))))

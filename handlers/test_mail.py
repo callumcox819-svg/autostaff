@@ -151,6 +151,11 @@ async def test_mail_start(message: Message, state: FSMContext) -> None:
     await _show_menu(message)
 
 
+async def test_mail_open_cb(callback: CallbackQuery, state: FSMContext) -> None:
+    await state.clear()
+    await _show_menu(callback.message)
+
+
 @router.callback_query(F.data == "test_mail:close")
 async def test_mail_close(call: CallbackQuery, state: FSMContext) -> None:
     await state.clear()

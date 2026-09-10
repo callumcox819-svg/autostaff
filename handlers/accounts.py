@@ -727,6 +727,14 @@ async def accounts_quick_gmail_start(callback: CallbackQuery, state: FSMContext)
     await _quick_gmail_begin(callback.message, state)
 
 
+async def quick_gmail_open_cb(callback: CallbackQuery, state: FSMContext) -> None:
+    try:
+        await callback.answer()
+    except Exception:
+        pass
+    await _quick_gmail_begin(callback.message, state)
+
+
 @router.message(AccountsQuickGmailStates.waiting_sender_name)
 async def quick_gmail_sender_name(message: Message, state: FSMContext) -> None:
     raw = (message.text or "").strip()

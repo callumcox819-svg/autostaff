@@ -15,19 +15,23 @@ router = Router(name="stopsend")
 @router.message(Command("stop", "stopsend"))
 @router.message(F.text.func(lambda m: is_stop_trigger(getattr(m, "text", None))))
 async def cmd_stopsend(message: Message) -> None:
+    await cmd_stopsend_for(message, tg_user_id=int(message.from_user.id))
+
+
+async def cmd_stopsend_for(message: Message, *, tg_user_id: int) -> None:
     """
     Пользовательская команда остановки рассылки.
     """
     from handlers.send import get_sending_state, set_sending_state
 
-    user_id = message.from_user.id
+    user_id = int(tg_user_id)
     state = get_sending_state(user_id)
 
     if not state or not state.is_running:
         await message.answer(
             "Сейчас для тебя нет активной рассылки.\n"
             "Запустить можно командой /send или кнопкой в меню.",
-            reply_markup=main_menu_kb(message.from_user.id),
+            reply_markup=main_menu_kb(user_id),
         )
         return
 
@@ -35,7 +39,7 @@ async def cmd_stopsend(message: Message) -> None:
         await message.answer(
             "Рассылка уже помечена на остановку.\n"
             "Через пару минут она завершится.",
-            reply_markup=main_menu_kb(message.from_user.id),
+            reply_markup=main_menu_kb(user_id),
         )
         return
 
@@ -44,7 +48,7 @@ async def cmd_stopsend(message: Message) -> None:
     await message.answer(
         f"{html_emoji('stop')} Я пометил рассылку на остановку.\n"
         "После отправки ближайших писем процесс завершится.",
-        reply_markup=main_menu_kb(message.from_user.id),
+        reply_markup=main_menu_kb(user_id),
     )
 
 

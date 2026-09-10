@@ -7,7 +7,7 @@ from aiogram.types import Message, ReplyKeyboardRemove
 from aiogram.filters import CommandStart
 from aiogram.fsm.context import FSMContext
 
-from keyboards.main_menu import main_menu_kb
+from keyboards.main_menu import hide_reply_keyboard, main_menu_inline_kb
 from database import db_session
 from services.users import get_or_create_user
 from services.bot_roles import config_admin_ids
@@ -30,10 +30,21 @@ def _welcome_html() -> str:
             f"{html_emoji('stop')} <code>/stop</code> — остановка",
             f"{html_emoji('refresh')} <code>/reset</code> — сброс очереди",
             f"{html_emoji('status')} <code>/stat</code> — статус",
+            f"{html_emoji('settings')} <code>/menu</code> — кнопки (не перекрывают чат)",
             "",
             f"{html_emoji('presets')} JSON / TXT — валидация и база офферов",
-            f"{html_emoji('settings')} Кнопка «Настройки» — аккаунты, прокси, ключ, пресеты",
+            f"{html_emoji('settings')} Настройки — аккаунты, прокси, ключ, пресеты",
         ]
+    )
+
+
+async def _answer_welcome(message: Message, *, tg_id: int, show_admin: bool) -> None:
+    # Снять старую залипающую ReplyKeyboard (на телефоне закрывала пол-экрана).
+    await message.answer("⌨️", reply_markup=hide_reply_keyboard())
+    await message.answer(
+        _welcome_html(),
+        reply_markup=main_menu_inline_kb(tg_id, show_admin=show_admin),
+        parse_mode="HTML",
     )
 
 
@@ -66,14 +77,8 @@ async def cmd_start(message: Message, state: FSMContext) -> None:
     except Exception:
         pass
 
-    welcome = _welcome_html()
-
     if tg_id in config_admin_ids():
-        await message.answer(
-            welcome,
-            reply_markup=main_menu_kb(tg_id, show_admin=True),
-            parse_mode="HTML",
-        )
+        await _answer_welcome(message, tg_id=tg_id, show_admin=True)
         return
 
     try:
@@ -108,8 +113,4 @@ async def cmd_start(message: Message, state: FSMContext) -> None:
         await deny_access_message(message)
         return
 
-    await message.answer(
-        welcome,
-        reply_markup=main_menu_kb(tg_id, show_admin=is_admin),
-        parse_mode="HTML",
-    )
+    await _answer_welcome(message, tg_id=tg_id, show_admin=is_admin)

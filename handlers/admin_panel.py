@@ -56,7 +56,11 @@ def admin_kb() -> InlineKeyboardMarkup:
 
 @router.message(F.func(lambda m: is_admin_trigger(getattr(m, "text", None))))
 async def open_admin(message: Message) -> None:
-    if not await is_admin(message.from_user.id):
+    await open_admin_for(message, tg_user_id=int(message.from_user.id))
+
+
+async def open_admin_for(message: Message, *, tg_user_id: int) -> None:
+    if not await is_admin(int(tg_user_id)):
         await message.answer(msg_fail("У тебя нет доступа к админ-панели."), parse_mode="HTML")
         return
     await message.answer(f"{html_emoji('admin')} <b>Админ-панель</b>", reply_markup=admin_kb(), parse_mode="HTML")

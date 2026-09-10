@@ -1,3 +1,7 @@
+from unittest.mock import MagicMock
+
+from aiogram.types import Message
+
 from middlewares.bot_access import (
     _ACCESS_CACHE,
     _bypass_access_db_check,
@@ -6,24 +10,17 @@ from middlewares.bot_access import (
 )
 
 
-class _Msg:
-    def __init__(self, text: str = "", document=None):
-        self.text = text
-        self.document = document
-        self.chat = type("C", (), {"type": "private"})()
-        self.pinned_message = None
-        self.new_chat_members = None
-        self.left_chat_member = None
-        self.group_chat_created = False
-        self.supergroup_chat_created = False
-        self.migrate_to_chat_id = None
-        self.migrate_from_chat_id = None
+def _msg(text: str = "") -> MagicMock:
+    m = MagicMock(spec=Message)
+    m.text = text
+    m.document = None
+    return m
 
 
 def test_send_bypasses_busy_db_gate():
-    assert _bypass_access_db_check(_Msg("/send"))
-    assert _bypass_access_db_check(_Msg("/send@mybot"))
-    assert _bypass_access_db_check(_Msg("/menu"))
+    assert _bypass_access_db_check(_msg("/send"))
+    assert _bypass_access_db_check(_msg("/send@mybot"))
+    assert _bypass_access_db_check(_msg("/menu"))
 
 
 def test_cached_access_ttl():

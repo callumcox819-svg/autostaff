@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import html
 import json
 import logging
 import re
@@ -235,14 +236,16 @@ async def _spoof_name_menu_payload(tg_user_id: int) -> tuple[str, InlineKeyboard
         html_subj = (await get_user_setting(session, user, HTML_THEME_KEY) or "").strip() or "— не задано —"
 
     label = _service_label(service)
-    cur_line = cur if cur else "— не задано —"
+    cur_disp = html.escape(cur) if cur else "— не задано —"
+    subj_disp = html.escape(html_subj)
     text = (
         f"{html_emoji('user')} <b>HTML: имя и тема</b>\n"
-        f"Сервис: <b>{label}</b>\n"
-        f"Имя и тема ниже — только при {html_emoji('green')} <b>Спуфинг</b> и отправке <b>HTML</b>.\n"
-        f"Имя отправителя: <b>{cur_line}</b>\n\n"
-        f"Ответы текстом / пресет и рассылка: имя из «{html_emoji('email')} E-mail», тема рассылки — глобальный <code>OFFER</code>.\n\n"
-        f"{html_emoji('pin')} <b>Тема для HTML (при спуфинге):</b> <code>{html_subj}</code>"
+        f"Сервис: <b>{html.escape(label)}</b>\n\n"
+        f"Только при {html_emoji('green')} <b>Спуфинг</b> и отправке <b>HTML</b>:\n"
+        f"{html_emoji('user')} <b>Имя (From):</b> <code>{cur_disp}</code>\n"
+        f"{html_emoji('pin')} <b>Тема письма:</b> <code>{subj_disp}</code>\n\n"
+        f"Текстом / пресет / рассылка — имя из «{html_emoji('email')} E-mail», "
+        f"тема рассылки — глобальный <code>OFFER</code>."
     )
     kb = InlineKeyboardMarkup(
         inline_keyboard=[

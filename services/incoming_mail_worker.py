@@ -486,8 +486,8 @@ async def _upsert_convlink(
     pinned_offer_id: int | None = None,
     pinned_outgoing_subject: str | None = None,
 ) -> None:
-    inbox = (inbox_email or "").strip().lower()
-    contact = (contact_email or "").strip().lower()
+    inbox = _canon_email(inbox_email)
+    contact = _canon_email(contact_email)
     if not inbox or not contact:
         return
 
@@ -525,8 +525,8 @@ async def _upsert_convlink(
                 ps = (pinned_outgoing_subject or "").strip()[:500]
                 if ps:
                     row.pinned_outgoing_subject = ps
-                # Запоминаем anchor message_id только если его ещё нет, либо если явно передали.
-                if tg_message_id is not None:
+                # Anchor = первое TG-сообщение диалога; повторные письма не перезаписывают.
+                if tg_message_id is not None and row.tg_message_id is None:
                     row.tg_message_id = int(tg_message_id)
 
             await _db_commit_retry(session)
@@ -540,8 +540,8 @@ async def _load_convlink(
     inbox_email: str,
     contact_email: str,
 ) -> ConversationLink | None:
-    inbox = (inbox_email or "").strip().lower()
-    contact = (contact_email or "").strip().lower()
+    inbox = _canon_email(inbox_email)
+    contact = _canon_email(contact_email)
     if not inbox or not contact:
         return None
     try:
@@ -1493,6 +1493,37 @@ async def mail_card_offer_meta(
     )
 
 
+async def is_first_inbound_mail_for_seller(
+    session,
+    *,
+    user_id: int,
+    account_id: int,
+    from_email: str,
+    mail_id: int,
+) -> bool:
+    """
+    Первое входящее от этого продавца на ящик, уже ушедшее в TG.
+    Лот / товар / цена / фото — только на этой карточке; повторные письма — короткие reply.
+    """
+    if not int(mail_id or 0):
+        return False
+    fe = _canon_email(from_email)
+    if not fe:
+        return False
+    prior = (
+        await session.execute(
+            sa_select(func.count(IncomingMail.id))
+            .where(IncomingMail.user_id == int(user_id))
+            .where(IncomingMail.account_id == int(account_id))
+            .where(func.lower(IncomingMail.from_email) == fe)
+            .where(IncomingMail.id < int(mail_id))
+            .where(IncomingMail.telegram_message_id.isnot(None))
+            .where(IncomingMail.telegram_message_id > 0)
+        )
+    ).scalar() or 0
+    return int(prior) == 0
+
+
 async def is_first_inbound_mail_for_seller_offer(
     session,
     *,
@@ -1502,20 +1533,52 @@ async def is_first_inbound_mail_for_seller_offer(
     resolved_offer_id: int,
     mail_id: int,
 ) -> bool:
-    """Первое входящее от продавца по этому закреплённому лоту (фото/товар/цена только тогда)."""
-    if not int(resolved_offer_id or 0) or not int(mail_id or 0):
-        return False
-    prior = (
+    """Совместимость: «первое» = первое от продавца на ящик (лот больше не режет)."""
+    _ = resolved_offer_id
+    return await is_first_inbound_mail_for_seller(
+        session,
+        user_id=user_id,
+        account_id=account_id,
+        from_email=from_email,
+        mail_id=mail_id,
+    )
+
+
+async def seller_thread_tg_anchor_message_id(
+    session,
+    *,
+    user_id: int,
+    account_id: int,
+    from_email: str,
+    conv: ConversationLink | None = None,
+) -> int | None:
+    """Якорь reply: ConversationLink или самое раннее TG-сообщение от этого продавца."""
+    try:
+        if conv and getattr(conv, "tg_message_id", None):
+            tid = int(conv.tg_message_id)
+            if tid > 0:
+                return tid
+    except Exception:
+        pass
+    fe = _canon_email(from_email)
+    if not fe:
+        return None
+    tid = (
         await session.execute(
-            sa_select(func.count(IncomingMail.id))
+            sa_select(IncomingMail.telegram_message_id)
             .where(IncomingMail.user_id == int(user_id))
             .where(IncomingMail.account_id == int(account_id))
-            .where(IncomingMail.from_email == str(from_email or "").strip())
-            .where(IncomingMail.resolved_offer_id == int(resolved_offer_id))
-            .where(IncomingMail.id < int(mail_id))
+            .where(func.lower(IncomingMail.from_email) == fe)
+            .where(IncomingMail.telegram_message_id.isnot(None))
+            .where(IncomingMail.telegram_message_id > 0)
+            .order_by(IncomingMail.id.asc())
+            .limit(1)
         )
-    ).scalar() or 0
-    return int(prior) == 0
+    ).scalar_one_or_none()
+    try:
+        return int(tid) if tid and int(tid) > 0 else None
+    except Exception:
+        return None
 
 
 async def seller_offer_photo_sent_recently(
@@ -1527,10 +1590,14 @@ async def seller_offer_photo_sent_recently(
     resolved_offer_id: int,
     mail_id: int,
 ) -> bool:
-    """Не слать второе фото, если тот же продавец/лот уже ушли в TG (две темы — одно тело)."""
+    """Не слать второе фото, если от этого продавца на ящик уже уходило TG-фото недавно."""
     from datetime import datetime, timedelta
 
-    if not int(resolved_offer_id or 0) or not int(mail_id or 0):
+    _ = resolved_offer_id
+    if not int(mail_id or 0):
+        return False
+    fe = _canon_email(from_email)
+    if not fe:
         return False
     cutoff = datetime.utcnow() - timedelta(minutes=_INCOMING_BODY_DEDUPE_MINUTES)
     prior = (
@@ -1538,12 +1605,13 @@ async def seller_offer_photo_sent_recently(
             sa_select(func.count(IncomingMail.id))
             .where(IncomingMail.user_id == int(user_id))
             .where(IncomingMail.account_id == int(account_id))
-            .where(IncomingMail.from_email == str(from_email or "").strip())
-            .where(IncomingMail.resolved_offer_id == int(resolved_offer_id))
+            .where(func.lower(IncomingMail.from_email) == fe)
             .where(IncomingMail.telegram_message_id.isnot(None))
             .where(IncomingMail.telegram_message_id > 0)
             .where(IncomingMail.id != int(mail_id))
             .where(IncomingMail.created_at >= cutoff)
+            .where(IncomingMail.photo_url.isnot(None))
+            .where(IncomingMail.photo_url != "")
         )
     ).scalar() or 0
     return int(prior) > 0
@@ -1711,7 +1779,22 @@ async def build_mail_card_from_mail(
         generated_link = (conv.generated_link or "").strip()
     link_id = link_id_from_generated_url(generated_link)
 
-    card_subject = (product_title or "").strip() or str(getattr(mail, "subject", "") or "")
+    card_subject = str(getattr(mail, "subject", "") or "").strip()
+    is_first_card = True
+    try:
+        is_first_card = await is_first_inbound_mail_for_seller(
+            session,
+            user_id=int(mail.user_id),
+            account_id=int(getattr(mail, "account_id", 0) or 0),
+            from_email=str(getattr(mail, "from_email", "") or ""),
+            mail_id=int(mail.id),
+        )
+    except Exception:
+        is_first_card = True
+    show_oid = oid if is_first_card else None
+    show_service = service_label if is_first_card else None
+    show_product = (product_title or None) if is_first_card else None
+    show_price = offer_price if is_first_card else None
     chunks = render_mail_text_chunks(
         account_email=str(getattr(mail, "account_email", "") or ""),
         inbox_label=inbox_label,
@@ -1719,11 +1802,11 @@ async def build_mail_card_from_mail(
         from_email=str(getattr(mail, "from_email", "") or ""),
         subject=card_subject,
         body=body_full,
-        offer_id=oid,
+        offer_id=show_oid,
         link_id=link_id,
-        service_label=service_label,
-        product_title=product_title or None,
-        offer_price=offer_price,
+        service_label=show_service,
+        product_title=show_product,
+        offer_price=show_price,
         translation=translation,
     )
     text = (chunks[0] if chunks else "—")[:4096]
@@ -2113,33 +2196,37 @@ async def _process_mails_for_account_impl(
                     or inbox_label
                 )
 
-            card_subject = (product_title or "").strip() or (subject or "").strip()
+            # Тема = реальный subject письма, не название товара.
+            card_subject = (subject or "").strip()
             link_id = None
             if conv and (conv.generated_link or "").strip():
                 link_id = link_id_from_generated_url((conv.generated_link or "").strip())
 
+            # Лот/товар/цена/фото — только на первом входящем от продавца на этот ящик.
+            is_first_card = True
             photo_to_send: str | None = None
             photo_caption: str | None = None
-            if mail_db_id and offer_id and photo_url:
+            if mail_db_id:
                 try:
                     async with _imap_db_session() as _s2:
-                        first = await is_first_inbound_mail_for_seller_offer(
+                        is_first_card = await is_first_inbound_mail_for_seller(
                             _s2,
                             user_id=int(user_id),
                             account_id=int(acc_id),
                             from_email=str(from_email_clean).strip(),
-                            resolved_offer_id=int(offer_id),
                             mail_id=int(mail_db_id),
                         )
-                        if first:
-                            dup_photo = await seller_offer_photo_sent_recently(
-                                _s2,
-                                user_id=int(user_id),
-                                account_id=int(acc_id),
-                                from_email=str(from_email_clean).strip(),
-                                resolved_offer_id=int(offer_id),
-                                mail_id=int(mail_db_id),
-                            )
+                        if is_first_card and photo_url:
+                            dup_photo = False
+                            if offer_id:
+                                dup_photo = await seller_offer_photo_sent_recently(
+                                    _s2,
+                                    user_id=int(user_id),
+                                    account_id=int(acc_id),
+                                    from_email=str(from_email_clean).strip(),
+                                    resolved_offer_id=int(offer_id),
+                                    mail_id=int(mail_db_id),
+                                )
                             if not dup_photo:
                                 photo_to_send = photo_url
                                 photo_caption = format_first_incoming_photo_caption(
@@ -2148,10 +2235,15 @@ async def _process_mails_for_account_impl(
                                 )
                 except Exception:
                     logger.exception(
-                        "first-incoming photo check from=%s mail_id=%s",
+                        "first-incoming card check from=%s mail_id=%s",
                         from_email_clean,
                         mail_db_id,
                     )
+
+            show_offer_id = offer_id if is_first_card else None
+            show_service = service_label if is_first_card else None
+            show_product = product_title if is_first_card else None
+            show_price = offer_price if is_first_card else None
 
             chunks = render_mail_text_chunks(
                 account_email=account_email,
@@ -2160,11 +2252,11 @@ async def _process_mails_for_account_impl(
                 from_email=from_email,
                 subject=card_subject,
                 body=body,
-                offer_id=offer_id,
+                offer_id=show_offer_id,
                 link_id=link_id,
-                service_label=service_label,
-                product_title=product_title,
-                offer_price=offer_price,
+                service_label=show_service,
+                product_title=show_product,
+                offer_price=show_price,
             )
             if smtp_block_bounce and chunks:
                 from services.smtp_block_control import smtp_removed_from_mailing_notice_html
@@ -2192,13 +2284,24 @@ async def _process_mails_for_account_impl(
 
             kb = build_kb(acc_id, uid_key, mail_id=mail_db_id)
 
-            # ✅ ТЗ: повторные письма от продавца должны крепиться к первому сообщению.
+            # ✅ ТЗ: повторные письма от продавца крепятся к первому ответу (и лиду) того же продавца.
             reply_to_id: int | None = None
             try:
-                if conv and getattr(conv, "tg_message_id", None):
-                    reply_to_id = int(conv.tg_message_id)
+                async with _imap_db_session() as _s_anchor:
+                    reply_to_id = await seller_thread_tg_anchor_message_id(
+                        _s_anchor,
+                        user_id=int(user_id),
+                        account_id=int(acc_id),
+                        from_email=str(from_email_clean).strip(),
+                        conv=conv,
+                    )
             except Exception:
                 reply_to_id = None
+                try:
+                    if conv and getattr(conv, "tg_message_id", None):
+                        reply_to_id = int(conv.tg_message_id)
+                except Exception:
+                    reply_to_id = None
 
             if chunks:
                 claimed_notify = False

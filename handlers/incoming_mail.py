@@ -12,6 +12,7 @@ from aiogram import Router, F
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import StatesGroup, State
+from aiogram.types import BufferedInputFile
 
 from sqlalchemy import select as sa_select, func, select, update as sa_update
 from sqlalchemy.exc import IntegrityError
@@ -246,19 +247,39 @@ async def _notify_reply_sent(bot, chat_id: int, ctx: ReplyNotifyCtx) -> None:
 
     if ctx.is_html and ctx.html_attachment:
         fname = (ctx.html_filename or "reply.html").strip() or "reply.html"
+        if not fname.lower().endswith((".html", ".htm")):
+            fname = f"{fname}.html"
         try:
             doc = BufferedInputFile(
                 ctx.html_attachment.encode("utf-8"),
                 filename=fname,
             )
-            await bot.send_document(
-                int(chat_id),
-                doc,
-                caption=f"{html_emoji('presets')} HTML, который был отправлен",
-                reply_to_message_id=anchor,
-            )
+            try:
+                await bot.send_document(
+                    int(chat_id),
+                    doc,
+                    caption=f"{html_emoji('presets')} HTML, который был отправлен",
+                    reply_to_message_id=anchor,
+                )
+            except Exception:
+                await bot.send_document(
+                    int(chat_id),
+                    doc,
+                    caption=f"{html_emoji('presets')} HTML, который был отправлен",
+                )
         except Exception:
-            pass
+            logger.exception(
+                "Failed to attach sent HTML file chat=%s fname=%s bytes=%s",
+                chat_id,
+                fname,
+                len(ctx.html_attachment or ""),
+            )
+    elif ctx.is_html and not ctx.html_attachment:
+        logger.warning(
+            "HTML reply notify without attachment to=%s from=%s",
+            ctx.to_email,
+            ctx.account_email,
+        )
 
     # Короткое подтверждение — только если нужен отдельный toast (ссылка и т.д.)
     if ctx.is_link:

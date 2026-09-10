@@ -12,14 +12,16 @@ from database import db_session
 from keyboards.main_menu import is_main_menu_text
 from services.bot_roles import config_admin_ids
 from services.users import get_or_create_user
-from utils.ui_emoji import html_emoji, inline_button, menu_path, msg_fail, msg_ok, msg_wait, msg_warn
+from utils.ui_emoji import html_emoji, msg_wait
 
 logger = logging.getLogger(__name__)
 
 # Кэш доступа — без запроса в БД на каждую кнопку (главная причина «подлагиваний»).
 _ACCESS_CACHE: dict[int, tuple[bool, bool, float]] = {}
-_ACCESS_CACHE_TTL_SEC = float(__import__("os").getenv("BOT_ACCESS_CACHE_TTL_SEC", "25"))
-_ACCESS_DB_TIMEOUT_SEC = float(__import__("os").getenv("BOT_ACCESS_DB_TIMEOUT_SEC", "8"))
+_ACCESS_CACHE_TTL_SEC = float(__import__("os").getenv("BOT_ACCESS_CACHE_TTL_SEC", "60"))
+# При таймауте Postgres (валидация/рассылка) — пускать по кэшу дольше, чем обычный TTL.
+_ACCESS_STALE_OK_SEC = float(__import__("os").getenv("BOT_ACCESS_STALE_OK_SEC", "900"))
+_ACCESS_DB_TIMEOUT_SEC = float(__import__("os").getenv("BOT_ACCESS_DB_TIMEOUT_SEC", "5"))
 
 
 def invalidate_access_cache(telegram_id: int | None = None) -> None:
@@ -28,6 +30,7 @@ def invalidate_access_cache(telegram_id: int | None = None) -> None:
         _ACCESS_CACHE.clear()
         return
     _ACCESS_CACHE.pop(int(telegram_id), None)
+
 
 ACCESS_DENIED_TEXT = (
     f"{html_emoji('deny')} У тебя нет доступа к использованию этого бота. Обратись к администратору."
@@ -60,9 +63,30 @@ def _bypass_access_db_check(event: TelegramObject) -> bool:
         if _is_import_document_message(event):
             return True
         t = (event.text or "").strip().lower()
-        if t in ("/ping", "/health"):
+        # Частые команды во время чужой валидации/рассылки — не ждать пул Postgres.
+        if t.startswith("/") and t.split()[0].split("@")[0] in {
+            "/ping",
+            "/health",
+            "/send",
+            "/menu",
+            "/settings",
+            "/status",
+            "/imap_diag",
+            "/accounts",
+            "/stop",
+            "/cancel",
+        }:
             return True
     return False
+
+
+def _cached_access(tg_id: int, *, max_age_sec: float) -> tuple[bool, bool] | None:
+    cached = _ACCESS_CACHE.get(int(tg_id))
+    if not cached:
+        return None
+    if (time.monotonic() - cached[2]) > float(max_age_sec):
+        return None
+    return bool(cached[0]), bool(cached[1])
 
 
 def _is_non_private_message(event: TelegramObject) -> bool:
@@ -145,6 +169,9 @@ class BotAccessMiddleware(BaseMiddleware):
 
         tg_id = int(user.id)
 
+        if tg_id in config_admin_ids():
+            return await handler(event, data)
+
         if isinstance(event, Message):
             if _is_start_message(event):
                 return await handler(event, data)
@@ -152,18 +179,42 @@ class BotAccessMiddleware(BaseMiddleware):
                 return await handler(event, data)
             if getattr(user, "is_bot", False):
                 return await handler(event, data)
-            if _bypass_access_db_check(event):
-                return await handler(event, data)
 
-        # Inline-кнопки: не блокируем из-за очереди к Postgres (иначе «0 реакции»).
-        if isinstance(event, CallbackQuery):
-            if tg_id in config_admin_ids():
+        # Свежий кэш — не трогаем Postgres (иначе /send блокируется чужой валидацией).
+        hit = _cached_access(tg_id, max_age_sec=_ACCESS_CACHE_TTL_SEC)
+        if hit is not None:
+            is_admin, has_access = hit
+            if is_admin or has_access:
                 return await handler(event, data)
-            cached = _ACCESS_CACHE.get(tg_id)
-            if cached and (time.monotonic() - cached[2]) < _ACCESS_CACHE_TTL_SEC:
-                is_admin, has_access = cached[0], cached[1]
-                if is_admin or has_access:
-                    return await handler(event, data)
+            if isinstance(event, Message):
+                await deny_access_message(event)
+                return None
+            if isinstance(event, CallbackQuery):
+                try:
+                    await event.answer(ACCESS_DENIED_TEXT, show_alert=True)
+                except Exception:
+                    pass
+                return None
+
+        if _bypass_access_db_check(event):
+            # Команда вроде /send при пустом кэше: короткий wait, иначе пускаем в хендлер.
+            try:
+                is_admin, has_access = await asyncio.wait_for(
+                    _resolve_access(tg_id),
+                    timeout=min(2.0, _ACCESS_DB_TIMEOUT_SEC),
+                )
+            except asyncio.TimeoutError:
+                logger.warning(
+                    "BotAccessMiddleware: DB timeout on bypass cmd tg=%s — allow handler",
+                    tg_id,
+                )
+                return await handler(event, data)
+            if is_admin or has_access:
+                return await handler(event, data)
+            if isinstance(event, Message):
+                await deny_access_message(event)
+                return None
+            return None
 
         try:
             is_admin, has_access = await asyncio.wait_for(
@@ -172,8 +223,15 @@ class BotAccessMiddleware(BaseMiddleware):
             )
         except asyncio.TimeoutError:
             logger.error("BotAccessMiddleware: DB timeout tg=%s", user.id)
-            if _bypass_access_db_check(event):
-                return await handler(event, data)
+            stale = _cached_access(tg_id, max_age_sec=_ACCESS_STALE_OK_SEC)
+            if stale is not None:
+                is_admin, has_access = stale
+                if is_admin or has_access:
+                    logger.warning(
+                        "BotAccessMiddleware: DB timeout tg=%s — stale cache allow",
+                        tg_id,
+                    )
+                    return await handler(event, data)
             if isinstance(event, CallbackQuery):
                 return await handler(event, data)
             if isinstance(event, Message):

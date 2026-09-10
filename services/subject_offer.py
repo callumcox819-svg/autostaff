@@ -224,6 +224,9 @@ def offer_title_from_inbound_subject(subject: str) -> str:
         return ""
 
     subj = _strip_inbound_subject_trailer(subj) or subj
+    # Сначала: тема только «ещё в продаже?» (DE/NL/EN) — не OFFER
+    if inbound_subject_is_availability_only(subj):
+        return ""
 
     for rx in _inbound_offer_extractors():
         m = rx.match(subj)
@@ -231,6 +234,8 @@ def offer_title_from_inbound_subject(subject: str) -> str:
             continue
         offer = sanitize_email_subject((m.group("offer") or "").strip())
         offer = _strip_inbound_subject_trailer(offer) or offer
+        if inbound_subject_is_availability_only(offer):
+            continue
         if len(offer) >= 3 and offer.upper() not in ("OFFER", "ARTIKEL", "TEST"):
             if offer == subj and _MAILING_WRAPPER_RE.search(subj):
                 # «OFFER» plain + хвост «noch im Verkauf» — не отбрасывать
@@ -242,12 +247,7 @@ def offer_title_from_inbound_subject(subject: str) -> str:
 
     # Aw:/Re: и в теме только item_title (без пресета Kurze Frage / Interesse)
     plain = _strip_inbound_subject_trailer(subj)
-    # «Noch zu haben» без OFFER — не считать названием товара
-    if re.match(
-        r"^(?:noch\s+zu\s+haben|noch\s+verf[uü]gbar\??|noch\s+da\??)\s*$",
-        plain,
-        re.I,
-    ):
+    if inbound_subject_is_availability_only(plain) or inbound_subject_is_availability_only(subj):
         return ""
 
     if len(plain) >= 8 and not _MAILING_WRAPPER_RE.match(plain):
@@ -373,25 +373,44 @@ def inbound_body_product_needle(body: str) -> str:
 
 _WEAK_INBOUND_SUBJECT_RE = re.compile(
     r"^(?:(?:re|aw|wg|fwd)\s*:\s*)*(?:"
+    # DE
     r"noch\s+zu\s+haben|noch\s+verf[uü]gbar\??|noch\s+verfugbar\??|"
     r"noch\s+da\??|noch\s+aktuell\??|"
-    r"noch\s+nicht\s+verkauft\??"
+    r"noch\s+nicht\s+verkauft\??|"
+    # NL (Marktplaats / Evoleum) — «Nog steeds beschikbaar?» без названия лота
+    r"(?:is\s+(?:het|dit|uw\s+advertentie|het\s+artikel)\s+)?"
+    r"nog\s+(?:steeds\s+)?beschikbaar\??|"
+    r"nog\s+(?:steeds\s+)?te\s+koop\??|"
+    # EN
+    r"(?:is\s+(?:this|it|the\s+item)\s+)?"
+    r"still\s+available\??|"
+    r"is\s+this\s+still\s+available\??"
     r")\s*$",
     re.IGNORECASE,
 )
 
 
-def inbound_subject_is_weak_for_bind(subject: str) -> bool:
-    """Тема без OFFER («Noch zu haben») — не использовать для выбора лота."""
+def inbound_subject_is_availability_only(subject: str) -> bool:
+    """Тема только «ещё в продаже?» без OFFER (DE/NL/EN)."""
     raw = sanitize_email_subject((subject or "").strip())
     if not raw:
         return True
-    if offer_title_from_inbound_subject(raw):
-        return False
     if _WEAK_INBOUND_SUBJECT_RE.match(raw):
         return True
     stripped = _REPLY_PREFIX_RE.sub("", raw).strip()
     return bool(_WEAK_INBOUND_SUBJECT_RE.match(stripped))
+
+
+def inbound_subject_is_weak_for_bind(subject: str) -> bool:
+    """Тема без OFFER («Noch zu haben» / «Nog steeds beschikbaar») — не для выбора лота."""
+    raw = sanitize_email_subject((subject or "").strip())
+    if not raw:
+        return True
+    if inbound_subject_is_availability_only(raw):
+        return True
+    if offer_title_from_inbound_subject(raw):
+        return False
+    return False
 
 
 def primary_inbound_product_needle(subject: str, body: str) -> str:

@@ -63,6 +63,8 @@ _HTTP_SMTP_PROXY_CTX: contextvars.ContextVar[Proxy | None] = contextvars.Context
     default=None,
 )
 _SMTP_GETSOCKET_PATCHED = False
+# Глобальный PySocks/HTTP-патч активен (ProxySMTPContext). Isolated SMTP его не ставит.
+_SMTP_GLOBAL_PROXY_ACTIVE = False
 
 SOCKS5_TYPES = frozenset({"socks5", "socks5h"})
 SOCKS4_TYPES = frozenset({"socks4", "socks4a"})
@@ -332,7 +334,7 @@ async def choose_proxy_for_user(
 
 def apply_proxy_to_smtplib(proxy: Proxy) -> None:
     """SOCKS → PySocks; HTTP → CONNECT через stdlib (Proxy-Authorization)."""
-    global _SOCKET_GETADDRINFO_ORIG
+    global _SOCKET_GETADDRINFO_ORIG, _SMTP_GLOBAL_PROXY_ACTIVE
 
     if not is_mailing_proxy(proxy):
         raise ValueError(
@@ -352,6 +354,7 @@ def apply_proxy_to_smtplib(proxy: Proxy) -> None:
         except Exception:
             pass
         _HTTP_SMTP_PROXY_CTX.set(proxy)
+        _SMTP_GLOBAL_PROXY_ACTIVE = True
         logger.info("SMTP HTTP proxy applied: %s:%s", host, port)
         return
 
@@ -393,6 +396,7 @@ def apply_proxy_to_smtplib(proxy: Proxy) -> None:
     if hasattr(smtplib.socket, "getaddrinfo"):
         smtplib.socket.getaddrinfo = _getaddrinfo_ipv4  # type: ignore[attr-defined]
 
+    _SMTP_GLOBAL_PROXY_ACTIVE = True
     logger.info(
         "SMTP proxy applied: %s %s:%s rdns=%s",
         proxy_type_name(proxy),
@@ -453,17 +457,37 @@ def test_smtp_tunnel_sync(proxy: Proxy, *, timeout: int = 20) -> tuple[bool, str
         reset_smtplib_proxy()
 
 
+def smtp_global_proxy_is_active() -> bool:
+    """True только пока активен глобальный ProxySMTPContext (не isolated SMTP)."""
+    if _SMTP_GLOBAL_PROXY_ACTIVE:
+        return True
+    try:
+        if _HTTP_SMTP_PROXY_CTX.get() is not None:
+            return True
+    except Exception:
+        pass
+    try:
+        import smtplib
+
+        if smtplib.socket is not _SMTP_SOCKET_ORIG:
+            return True
+    except Exception:
+        pass
+    if _SOCKET_GETADDRINFO_ORIG is not None and _stdlib_socket.getaddrinfo is not _SOCKET_GETADDRINFO_ORIG:
+        return True
+    return False
+
+
 async def _reset_socks_under_lock() -> None:
     """Короткий lock только на сброс PySocks (миллисекунды), не на весь запрос к Postgres."""
-    import asyncio
+    if not smtp_global_proxy_is_active():
+        return
 
-    lock_wait = float(os.getenv("DB_SOCKET_LOCK_TIMEOUT_SEC", "10"))
+    lock_wait = float(os.getenv("DB_SOCKET_LOCK_TIMEOUT_SEC", "2"))
     try:
         await asyncio.wait_for(_DB_SOCKET_LOCK.acquire(), timeout=lock_wait)
     except asyncio.TimeoutError:
-        import logging
-
-        logging.getLogger(__name__).error(
+        logger.error(
             "DB socket lock timeout (%.0fs) — reset без lock", lock_wait
         )
         reset_smtplib_proxy()
@@ -478,22 +502,28 @@ async def _reset_socks_under_lock() -> None:
 @asynccontextmanager
 async def database_socket_guard():
     """
-    Перед/после работы с Postgres: сбросить PySocks-патч.
-    Lock НЕ держится на время yield — иначе IMAP блокирует /start и все кнопки.
+    Перед/после работы с Postgres: сбросить PySocks-патч, если он активен.
+    При isolated-рассылке патча нет — guard почти free (без lock/логов).
     """
+    if not smtp_global_proxy_is_active():
+        yield
+        return
     await _reset_socks_under_lock()
     try:
         yield
     finally:
-        await _reset_socks_under_lock()
+        if smtp_global_proxy_is_active():
+            await _reset_socks_under_lock()
 
 
 def reset_smtplib_proxy() -> None:
-    global _SOCKET_GETADDRINFO_ORIG
+    global _SOCKET_GETADDRINFO_ORIG, _SMTP_GLOBAL_PROXY_ACTIVE
 
     import smtplib
 
+    was_active = smtp_global_proxy_is_active()
     _HTTP_SMTP_PROXY_CTX.set(None)
+    _SMTP_GLOBAL_PROXY_ACTIVE = False
 
     try:
         import socks  # type: ignore
@@ -505,7 +535,8 @@ def reset_smtplib_proxy() -> None:
         _stdlib_socket.getaddrinfo = _SOCKET_GETADDRINFO_ORIG  # type: ignore[assignment]
 
     smtplib.socket = _SMTP_SOCKET_ORIG
-    logger.info("SMTP proxy reset (smtplib only)")
+    if was_active:
+        logger.debug("SMTP proxy reset (smtplib only)")
 
 
 class ProxySMTPContext:

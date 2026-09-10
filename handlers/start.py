@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import os
+import time
 
 from aiogram import Router, F
 from aiogram.types import Message, ReplyKeyboardRemove
@@ -17,7 +18,8 @@ from utils.ui_emoji import html_emoji, msg_fail, msg_wait
 router = Router()
 logger = logging.getLogger(__name__)
 
-_START_DB_TIMEOUT_SEC = float(os.getenv("START_DB_TIMEOUT_SEC", "12"))
+# Короткий wait: при чужой рассылке пул занят — лучше кэш, чем 12с зависания.
+_START_DB_TIMEOUT_SEC = float(os.getenv("START_DB_TIMEOUT_SEC", "3"))
 
 
 def _welcome_html() -> str:
@@ -46,6 +48,25 @@ async def _answer_welcome(message: Message, *, tg_id: int, show_admin: bool) -> 
         reply_markup=main_menu_inline_kb(tg_id, show_admin=show_admin),
         parse_mode="HTML",
     )
+
+
+def _remember_access(tg_id: int, *, is_admin: bool, has_access: bool) -> None:
+    try:
+        from middlewares.bot_access import _ACCESS_CACHE
+
+        _ACCESS_CACHE[int(tg_id)] = (bool(is_admin), bool(has_access), time.monotonic())
+    except Exception:
+        pass
+
+
+def _cached_start_access(tg_id: int) -> tuple[bool, bool] | None:
+    """(is_admin, has_access) из middleware-кэша — без Postgres."""
+    try:
+        from middlewares.bot_access import _ACCESS_STALE_OK_SEC, _cached_access
+
+        return _cached_access(int(tg_id), max_age_sec=_ACCESS_STALE_OK_SEC)
+    except Exception:
+        return None
 
 
 async def _start_load_user(tg_id: int) -> tuple[bool, bool, bool]:
@@ -78,8 +99,17 @@ async def cmd_start(message: Message, state: FSMContext) -> None:
         pass
 
     if tg_id in config_admin_ids():
+        _remember_access(tg_id, is_admin=True, has_access=True)
         await _answer_welcome(message, tg_id=tg_id, show_admin=True)
         return
+
+    # Во время чужой рассылки Postgres может не ответить — меню из кэша доступа.
+    cached = _cached_start_access(tg_id)
+    if cached is not None:
+        is_admin, has_access = cached
+        if has_access or is_admin:
+            await _answer_welcome(message, tg_id=tg_id, show_admin=is_admin)
+            return
 
     try:
         is_banned, is_admin, has_access = await asyncio.wait_for(
@@ -88,6 +118,11 @@ async def cmd_start(message: Message, state: FSMContext) -> None:
         )
     except asyncio.TimeoutError:
         logger.error("/start DB timeout tg=%s", tg_id)
+        # Повторный stale/cache после короткого wait (мог появиться от другого апдейта)
+        cached2 = _cached_start_access(tg_id)
+        if cached2 is not None and (cached2[0] or cached2[1]):
+            await _answer_welcome(message, tg_id=tg_id, show_admin=cached2[0])
+            return
         await message.answer(
             f"{msg_wait('БД не отвечает — повтори /start через 15 сек.')}",
             parse_mode="HTML",
@@ -102,6 +137,7 @@ async def cmd_start(message: Message, state: FSMContext) -> None:
         return
 
     if is_banned:
+        _remember_access(tg_id, is_admin=False, has_access=False)
         await message.answer(
             f"{msg_fail('Аккаунт заблокирован.')}",
             reply_markup=ReplyKeyboardRemove(),
@@ -110,7 +146,9 @@ async def cmd_start(message: Message, state: FSMContext) -> None:
         return
 
     if not has_access:
+        _remember_access(tg_id, is_admin=False, has_access=False)
         await deny_access_message(message)
         return
 
+    _remember_access(tg_id, is_admin=is_admin, has_access=True)
     await _answer_welcome(message, tg_id=tg_id, show_admin=is_admin)

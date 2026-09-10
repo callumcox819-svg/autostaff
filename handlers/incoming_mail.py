@@ -2979,6 +2979,7 @@ async def cb_mail_reply_html_send(callback: CallbackQuery, state: FSMContext):
             from services.placeholders import apply_placeholders
 
             mail_gen_link = None
+            mail_row = None
             try:
                 uid_s = (mail_uid or "").strip()
                 if uid_s.startswith("S:"):
@@ -3005,7 +3006,9 @@ async def cb_mail_reply_html_send(callback: CallbackQuery, state: FSMContext):
                 seller_email=to_email,
                 mail_generated_link=mail_gen_link,
             )
-            ctx = await build_offer_html_ctx(session, int(user.id), to_email, link=link)
+            ctx = await build_offer_html_ctx(
+                session, int(user.id), to_email, link=link, mail=mail_row
+            )
             html_body = await prepare_html_body(_apply_link(raw_html, link), session, user)
             if html_signature:
                 html_body = html_body.replace("{{SIGNATURE}}", str(html_signature))
@@ -3199,6 +3202,7 @@ async def mail_reply_custom_html(message: Message, state: FSMContext):
             from services.placeholders import apply_placeholders
 
             mail_gen_link = None
+            mail_row = None
             try:
                 uid_s = (mail_uid or "").strip()
                 if uid_s.startswith("S:"):
@@ -3225,7 +3229,9 @@ async def mail_reply_custom_html(message: Message, state: FSMContext):
                 seller_email=to_email,
                 mail_generated_link=mail_gen_link,
             )
-            ctx = await build_offer_html_ctx(session, int(user.id), to_email, link=link)
+            ctx = await build_offer_html_ctx(
+                session, int(user.id), to_email, link=link, mail=mail_row
+            )
             html_body = await prepare_html_body(_apply_link(html_text, link), session, user)
             if html_signature:
                 html_body = html_body.replace("{{SIGNATURE}}", str(html_signature))

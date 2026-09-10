@@ -68,49 +68,71 @@ async def build_offer_html_ctx(
     seller_email: str,
     *,
     link: str = "",
+    offer=None,
+    mail=None,
 ) -> dict[str, str]:
-    """Контекст для HTML-шаблонов: оффер из БД + профиль + ссылка GAG."""
+    """Контекст для HTML: лот (title/price/photo) + покупатель из Evoleum Profile ID + ссылка."""
     from datetime import datetime
 
     from sqlalchemy import select
 
     from models import Offer, OfferEmail, User
-    from services.aqua_keys import AQUA_PROFILE_ADDRESS_KEY, AQUA_PROFILE_NAME_KEY
-    from services.user_settings import get_user_setting
+    from services.aqua_keys import resolve_html_buyer_profile
+    from services.offer_storage import (
+        offer_effective_photo,
+        offer_effective_price,
+        offer_effective_title,
+    )
 
     title = ""
     price = ""
     photo = ""
-    buyer_name = ""
-    address = ""
+    off = offer
     try:
-        canon = _canon_email(seller_email)
-        off = (
-            await session.execute(
-                select(Offer)
-                .join(OfferEmail, OfferEmail.offer_id == Offer.id)
-                .where(Offer.user_id == int(user_id))
-                .where(OfferEmail.email == canon)
-                .order_by(Offer.id.desc())
-                .limit(1)
-            )
-        ).scalars().first()
+        if off is None and mail is not None:
+            rid = getattr(mail, "resolved_offer_id", None)
+            if rid:
+                off = (
+                    await session.execute(
+                        select(Offer)
+                        .where(Offer.id == int(rid))
+                        .where(Offer.user_id == int(user_id))
+                        .limit(1)
+                    )
+                ).scalars().first()
+        if off is None:
+            canon = _canon_email(seller_email)
+            off = (
+                await session.execute(
+                    select(Offer)
+                    .join(OfferEmail, OfferEmail.offer_id == Offer.id)
+                    .where(Offer.user_id == int(user_id))
+                    .where(OfferEmail.email == canon)
+                    .order_by(Offer.id.desc())
+                    .limit(1)
+                )
+            ).scalars().first()
         if off:
-            title = (off.title or "").strip()
-            price = _format_eur_price((off.price or "").strip())
-            photo = (off.photo or "").strip()
+            title = (offer_effective_title(off) or "").strip()
+            price = _format_eur_price((offer_effective_price(off, default="") or "").strip())
+            photo = (offer_effective_photo(off) or "").strip()
     except Exception:
         pass
 
+    if mail is not None:
+        if not title:
+            title = (getattr(mail, "product_title", None) or "").strip()
+        if not price:
+            price = _format_eur_price((getattr(mail, "offer_price", None) or "").strip())
+        if not photo:
+            photo = (getattr(mail, "photo_url", None) or "").strip()
+
+    buyer_name = ""
+    address = ""
     try:
         user = await session.get(User, int(user_id))
         if user:
-            buyer_name = (
-                await get_user_setting(session, user, AQUA_PROFILE_NAME_KEY) or ""
-            ).strip()
-            address = (
-                await get_user_setting(session, user, AQUA_PROFILE_ADDRESS_KEY) or ""
-            ).strip()
+            buyer_name, address = await resolve_html_buyer_profile(session, user)
     except Exception:
         pass
 

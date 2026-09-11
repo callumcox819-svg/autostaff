@@ -2781,6 +2781,9 @@ async def cb_mail_reply_preset_send(callback: CallbackQuery, state: FSMContext):
                 acc_id=int(acc_id),
                 uid=str(mail_uid),
                 meta=FULL_META.get((acc_id, mail_uid)),
+                user_id=int(user.id),
+                to_email=to_email,
+                account_email=getattr(acc, "email", None),
             )
             return await send_email_via_account_with_proxy(
                 session,
@@ -2832,26 +2835,55 @@ async def _reply_thread_kwargs(
     mail_id: int | None = None,
     meta: dict | None = None,
     mail_row=None,
+    user_id: int | None = None,
+    to_email: str | None = None,
+    account_email: str | None = None,
 ) -> dict:
-    """In-Reply-To / References from seller Message-ID (spoof subject/name unchanged)."""
+    """In-Reply-To = входящее продавца; References = наш исходящий + входящее (один тред)."""
     from services.email_threading import (
         normalize_rfc_message_id,
         resolve_inbound_rfc_message_id,
+        resolve_outbound_rfc_message_id,
         threading_send_kwargs,
     )
 
+    inbound = None
     if mail_row is not None:
-        mid = normalize_rfc_message_id(getattr(mail_row, "rfc_message_id", None))
-        if mid:
-            return threading_send_kwargs(mid)
-    mid = await resolve_inbound_rfc_message_id(
-        session,
-        acc_id=acc_id,
-        uid=uid,
-        mail_id=mail_id,
-        meta=meta,
-    )
-    return threading_send_kwargs(mid)
+        inbound = normalize_rfc_message_id(getattr(mail_row, "rfc_message_id", None))
+    if not inbound:
+        inbound = await resolve_inbound_rfc_message_id(
+            session,
+            acc_id=acc_id,
+            uid=uid,
+            mail_id=mail_id,
+            meta=meta,
+        )
+
+    contact = (to_email or "").strip()
+    if not contact and meta:
+        contact = str(meta.get("from_email") or "").strip()
+    if not contact and mail_row is not None:
+        contact = str(getattr(mail_row, "from_email", "") or "").strip()
+
+    inbox = (account_email or "").strip()
+    if not inbox and meta:
+        inbox = str(meta.get("account_email") or "").strip()
+    if not inbox and mail_row is not None:
+        inbox = str(getattr(mail_row, "account_email", "") or "").strip()
+
+    outbound = None
+    uid_user = int(user_id) if user_id else 0
+    if not uid_user and mail_row is not None and getattr(mail_row, "user_id", None):
+        uid_user = int(mail_row.user_id)
+    if uid_user and contact:
+        outbound = await resolve_outbound_rfc_message_id(
+            session,
+            user_id=uid_user,
+            contact_email=contact,
+            inbox_email=inbox or None,
+        )
+
+    return threading_send_kwargs(inbound, outbound_rfc_message_id=outbound)
 
 
 def _html_attachment_filename(subject: str) -> str:
@@ -3066,6 +3098,9 @@ async def cb_mail_reply_html_send(callback: CallbackQuery, state: FSMContext):
                 mail_id=data.get("mail_id"),
                 meta=FULL_META.get((acc_id, mail_uid)),
                 mail_row=mail_row,
+                user_id=int(user.id),
+                to_email=to_email,
+                account_email=account_email or getattr(acc, "email", None),
             )
             return await send_email_via_account_with_proxy(
                 session,
@@ -3160,6 +3195,9 @@ async def mail_reply_text(message: Message, state: FSMContext):
                 uid=str(uid),
                 mail_id=data.get("mail_id"),
                 meta=FULL_META.get((acc_id, uid)),
+                user_id=int(user.id),
+                to_email=to_email,
+                account_email=getattr(acc, "email", None),
             )
             return await send_email_via_account_with_proxy(
                 session,
@@ -3312,6 +3350,9 @@ async def mail_reply_custom_html(message: Message, state: FSMContext):
                 mail_id=data.get("mail_id"),
                 meta=FULL_META.get((acc_id, mail_uid)),
                 mail_row=mail_row,
+                user_id=int(user.id),
+                to_email=to_email,
+                account_email=account_email or getattr(acc, "email", None),
             )
             return await send_email_via_account_with_proxy(
                 session,

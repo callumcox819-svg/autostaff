@@ -22,12 +22,44 @@ def normalize_rfc_message_id(raw: str | None) -> str | None:
     return f"<{s}>"
 
 
-def threading_send_kwargs(rfc_message_id: str | None) -> dict[str, str]:
-    """Kwargs for SMTP send: in_reply_to + references (same parent Message-ID)."""
-    mid = normalize_rfc_message_id(rfc_message_id)
-    if not mid:
+def build_references_header(*message_ids: str | None) -> str | None:
+    """Ordered unique Message-IDs for References (oldest → newest)."""
+    out: list[str] = []
+    seen: set[str] = set()
+    for raw in message_ids:
+        mid = normalize_rfc_message_id(raw)
+        if not mid:
+            continue
+        key = mid.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(mid)
+    if not out:
+        return None
+    return " ".join(out)
+
+
+def threading_send_kwargs(
+    inbound_rfc_message_id: str | None = None,
+    *,
+    outbound_rfc_message_id: str | None = None,
+) -> dict[str, str]:
+    """
+    Kwargs for SMTP reply:
+    - In-Reply-To = last inbound (seller), else our outbound
+    - References = our cold/outbound Message-ID + inbound (same Gmail thread)
+    """
+    inbound = normalize_rfc_message_id(inbound_rfc_message_id)
+    outbound = normalize_rfc_message_id(outbound_rfc_message_id)
+    if not inbound and not outbound:
         return {}
-    return {"in_reply_to": mid, "references": mid}
+    in_reply_to = inbound or outbound
+    refs = build_references_header(outbound, inbound)
+    kw: dict[str, str] = {"in_reply_to": in_reply_to}
+    if refs:
+        kw["references"] = refs
+    return kw
 
 
 async def resolve_inbound_rfc_message_id(
@@ -76,3 +108,53 @@ async def resolve_inbound_rfc_message_id(
     if not row:
         return None
     return normalize_rfc_message_id(getattr(row, "rfc_message_id", None))
+
+
+async def resolve_outbound_rfc_message_id(
+    session,
+    *,
+    user_id: int,
+    contact_email: str,
+    inbox_email: str | None = None,
+) -> str | None:
+    """Message-ID последнего исходящего /send|тест на этого продавца (из mailing_send_log)."""
+    from sqlalchemy import func, or_, select
+
+    from models import MailingSendLog
+    from services.offer_storage import normalize_incoming_seller_email
+
+    contact = normalize_incoming_seller_email(contact_email) or (contact_email or "").strip().lower()
+    if not contact or not user_id:
+        return None
+
+    inbox = (inbox_email or "").strip().lower()
+    raw = (contact_email or "").strip().lower()
+    conds = [func.lower(MailingSendLog.recipient_email) == contact]
+    if raw and raw != contact:
+        conds.append(func.lower(MailingSendLog.recipient_email) == raw)
+
+    q = (
+        select(MailingSendLog.rfc_message_id, MailingSendLog.from_account_email)
+        .where(MailingSendLog.user_id == int(user_id))
+        .where(or_(*conds))
+        .where(MailingSendLog.rfc_message_id.isnot(None))
+        .order_by(MailingSendLog.sent_at.desc(), MailingSendLog.id.desc())
+        .limit(40)
+    )
+    rows = (await session.execute(q)).all()
+    if not rows:
+        return None
+
+    if inbox:
+        for mid, sent_from in rows:
+            sf = (sent_from or "").strip().lower()
+            if sf and sf == inbox:
+                hit = normalize_rfc_message_id(mid)
+                if hit:
+                    return hit
+
+    for mid, _sf in rows:
+        hit = normalize_rfc_message_id(mid)
+        if hit:
+            return hit
+    return None

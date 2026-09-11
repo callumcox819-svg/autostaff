@@ -125,12 +125,13 @@ async def _send_one_with_retry(
     sender_name: str | None,
     sticky_proxy_id: int,
     per_letter_timeout_sec: int,
-) -> Tuple[bool, str]:
+) -> Tuple[bool, str, str]:
     last_err = ""
+    last_msgid = ""
     for attempt in range(1, BURST_SMTP_RETRIES + 1):
         try:
             async with db_session() as session:
-                ok, err, _ = await asyncio.wait_for(
+                ok, err, msgid = await asyncio.wait_for(
                     send_mailing_one_parallel(
                         session,
                         db_user_id,
@@ -144,8 +145,9 @@ async def _send_one_with_retry(
                     timeout=float(per_letter_timeout_sec),
                 )
             if ok:
-                return True, ""
+                return True, "", (msgid or "")
             last_err = normalize_send_error(err)
+            last_msgid = msgid or ""
         except asyncio.TimeoutError:
             last_err = normalize_send_error(
                 f"SMTP_TIMEOUT|timeout|exceeded {per_letter_timeout_sec}s"
@@ -155,7 +157,7 @@ async def _send_one_with_retry(
 
         if attempt < BURST_SMTP_RETRIES and BURST_RETRY_PAUSE_SEC > 0:
             await asyncio.sleep(BURST_RETRY_PAUSE_SEC)
-    return False, last_err or "UNKNOWN"
+    return False, last_err or "UNKNOWN", last_msgid
 
 
 async def _send_pair(
@@ -168,7 +170,7 @@ async def _send_pair(
     build_message: Callable[
         [AsyncSession, OfferEmail], Awaitable[Tuple[str, str]]
     ],
-    on_success: Callable[[OfferEmail, str, str], Awaitable[None]],
+    on_success: Callable[..., Awaitable[None]],
     on_failure: Callable[[OfferEmail, str, EmailAccount], Awaitable[bool]],
     start_delay_sec: float = 0.0,
     per_letter_timeout_sec: int = 90,
@@ -195,7 +197,7 @@ async def _send_pair(
         async with db_session() as session:
             subject, body = await build_message(session, tgt)
         to_addr = (tgt.email or "").strip()
-        ok, err = await _send_one_with_retry(
+        ok, err, msgid = await _send_one_with_retry(
             db_user_id=db_user_id,
             account=account,
             to_email=to_addr,
@@ -210,7 +212,7 @@ async def _send_pair(
                 lock = hour_lock or asyncio.Lock()
                 async with lock:
                     hour_counts[em] = int(hour_counts.get(em, 0)) + 1
-            await on_success(tgt, subject, (account.email or "").strip())
+            await on_success(tgt, subject, (account.email or "").strip(), msgid or "")
             return 1, 0
         await on_failure(tgt, err, account)
         return 0, 1
@@ -250,7 +252,7 @@ async def run_burst_mailing(
     build_message: Callable[
         [AsyncSession, OfferEmail], Awaitable[Tuple[str, str]]
     ],
-    on_success: Callable[[OfferEmail, str, str], Awaitable[None]],
+    on_success: Callable[..., Awaitable[None]],
     on_failure: Callable[[OfferEmail, str, EmailAccount], Awaitable[bool]],
 ) -> Tuple[int, int, int | None, float]:
     """

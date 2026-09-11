@@ -301,17 +301,26 @@ async def mail_tmpl_send(callback: CallbackQuery, state: FSMContext):
                 from services.user_settings import get_user_setting
                 from services.email_threading import (
                     resolve_inbound_rfc_message_id,
+                    resolve_outbound_rfc_message_id,
                     threading_send_kwargs,
                 )
 
-                mid = await resolve_inbound_rfc_message_id(
+                inbound_mid = await resolve_inbound_rfc_message_id(
                     session,
                     acc_id=acc_id,
                     uid=uid,
                     mail_id=mail_id or meta.get("_mail_id"),
                     meta=meta,
                 )
-                thread_kw = threading_send_kwargs(mid)
+                outbound_mid = await resolve_outbound_rfc_message_id(
+                    session,
+                    user_id=int(user.id),
+                    contact_email=to_email,
+                    inbox_email=(meta.get("account_email") or getattr(acc, "email", None) or ""),
+                )
+                thread_kw = threading_send_kwargs(
+                    inbound_mid, outbound_rfc_message_id=outbound_mid
+                )
 
                 subj_insert = str(await get_user_setting(session, user, "subj_insert") or "").strip().lower() in {
                     "1", "true", "yes", "on",

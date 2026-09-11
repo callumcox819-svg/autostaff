@@ -197,7 +197,7 @@ def _build_message(
     in_reply_to: Optional[str] = None,
     references: Optional[str] = None,
 ):
-    from services.email_threading import normalize_rfc_message_id
+    from services.email_threading import build_references_header, normalize_rfc_message_id
 
     subj = _sanitize_header_line(subject or "")
     to_addr = _sanitize_email_addr(to_email)
@@ -207,10 +207,8 @@ def _build_message(
     reply_to_hdr = normalize_rfc_message_id(in_reply_to)
     refs_hdr = None
     if references:
-        # Keep parent Message-ID; allow pre-normalized References string
-        refs_hdr = (references or "").strip() or None
-        if refs_hdr and not normalize_rfc_message_id(refs_hdr.split()[0]):
-            refs_hdr = reply_to_hdr
+        parts = (references or "").split()
+        refs_hdr = build_references_header(*parts) or reply_to_hdr
     elif reply_to_hdr:
         refs_hdr = reply_to_hdr
 

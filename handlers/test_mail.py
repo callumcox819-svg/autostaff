@@ -416,6 +416,8 @@ async def _run_mass_test(message: Message, tg_id: int) -> None:
                         except Exception:
                             pass
                     async with async_session() as session2:
+                        from services.mailing_send_log import record_mailing_send
+
                         raw_link = await pick_random_raw_link(session2)
                         if raw_link:
                             test_offer = Offer(
@@ -429,7 +431,34 @@ async def _run_mass_test(message: Message, tg_id: int) -> None:
                             session2.add(test_offer)
                             await session2.flush()
                             session2.add(OfferEmail(offer_id=test_offer.id, email=to_email))
+                            await record_mailing_send(
+                                session2,
+                                user_id=int(user_id),
+                                offer_id=int(test_offer.id),
+                                recipient_email=to_email,
+                                mail_subject=subject,
+                                from_account_email=acc_email,
+                                service_label="test_mail",
+                                rfc_message_id=msgid or "",
+                            )
                             await session2.commit()
+                        elif msgid:
+                            # Даже без raw_link — сохранить Message-ID для трединга ответов
+                            try:
+                                if offer and getattr(offer, "id", None):
+                                    await record_mailing_send(
+                                        session2,
+                                        user_id=int(user_id),
+                                        offer_id=int(offer.id),
+                                        recipient_email=to_email,
+                                        mail_subject=subject,
+                                        from_account_email=acc_email,
+                                        service_label="test_mail",
+                                        rfc_message_id=msgid or "",
+                                    )
+                                    await session2.commit()
+                            except Exception:
+                                pass
                 else:
                     err_s = err or "unknown"
                     fail_lines.append(f"<code>{escape(to_email)}</code>: {escape(err_s[:120])}")

@@ -249,6 +249,8 @@ class MailingSendLog(Base):
     from_account_email = Column(String, nullable=True)
     offer_email_id = Column(Integer, nullable=True)
     service_label = Column(String(80), nullable=True)
+    # Message-ID исходящего — для References при ответе продавцу (тот же тред Gmail).
+    rfc_message_id = Column(String(512), nullable=True)
     sent_at = Column(DateTime, default=datetime.utcnow, index=True)
 
     user = relationship("User")

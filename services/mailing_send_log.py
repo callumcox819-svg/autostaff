@@ -198,13 +198,16 @@ async def record_mailing_send(
     from_account_email: str = "",
     offer_email_id: int | None = None,
     service_label: str = "",
+    rfc_message_id: str = "",
 ) -> None:
     """Записать: этому email ушло письмо по конкретному offer_id (+ сервис площадки)."""
+    from services.email_threading import normalize_rfc_message_id
     from services.offer_storage import normalize_incoming_seller_email
 
     rcpt = normalize_incoming_seller_email(recipient_email) or _canon_recipient(recipient_email)
     if not rcpt or not int(offer_id or 0):
         return
+    mid = normalize_rfc_message_id(rfc_message_id)
     row = MailingSendLog(
         user_id=int(user_id),
         offer_id=int(offer_id),
@@ -213,6 +216,7 @@ async def record_mailing_send(
         from_account_email=(from_account_email or "").strip().lower()[:255] or None,
         offer_email_id=int(offer_email_id) if offer_email_id else None,
         service_label=(service_label or "").strip()[:80] or None,
+        rfc_message_id=(mid[:512] if mid else None),
     )
     session.add(row)
 

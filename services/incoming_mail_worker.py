@@ -2251,6 +2251,25 @@ async def _process_mails_for_account_impl(
                     await session.flush()
                     mail_db_id = int(existing.id)
 
+                    if not smtp_block_bounce and not mailer_daemon:
+                        try:
+                            from services.email_threading import absorb_inbound_thread_hints
+
+                            await absorb_inbound_thread_hints(
+                                session,
+                                user_id=int(user_id),
+                                inbox_email=inbox_email_clean,
+                                contact_email=from_email_clean,
+                                inbound_message_id=rfc_mid_clean or None,
+                                in_reply_to=rfc_irt_clean or None,
+                                references=rfc_refs_clean or None,
+                            )
+                        except Exception:
+                            logger.exception(
+                                "absorb inbound thread hints failed mail_id=%s",
+                                mail_db_id,
+                            )
+
                     try:
                         from services.incoming_lead_resolve import resolve_offer_for_incoming_lead
                         from services.offer_storage import normalize_incoming_seller_email

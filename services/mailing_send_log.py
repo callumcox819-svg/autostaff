@@ -226,6 +226,19 @@ async def record_mailing_send(
         await add_validated_email(session, int(user_id), rcpt, offer_id=int(offer_id))
     except Exception:
         pass
+    if mid and (from_account_email or "").strip():
+        try:
+            from services.email_threading import seed_dialog_after_cold_send
+
+            await seed_dialog_after_cold_send(
+                session,
+                user_id=int(user_id),
+                inbox_email=(from_account_email or "").strip(),
+                contact_email=rcpt,
+                outbound_message_id=mid,
+            )
+        except Exception:
+            pass
 
 
 async def _mailing_log_rows_for_recipient(

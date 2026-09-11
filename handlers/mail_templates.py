@@ -67,11 +67,11 @@ def _render_subject_with_offer(subject_template: str, offer_title: str) -> str:
 
 
 def _parse_uid(uid: str) -> int | None:
-    """IncomingMail stores imap_uid as int. UID in callbacks can be like '123' or 'S:123'."""
+    """IncomingMail stores imap_uid as int. UID in callbacks can be like '123', 'S:123', 'X0:123'."""
     try:
         u = (uid or "").strip()
-        if u.startswith("S:"):
-            u = u.split(":", 1)[1]
+        if ":" in u:
+            u = u.rsplit(":", 1)[-1]
         return int(u)
     except Exception:
         return None
@@ -87,6 +87,8 @@ def _meta_dict_from_mail(m: IncomingMail) -> dict:
         "account_email": extract_email_address(m.account_email or ""),
         "date_str": m.date_str or "",
         "rfc_message_id": (getattr(m, "rfc_message_id", None) or "").strip(),
+        "rfc_in_reply_to": (getattr(m, "rfc_in_reply_to", None) or "").strip(),
+        "rfc_references": (getattr(m, "rfc_references", None) or "").strip(),
         "_acc_id": int(m.account_id),
         "_uid": str(m.imap_uid),
         "_mail_id": int(m.id),
@@ -295,76 +297,39 @@ async def mail_tmpl_send(callback: CallbackQuery, state: FSMContext):
             ).scalars().first()
             if not user:
                 return False, "Пользователь не найден", None
+            # Тема только Re: исходного треда — иначе Gmail рвёт диалог.
             out_subject = subject
-            thread_kw: dict = {}
+            from handlers.incoming_mail import _reply_thread_kwargs
+            from services.html_reply import account_sender_display_name
+
+            mid = mail_id or meta.get("_mail_id")
             try:
-                from services.user_settings import get_user_setting
-                from services.email_threading import (
-                    resolve_inbound_rfc_message_id,
-                    resolve_outbound_rfc_message_id,
-                    threading_send_kwargs,
-                )
-
-                inbound_mid = await resolve_inbound_rfc_message_id(
-                    session,
-                    acc_id=acc_id,
-                    uid=uid,
-                    mail_id=mail_id or meta.get("_mail_id"),
-                    meta=meta,
-                    from_email=to_email,
-                )
-                outbound_mid = await resolve_outbound_rfc_message_id(
-                    session,
-                    user_id=int(user.id),
-                    contact_email=to_email,
-                    inbox_email=(meta.get("account_email") or getattr(acc, "email", None) or ""),
-                )
-                from services.email_threading import resolve_inbound_parent_references
-
-                parent_refs = await resolve_inbound_parent_references(
-                    session,
-                    mail_id=mail_id or meta.get("_mail_id"),
-                    meta=meta,
-                )
-                thread_kw = threading_send_kwargs(
-                    inbound_mid,
-                    outbound_rfc_message_id=outbound_mid,
-                    parent_references=parent_refs,
-                )
-
-                subj_insert = str(await get_user_setting(session, user, "subj_insert") or "").strip().lower() in {
-                    "1", "true", "yes", "on",
-                }
-                if subj_insert:
-                    uid_num = _parse_uid(uid)
-                    offer_title = ""
-                    if uid_num is not None:
-                        mrow = (
-                            await session.execute(
-                                select(IncomingMail)
-                                .where(IncomingMail.account_id == int(acc_id))
-                                .where(IncomingMail.imap_uid == int(uid_num))
-                                .limit(1)
-                            )
-                        ).scalars().first()
-                        if mrow and getattr(mrow, "resolved_offer_id", None):
-                            from models import Offer
-
-                            off = (
-                                await session.execute(
-                                    select(Offer).where(Offer.id == int(mrow.resolved_offer_id)).limit(1)
-                                )
-                            ).scalars().first()
-                            if off:
-                                offer_title = (off.title or "").strip()
-                    tpl = str(await get_user_setting(session, user, "subject_template") or "Re: OFFER")
-                    out_subject = _render_subject_with_offer(tpl, offer_title)
+                mid_i = int(mid) if mid else None
             except Exception:
-                pass
+                mid_i = None
+            thread_kw = await _reply_thread_kwargs(
+                session,
+                acc_id=int(acc_id),
+                uid=str(uid or ""),
+                mail_id=mid_i,
+                meta=meta,
+                user_id=int(user.id),
+                to_email=to_email,
+                account_email=(meta.get("account_email") or getattr(acc, "email", None) or ""),
+            )
+            if not thread_kw.get("in_reply_to"):
+                logger.error(
+                    "preset reply WITHOUT In-Reply-To to=%s acc=%s mail_id=%s uid=%s — abort to avoid split thread",
+                    to_email,
+                    acc_id,
+                    mid_i,
+                    uid,
+                )
+                return False, "Нет Message-ID диалога (откройте карточку письма снова)", None
             is_html_body = "<html" in body_copy.lower() or "<body" in body_copy.lower()
-            sender_name = getattr(user, "sender_name", None)
+            sender_name = account_sender_display_name(user)
             uid_db = int(user.id)
-            inbox_em = getattr(acc, "email", None) or ""
+            inbox_em = getattr(acc, "email", None) or meta.get("account_email") or ""
             try:
                 session.expunge(acc)
             except Exception:

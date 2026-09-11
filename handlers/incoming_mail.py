@@ -2804,6 +2804,8 @@ async def cb_mail_reply_preset_send(callback: CallbackQuery, state: FSMContext):
                 to_email=to_email,
                 account_email=getattr(acc, "email", None) or account_email,
             )
+            if not thread_kw.get("in_reply_to"):
+                return False, "Нет Message-ID диалога (откройте карточку письма снова)", None
             sender_name = account_sender_display_name(user)
             uid_db = int(user.id)
             inbox_em = getattr(acc, "email", None) or account_email or ""
@@ -2951,11 +2953,22 @@ async def _reply_thread_kwargs(
                 inbox_email=inbox,
                 contact_email=contact,
             )
+        # Если в журнале нет MID (Gmail переписал / старый лог) — берём из диалога / In-Reply-To продавца.
+        if not cold_outbound and last_ours:
+            cold_outbound = last_ours
+        if not cold_outbound and dialog_refs:
+            first = normalize_rfc_message_id((dialog_refs or "").split()[0] if dialog_refs else None)
+            if first:
+                cold_outbound = first
+        if not cold_outbound and parent_refs:
+            first = normalize_rfc_message_id((parent_refs or "").split()[0] if parent_refs else None)
+            if first:
+                cold_outbound = first
 
     kw = threading_send_kwargs_for_dialog(
         inbound_rfc_message_id=inbound,
         cold_outbound_rfc_message_id=cold_outbound,
-        last_our_outbound_rfc_message_id=last_ours,
+        last_our_outbound_rfc_message_id=last_ours if last_ours != cold_outbound else None,
         parent_references=parent_refs,
         dialog_references=dialog_refs,
     )
@@ -3226,6 +3239,8 @@ async def cb_mail_reply_html_send(callback: CallbackQuery, state: FSMContext):
                 to_email=to_email,
                 account_email=account_email or getattr(acc, "email", None),
             )
+            if not thread_kw.get("in_reply_to"):
+                return False, "Нет Message-ID диалога (откройте карточку письма снова)", None
             uid_db = int(user.id)
             inbox_em = account_email or getattr(acc, "email", None) or ""
             try:
@@ -3338,6 +3353,8 @@ async def mail_reply_text(message: Message, state: FSMContext):
                 to_email=to_email,
                 account_email=getattr(acc, "email", None),
             )
+            if not thread_kw.get("in_reply_to"):
+                return False, "Нет Message-ID диалога (откройте карточку письма снова)", None
             sender_name = account_sender_display_name(user)
             uid_db = int(user.id)
             inbox_em = getattr(acc, "email", None) or ""
@@ -3509,6 +3526,8 @@ async def mail_reply_custom_html(message: Message, state: FSMContext):
                 to_email=to_email,
                 account_email=account_email or getattr(acc, "email", None),
             )
+            if not thread_kw.get("in_reply_to"):
+                return False, "Нет Message-ID диалога (откройте карточку письма снова)", None
             uid_db = int(user.id)
             inbox_em = account_email or getattr(acc, "email", None) or ""
             try:

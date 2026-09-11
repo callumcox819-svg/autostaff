@@ -99,8 +99,8 @@ async def resolve_inbound_rfc_message_id(
             ).scalars().first()
         elif acc_id and uid is not None:
             uid_s = str(uid or "").strip()
-            if uid_s.startswith("S:"):
-                uid_s = uid_s.split(":", 1)[1]
+            if ":" in uid_s:
+                uid_s = uid_s.rsplit(":", 1)[-1]
             uid_num = int(uid_s)
             row = (
                 await session.execute(
@@ -263,7 +263,7 @@ async def remember_dialog_outbound(
     outbound_message_id: str | None,
     references_header: str | None = None,
 ) -> None:
-    """После пресета/текста/HTML — сохранить Message-ID в диалог (Gmail thread)."""
+    """После cold/пресета/текста/HTML — сохранить Message-ID в диалог (Gmail thread)."""
     from sqlalchemy import func, select
 
     from models import ConversationLink
@@ -305,6 +305,155 @@ async def remember_dialog_outbound(
         if chain:
             row.thread_rfc_references = chain[:8000]
     await session.flush()
+
+
+async def seed_dialog_after_cold_send(
+    session,
+    *,
+    user_id: int,
+    inbox_email: str,
+    contact_email: str,
+    outbound_message_id: str | None,
+) -> None:
+    """Сразу после /send|тест — якорь треда, чтобы пресет не ушёл отдельным письмом."""
+    await remember_dialog_outbound(
+        session,
+        user_id=int(user_id),
+        inbox_email=inbox_email,
+        contact_email=contact_email,
+        outbound_message_id=outbound_message_id,
+        references_header=None,
+    )
+
+
+async def merge_dialog_references(
+    session,
+    *,
+    user_id: int,
+    inbox_email: str,
+    contact_email: str,
+    references_header: str | None,
+) -> None:
+    """Дописать References в диалог без смены last_outbound (входящее продавца)."""
+    from sqlalchemy import func, select
+
+    from models import ConversationLink
+    from services.offer_storage import normalize_incoming_seller_email
+
+    inbox = (inbox_email or "").strip().lower()
+    contact = normalize_incoming_seller_email(contact_email) or (contact_email or "").strip().lower()
+    chain = build_references_header(*((references_header or "").split() if references_header else []))
+    if not user_id or not inbox or not contact or not chain:
+        return
+
+    row = (
+        await session.execute(
+            select(ConversationLink)
+            .where(ConversationLink.user_id == int(user_id))
+            .where(func.lower(ConversationLink.account_email) == inbox)
+            .where(func.lower(ConversationLink.from_email) == contact)
+            .limit(1)
+        )
+    ).scalars().first()
+    if row is None:
+        session.add(
+            ConversationLink(
+                user_id=int(user_id),
+                account_email=inbox,
+                from_email=contact,
+                thread_rfc_references=chain[:8000],
+            )
+        )
+    else:
+        merged = build_references_header(
+            *((getattr(row, "thread_rfc_references", None) or "").split()),
+            *((chain or "").split()),
+        )
+        if merged:
+            row.thread_rfc_references = merged[:8000]
+    await session.flush()
+
+
+async def absorb_inbound_thread_hints(
+    session,
+    *,
+    user_id: int,
+    inbox_email: str,
+    contact_email: str,
+    inbound_message_id: str | None,
+    in_reply_to: str | None,
+    references: str | None,
+) -> None:
+    """
+    Ответ продавца знает реальный Message-ID нашей рассылки (In-Reply-To).
+    Gmail иногда переписывает MID при SMTP — подменяем журнал на тот, что видит продавец.
+    """
+    from sqlalchemy import func, or_, select
+
+    from models import MailingSendLog
+    from services.offer_storage import normalize_incoming_seller_email
+
+    contact = normalize_incoming_seller_email(contact_email) or (contact_email or "").strip().lower()
+    inbox = (inbox_email or "").strip().lower()
+    if not user_id or not contact:
+        return
+
+    irt = normalize_rfc_message_id(in_reply_to)
+    inbound = normalize_rfc_message_id(inbound_message_id)
+    ref_chain = build_references_header(
+        *((references or "").split() if references else []),
+        irt,
+        inbound,
+    )
+    if inbox and ref_chain:
+        await merge_dialog_references(
+            session,
+            user_id=int(user_id),
+            inbox_email=inbox,
+            contact_email=contact,
+            references_header=ref_chain,
+        )
+
+    # Реальный MID холодного = In-Reply-To (или первый id в References).
+    cold_hint = irt
+    if not cold_hint and references:
+        parts = [normalize_rfc_message_id(p) for p in (references or "").split()]
+        parts = [p for p in parts if p]
+        if parts:
+            cold_hint = parts[0]
+    if not cold_hint:
+        return
+
+    raw = (contact_email or "").strip().lower()
+    conds = [func.lower(MailingSendLog.recipient_email) == contact]
+    if raw and raw != contact:
+        conds.append(func.lower(MailingSendLog.recipient_email) == raw)
+    logs = (
+        await session.execute(
+            select(MailingSendLog)
+            .where(MailingSendLog.user_id == int(user_id))
+            .where(or_(*conds))
+            .order_by(MailingSendLog.sent_at.desc(), MailingSendLog.id.desc())
+            .limit(10)
+        )
+    ).scalars().all()
+    matched = list(logs)
+    if inbox:
+        same_inbox = [
+            r for r in logs if (r.from_account_email or "").strip().lower() == inbox
+        ]
+        if same_inbox:
+            matched = same_inbox
+
+    for log in matched:
+        cur = normalize_rfc_message_id(getattr(log, "rfc_message_id", None))
+        if cur and cur.lower() == cold_hint.lower():
+            return
+        log.rfc_message_id = cold_hint[:512]
+        if inbox and not (log.from_account_email or "").strip():
+            log.from_account_email = inbox[:255]
+        await session.flush()
+        return
 
 
 def threading_send_kwargs_for_dialog(

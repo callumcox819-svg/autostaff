@@ -136,7 +136,12 @@ def _set_message_headers(
     references: Optional[str] = None,
 ) -> None:
     domain = from_addr.split("@")[-1] if "@" in from_addr else None
-    if for_mailing:
+    # Gmail-like Message-ID и для ответов — иначе часть клиентов хуже клеит тред.
+    use_gmail_mid = for_mailing or bool(in_reply_to) or (domain or "").lower() in {
+        "gmail.com",
+        "googlemail.com",
+    }
+    if use_gmail_mid:
         msg_date = formatdate(localtime=False)
         msg_id = _gmail_like_msgid(from_addr)
     else:

@@ -57,6 +57,14 @@ def test_threading_send_kwargs_for_dialog_chain():
     assert kw["references"].endswith("<seller2@x>")
 
 
+def test_threading_falls_back_to_cold_when_no_inbound():
+    from services.email_threading import threading_send_kwargs
+
+    kw = threading_send_kwargs(None, outbound_rfc_message_id="<cold@gmail.com>")
+    assert kw["in_reply_to"] == "<cold@gmail.com>"
+    assert kw["references"] == "<cold@gmail.com>"
+
+
 def test_build_references_header_dedupes():
     assert (
         build_references_header("<a@b.c>", "<a@b.c>", "<d@e.f>")

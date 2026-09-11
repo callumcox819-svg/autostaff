@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 
@@ -482,3 +483,48 @@ def threading_send_kwargs_for_dialog(
             *parent_parts,
         ),
     )
+
+
+def format_gmail_style_reply_body(
+    reply_text: str,
+    *,
+    parent_from_name: str | None = None,
+    parent_from_email: str | None = None,
+    parent_date_str: str | None = None,
+    parent_body: str | None = None,
+) -> str:
+    """
+    Тело как у кнопки Reply в Gmail: наш текст + цитата родителя.
+    Так у получателя видно «диалог» (как на скрине cold сверху / ответ снизу).
+    """
+    text = (reply_text or "").rstrip()
+    parent = (parent_body or "").replace("\r\n", "\n").replace("\r", "\n").strip()
+    if not parent:
+        return text
+
+    # Убрать глубокие цитаты — только ближайший ответ продавца.
+    lines = []
+    for ln in parent.split("\n"):
+        if ln.startswith(">"):
+            continue
+        if re.match(r"^(On .+ wrote:|Am .+ schrieb .+|[-_]{2,}\s*Original Message)", ln, re.I):
+            break
+        if re.match(r"^(пн|вт|ср|чт|пт|сб|вс|mon|tue|wed|thu|fri|sat|sun).{0,40}пиш", ln, re.I):
+            break
+        lines.append(ln.rstrip())
+    parent_clean = "\n".join(lines).strip()
+    if not parent_clean:
+        parent_clean = parent[:800].strip()
+    if len(parent_clean) > 1200:
+        parent_clean = parent_clean[:1200].rstrip() + "…"
+
+    who = (parent_from_name or "").strip() or (parent_from_email or "").strip() or "seller"
+    when = (parent_date_str or "").strip()
+    if when:
+        attr = f"On {when} {who} wrote:"
+    else:
+        attr = f"On {who} wrote:"
+    quoted = "\n".join(f"> {ln}" if ln else ">" for ln in parent_clean.split("\n"))
+    if not text:
+        return f"{attr}\n{quoted}"
+    return f"{text}\n\n{attr}\n{quoted}"

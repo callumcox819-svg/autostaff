@@ -72,7 +72,24 @@ def test_build_references_header_dedupes():
     )
 
 
-def test_build_message_sets_full_references_chain():
+def test_format_gmail_style_reply_body_quotes_parent():
+    from services.email_threading import format_gmail_style_reply_body
+
+    out = format_gmail_style_reply_body(
+        "Prima",
+        parent_from_name="Maria",
+        parent_from_email="m@x.com",
+        parent_date_str="Fri, 11 Sep 2026",
+        parent_body="ja\n\nOn earlier wrote:\nold",
+    )
+    assert out.startswith("Prima\n\n")
+    assert "On Fri, 11 Sep 2026 Maria wrote:" in out
+    assert "> ja" in out
+
+
+def test_build_message_headers_before_body():
+    from services.sender import _build_message
+
     msg = _build_message(
         from_email="me@gmail.com",
         to_email="seller@example.com",
@@ -83,9 +100,13 @@ def test_build_message_sets_full_references_chain():
         in_reply_to="<seller-msg@marktplaats.nl>",
         references="<1789.1.1@gmail.com> <seller-msg@marktplaats.nl>",
     )
+    raw = msg.as_bytes().decode("utf-8", "replace")
     assert msg["In-Reply-To"] == "<seller-msg@marktplaats.nl>"
     assert msg["References"] == "<1789.1.1@gmail.com> <seller-msg@marktplaats.nl>"
     assert msg["Subject"] == "Re: fiets"
+    assert raw.index("In-Reply-To:") < raw.index("\n\nhoi")
+    assert "In-Reply-To: <seller-msg@marktplaats.nl>" in raw
+
 
 
 def test_build_message_without_reply_headers():

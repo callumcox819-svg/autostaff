@@ -229,15 +229,26 @@ def _build_message(
             disp_name = None
         if mailing_plain_only():
             is_html = False
-        # subject/body уже прошли finalize_inbox_mail() в handlers/send.py
 
-    # Some call sites explicitly request HTML sending (legacy compatibility).
-    # If not provided, infer from content.
     if is_html is None:
         is_html = _looks_like_html(b)
 
+    # Сначала RFC-заголовки (In-Reply-To/References), потом тело — иначе часть
+    # клиентов хуже склеивает тред (как «ответ» в Gmail UI).
+    msg = EmailMessage()
+    _set_message_headers(
+        msg,
+        from_addr=from_addr,
+        to_addr=to_addr,
+        subj=subj,
+        disp_name=disp_name,
+        minimal=minimal_headers,
+        for_mailing=for_mailing,
+        in_reply_to=reply_to_hdr,
+        references=refs_hdr,
+    )
+
     if is_html:
-        msg = EmailMessage()
         plain = _strip_html(b) or " "
         plain_cte = (
             "quoted-printable"
@@ -256,39 +267,14 @@ def _build_message(
             charset="utf-8",
             cte=_plain_body_content_transfer_encoding(b),
         )
-        _set_message_headers(
-            msg,
-            from_addr=from_addr,
-            to_addr=to_addr,
-            subj=subj,
-            disp_name=disp_name,
-            minimal=minimal_headers,
-            for_mailing=for_mailing,
-            in_reply_to=reply_to_hdr,
-            references=refs_hdr,
-        )
         return msg
 
-    msg = EmailMessage()
     plain_cte = (
         "quoted-printable"
         if for_mailing
         else _plain_body_content_transfer_encoding(b)
     )
-    msg.set_content(
-        b, subtype="plain", charset="utf-8", cte=plain_cte
-    )
-    _set_message_headers(
-        msg,
-        from_addr=from_addr,
-        to_addr=to_addr,
-        subj=subj,
-        disp_name=disp_name,
-        minimal=minimal_headers,
-        for_mailing=for_mailing,
-        in_reply_to=reply_to_hdr,
-        references=refs_hdr,
-    )
+    msg.set_content(b, subtype="plain", charset="utf-8", cte=plain_cte)
     return msg
 
 

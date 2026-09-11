@@ -286,6 +286,36 @@ async def mail_tmpl_send(callback: CallbackQuery, state: FSMContext):
     subject = _safe_re_subject(subject_orig)
     tg_id = callback.from_user.id
     body_copy = body
+    try:
+        from services.email_threading import format_gmail_style_reply_body
+        from services.incoming_mail_worker import FULL_BODIES
+
+        parent_body = ""
+        if mail_id or meta.get("_mail_id"):
+            try:
+                mid_load = int(mail_id or meta.get("_mail_id"))
+            except Exception:
+                mid_load = None
+            if mid_load:
+                async with Session() as s_body:
+                    m_body = (
+                        await s_body.execute(
+                            select(IncomingMail).where(IncomingMail.id == mid_load).limit(1)
+                        )
+                    ).scalars().first()
+                    if m_body:
+                        parent_body = (m_body.body or "").strip()
+        if not parent_body and acc_id and uid:
+            parent_body = (FULL_BODIES.get((int(acc_id), str(uid))) or "").strip()
+        body_copy = format_gmail_style_reply_body(
+            body,
+            parent_from_name=meta.get("from_name"),
+            parent_from_email=to_email,
+            parent_date_str=meta.get("date_str"),
+            parent_body=parent_body,
+        )
+    except Exception:
+        logger.exception("gmail-style quote for preset failed")
 
     async def _send() -> tuple[bool, str | None, str | None]:
         async with Session() as session:
@@ -326,10 +356,18 @@ async def mail_tmpl_send(callback: CallbackQuery, state: FSMContext):
                     uid,
                 )
                 return False, "Нет Message-ID диалога (откройте карточку письма снова)", None
+            logger.info(
+                "preset SMTP thread to=%s in_reply_to=%s refs=%s subj=%r",
+                to_email,
+                (thread_kw.get("in_reply_to") or "")[:100],
+                (thread_kw.get("references") or "")[:180],
+                (out_subject or "")[:80],
+            )
             is_html_body = "<html" in body_copy.lower() or "<body" in body_copy.lower()
             sender_name = account_sender_display_name(user)
             uid_db = int(user.id)
             inbox_em = getattr(acc, "email", None) or meta.get("account_email") or ""
+            acc_password = account.password or ""
             try:
                 session.expunge(acc)
             except Exception:
@@ -350,14 +388,24 @@ async def mail_tmpl_send(callback: CallbackQuery, state: FSMContext):
             try:
                 from database import db_session
                 from services.email_threading import remember_dialog_outbound
+                from services.smtp_delivery_verify import fetch_real_sent_message_id
 
+                real_mid = await fetch_real_sent_message_id(
+                    inbox_em,
+                    acc_password,
+                    subject=out_subject,
+                    to_email=to_email,
+                    local_message_id=msgid,
+                    wait_sec=2.0,
+                )
+                store_mid = real_mid or msgid
                 async with db_session() as s2:
                     await remember_dialog_outbound(
                         s2,
                         user_id=uid_db,
                         inbox_email=inbox_em,
                         contact_email=to_email,
-                        outbound_message_id=msgid,
+                        outbound_message_id=store_mid,
                         references_header=thread_kw.get("references"),
                     )
                     await s2.commit()

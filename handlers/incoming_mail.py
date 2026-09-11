@@ -3330,6 +3330,29 @@ async def mail_reply_text(message: Message, state: FSMContext):
 
     out_subject = _reply_subject(subject)
 
+    try:
+        from services.email_threading import format_gmail_style_reply_body
+        from services.incoming_mail_worker import FULL_BODIES, FULL_META as _FM
+
+        meta_q = dict(_FM.get((acc_id, uid)) or {})
+        parent_body = (FULL_BODIES.get((acc_id, uid)) or "").strip()
+        if not parent_body and data.get("mail_id"):
+            async with Session() as s_b:
+                m_b = await _load_incoming_mail_by_id(s_b, int(data["mail_id"]))
+                if m_b:
+                    parent_body = (m_b.body or "").strip()
+                    meta_q.setdefault("from_name", m_b.from_name)
+                    meta_q.setdefault("date_str", m_b.date_str)
+        text = format_gmail_style_reply_body(
+            text,
+            parent_from_name=meta_q.get("from_name"),
+            parent_from_email=to_email,
+            parent_date_str=meta_q.get("date_str"),
+            parent_body=parent_body,
+        )
+    except Exception:
+        pass
+
     async def _send() -> tuple[bool, str | None, str | None]:
         async with Session() as session:
             acc = (

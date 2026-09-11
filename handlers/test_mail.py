@@ -399,6 +399,22 @@ async def _run_mass_test(message: Message, tg_id: int) -> None:
                 acc_email = account.email
                 subj_short = (subject or "")[:50]
                 if ok:
+                    # Gmail подменяет Message-ID — без реального из Sent пресет рвёт диалог.
+                    try:
+                        from services.smtp_delivery_verify import fetch_real_sent_message_id
+
+                        real_mid = await fetch_real_sent_message_id(
+                            account.email,
+                            account.password or "",
+                            subject=subject,
+                            to_email=to_email,
+                            local_message_id=msgid,
+                            wait_sec=2.5,
+                        )
+                        if real_mid:
+                            msgid = real_mid
+                    except Exception:
+                        pass
                     ok_n += 1
                     details.append(
                         f"{html_emoji('ok')} <code>{escape(to_email)}</code>\n"
@@ -407,7 +423,7 @@ async def _run_mass_test(message: Message, tg_id: int) -> None:
                     )
                     if i == 0:
                         try:
-                            await asyncio.sleep(3)
+                            await asyncio.sleep(1)
                             verified, _ = await verify_message_in_sent(
                                 account.email,
                                 account.password or "",

@@ -364,11 +364,12 @@ async def mail_tmpl_send(callback: CallbackQuery, state: FSMContext):
             is_html_body = "<html" in body_copy.lower() or "<body" in body_copy.lower()
             sender_name = getattr(user, "sender_name", None)
             uid_db = int(user.id)
+            inbox_em = getattr(acc, "email", None) or ""
             try:
                 session.expunge(acc)
             except Exception:
                 pass
-        return await send_email_via_account_with_proxy(
+        ok, err, msgid = await send_email_via_account_with_proxy(
             None,
             uid_db,
             acc,
@@ -380,6 +381,24 @@ async def mail_tmpl_send(callback: CallbackQuery, state: FSMContext):
             fast=True,
             **thread_kw,
         )
+        if ok and msgid:
+            try:
+                from database import db_session
+                from services.email_threading import remember_dialog_outbound
+
+                async with db_session() as s2:
+                    await remember_dialog_outbound(
+                        s2,
+                        user_id=uid_db,
+                        inbox_email=inbox_em,
+                        contact_email=to_email,
+                        outbound_message_id=msgid,
+                        references_header=thread_kw.get("references"),
+                    )
+                    await s2.commit()
+            except Exception:
+                logger.exception("remember template reply msgid failed")
+        return ok, err, msgid
 
     data = await state.get_data()
     db_user_id: int | None = None

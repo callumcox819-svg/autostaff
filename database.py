@@ -462,6 +462,25 @@ async def _ensure_conversation_links_tg_message_id_column() -> None:
         await conn.execute(text("ALTER TABLE conversation_links ADD COLUMN IF NOT EXISTS tg_message_id BIGINT"))
 
 
+async def _ensure_conversation_links_thread_columns() -> None:
+    """Gmail dialog: last outbound Message-ID + накопленные References на диалог."""
+    if engine.dialect.name != "postgresql":
+        return
+    async with engine.begin() as conn:
+        await conn.execute(
+            text(
+                "ALTER TABLE conversation_links "
+                "ADD COLUMN IF NOT EXISTS last_outbound_rfc_message_id VARCHAR(512)"
+            )
+        )
+        await conn.execute(
+            text(
+                "ALTER TABLE conversation_links "
+                "ADD COLUMN IF NOT EXISTS thread_rfc_references TEXT"
+            )
+        )
+
+
 async def init_db() -> None:
     dialect = engine.dialect.name
     if dialect == "postgresql":
@@ -528,6 +547,11 @@ async def init_db() -> None:
         await _ensure_conversation_links_tg_message_id_column()
     except Exception as e:
         log.error("Failed conversation_links.tg_message_id migration: %s", e)
+
+    try:
+        await _ensure_conversation_links_thread_columns()
+    except Exception as e:
+        log.error("Failed conversation_links thread columns migration: %s", e)
 
     try:
         await _ensure_offers_raw_json_column()

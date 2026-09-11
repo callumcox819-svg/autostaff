@@ -219,3 +219,117 @@ async def resolve_outbound_rfc_message_id(
         if hit:
             return hit
     return None
+
+
+async def load_dialog_thread_state(
+    session,
+    *,
+    user_id: int,
+    inbox_email: str,
+    contact_email: str,
+) -> tuple[str | None, str | None]:
+    """(last_outbound_mid, accumulated_references) из ConversationLink."""
+    from sqlalchemy import func, select
+
+    from models import ConversationLink
+    from services.offer_storage import normalize_incoming_seller_email
+
+    inbox = (inbox_email or "").strip().lower()
+    contact = normalize_incoming_seller_email(contact_email) or (contact_email or "").strip().lower()
+    if not user_id or not inbox or not contact:
+        return None, None
+    row = (
+        await session.execute(
+            select(ConversationLink)
+            .where(ConversationLink.user_id == int(user_id))
+            .where(func.lower(ConversationLink.account_email) == inbox)
+            .where(func.lower(ConversationLink.from_email) == contact)
+            .limit(1)
+        )
+    ).scalars().first()
+    if not row:
+        return None, None
+    last = normalize_rfc_message_id(getattr(row, "last_outbound_rfc_message_id", None))
+    refs = (getattr(row, "thread_rfc_references", None) or "").strip() or None
+    return last, refs
+
+
+async def remember_dialog_outbound(
+    session,
+    *,
+    user_id: int,
+    inbox_email: str,
+    contact_email: str,
+    outbound_message_id: str | None,
+    references_header: str | None = None,
+) -> None:
+    """После пресета/текста/HTML — сохранить Message-ID в диалог (Gmail thread)."""
+    from sqlalchemy import func, select
+
+    from models import ConversationLink
+    from services.offer_storage import normalize_incoming_seller_email
+
+    mid = normalize_rfc_message_id(outbound_message_id)
+    if not mid or not user_id:
+        return
+    inbox = (inbox_email or "").strip().lower()
+    contact = normalize_incoming_seller_email(contact_email) or (contact_email or "").strip().lower()
+    if not inbox or not contact:
+        return
+
+    row = (
+        await session.execute(
+            select(ConversationLink)
+            .where(ConversationLink.user_id == int(user_id))
+            .where(func.lower(ConversationLink.account_email) == inbox)
+            .where(func.lower(ConversationLink.from_email) == contact)
+            .limit(1)
+        )
+    ).scalars().first()
+    chain = build_references_header(
+        *((getattr(row, "thread_rfc_references", None) or "").split() if row else []),
+        *((references_header or "").split() if references_header else []),
+        mid,
+    )
+    if row is None:
+        row = ConversationLink(
+            user_id=int(user_id),
+            account_email=inbox,
+            from_email=contact,
+            last_outbound_rfc_message_id=mid[:512],
+            thread_rfc_references=(chain or mid)[:8000] if chain or mid else None,
+        )
+        session.add(row)
+    else:
+        row.last_outbound_rfc_message_id = mid[:512]
+        if chain:
+            row.thread_rfc_references = chain[:8000]
+    await session.flush()
+
+
+def threading_send_kwargs_for_dialog(
+    *,
+    inbound_rfc_message_id: str | None = None,
+    cold_outbound_rfc_message_id: str | None = None,
+    last_our_outbound_rfc_message_id: str | None = None,
+    parent_references: str | None = None,
+    dialog_references: str | None = None,
+) -> dict[str, str]:
+    """
+    Полная цепочка диалога:
+    cold → наши прошлые ответы → References входящего → входящее.
+    In-Reply-To = последнее входящее от продавца.
+    """
+    parent_parts: list[str | None] = []
+    if dialog_references:
+        parent_parts.extend((dialog_references or "").split())
+    if parent_references:
+        parent_parts.extend((parent_references or "").split())
+    return threading_send_kwargs(
+        inbound_rfc_message_id,
+        outbound_rfc_message_id=cold_outbound_rfc_message_id,
+        parent_references=build_references_header(
+            last_our_outbound_rfc_message_id,
+            *parent_parts,
+        ),
+    )

@@ -41,6 +41,22 @@ def test_threading_send_kwargs_with_parent_references():
     assert kw["references"] == "<cold@gmail.com> <ja@mail.gmail.com>"
 
 
+def test_threading_send_kwargs_for_dialog_chain():
+    from services.email_threading import threading_send_kwargs_for_dialog
+
+    kw = threading_send_kwargs_for_dialog(
+        inbound_rfc_message_id="<seller2@x>",
+        cold_outbound_rfc_message_id="<cold@x>",
+        last_our_outbound_rfc_message_id="<preset@x>",
+        parent_references="<cold@x> <seller1@x> <preset@x>",
+        dialog_references="<cold@x> <preset@x>",
+    )
+    assert kw["in_reply_to"] == "<seller2@x>"
+    assert kw["references"].startswith("<cold@x>")
+    assert "<preset@x>" in kw["references"]
+    assert kw["references"].endswith("<seller2@x>")
+
+
 def test_build_references_header_dedupes():
     assert (
         build_references_header("<a@b.c>", "<a@b.c>", "<d@e.f>")

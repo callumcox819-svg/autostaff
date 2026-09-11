@@ -2806,11 +2806,12 @@ async def cb_mail_reply_preset_send(callback: CallbackQuery, state: FSMContext):
             )
             sender_name = account_sender_display_name(user)
             uid_db = int(user.id)
+            inbox_em = getattr(acc, "email", None) or account_email or ""
             try:
                 session.expunge(acc)
             except Exception:
                 pass
-        return await send_email_via_account_with_proxy(
+        ok, err, msgid = await send_email_via_account_with_proxy(
             None,
             uid_db,
             acc,
@@ -2821,6 +2822,15 @@ async def cb_mail_reply_preset_send(callback: CallbackQuery, state: FSMContext):
             fast=True,
             **thread_kw,
         )
+        if ok:
+            await _remember_reply_msgid(
+                user_id=uid_db,
+                inbox_email=inbox_em,
+                contact_email=to_email,
+                msgid=msgid,
+                references=thread_kw.get("references"),
+            )
+        return ok, err, msgid
 
     meta_fm = FULL_META.get((acc_id, mail_uid)) or {}
     state_snap = dict(data)
@@ -2864,15 +2874,17 @@ async def _reply_thread_kwargs(
     to_email: str | None = None,
     account_email: str | None = None,
 ) -> dict:
-    """In-Reply-To = входящее продавца; References = cold + parent chain + входящее."""
+    """In-Reply-To = входящее продавца; References = весь диалог (cold→наши→входящее)."""
     import logging
 
     from services.email_threading import (
+        build_references_header,
+        load_dialog_thread_state,
         normalize_rfc_message_id,
         resolve_inbound_parent_references,
         resolve_inbound_rfc_message_id,
         resolve_outbound_rfc_message_id,
-        threading_send_kwargs,
+        threading_send_kwargs_for_dialog,
     )
 
     log = logging.getLogger(__name__)
@@ -2901,8 +2913,6 @@ async def _reply_thread_kwargs(
         refs = (getattr(mail_row, "rfc_references", None) or "").strip()
         irt = normalize_rfc_message_id(getattr(mail_row, "rfc_in_reply_to", None))
         if refs or irt:
-            from services.email_threading import build_references_header
-
             parent_refs = build_references_header(*(refs.split() if refs else []), irt)
     if not parent_refs:
         parent_refs = await resolve_inbound_parent_references(
@@ -2921,22 +2931,33 @@ async def _reply_thread_kwargs(
     if not inbox and mail_row is not None:
         inbox = str(getattr(mail_row, "account_email", "") or "").strip()
 
-    outbound = None
+    cold_outbound = None
+    last_ours = None
+    dialog_refs = None
     uid_user = int(user_id) if user_id else 0
     if not uid_user and mail_row is not None and getattr(mail_row, "user_id", None):
         uid_user = int(mail_row.user_id)
     if uid_user and contact:
-        outbound = await resolve_outbound_rfc_message_id(
+        cold_outbound = await resolve_outbound_rfc_message_id(
             session,
             user_id=uid_user,
             contact_email=contact,
             inbox_email=inbox or None,
         )
+        if inbox:
+            last_ours, dialog_refs = await load_dialog_thread_state(
+                session,
+                user_id=uid_user,
+                inbox_email=inbox,
+                contact_email=contact,
+            )
 
-    kw = threading_send_kwargs(
-        inbound,
-        outbound_rfc_message_id=outbound,
+    kw = threading_send_kwargs_for_dialog(
+        inbound_rfc_message_id=inbound,
+        cold_outbound_rfc_message_id=cold_outbound,
+        last_our_outbound_rfc_message_id=last_ours,
         parent_references=parent_refs,
+        dialog_references=dialog_refs,
     )
     if not kw:
         log.warning(
@@ -2952,9 +2973,41 @@ async def _reply_thread_kwargs(
             acc_id,
             mid,
             (kw.get("in_reply_to") or "")[:80],
-            (kw.get("references") or "")[:120],
+            (kw.get("references") or "")[:160],
         )
     return kw
+
+
+async def _remember_reply_msgid(
+    *,
+    user_id: int,
+    inbox_email: str,
+    contact_email: str,
+    msgid: str | None,
+    references: str | None = None,
+) -> None:
+    if not msgid or not user_id:
+        return
+    try:
+        from database import db_session
+        from services.email_threading import remember_dialog_outbound
+
+        async with db_session() as session:
+            await remember_dialog_outbound(
+                session,
+                user_id=int(user_id),
+                inbox_email=inbox_email,
+                contact_email=contact_email,
+                outbound_message_id=msgid,
+                references_header=references,
+            )
+            await session.commit()
+    except Exception:
+        logger.exception(
+            "remember reply msgid failed user=%s to=%s",
+            user_id,
+            (contact_email or "")[:80],
+        )
 
 
 def _html_attachment_filename(subject: str) -> str:
@@ -3095,13 +3148,12 @@ async def cb_mail_reply_html_send(callback: CallbackQuery, state: FSMContext):
 
             from services.html_reply import (
                 build_offer_html_ctx,
-                get_html_reply_subject,
                 get_html_sender_name,
                 prepare_html_body,
                 resolve_aqua_link_for_reply,
             )
 
-            subject = await get_html_reply_subject(session, user, fallback=_reply_subject(subject_raw))
+            subject = _reply_subject(subject_raw)
             sender_name = await get_html_sender_name(session, user)
 
             html_signature = (
@@ -3175,11 +3227,12 @@ async def cb_mail_reply_html_send(callback: CallbackQuery, state: FSMContext):
                 account_email=account_email or getattr(acc, "email", None),
             )
             uid_db = int(user.id)
+            inbox_em = account_email or getattr(acc, "email", None) or ""
             try:
                 session.expunge(acc)
             except Exception:
                 pass
-        return await send_email_via_account_with_proxy(
+        ok, err, msgid = await send_email_via_account_with_proxy(
             None,
             uid_db,
             acc,
@@ -3191,6 +3244,15 @@ async def cb_mail_reply_html_send(callback: CallbackQuery, state: FSMContext):
             fast=True,
             **thread_kw,
         )
+        if ok:
+            await _remember_reply_msgid(
+                user_id=uid_db,
+                inbox_email=inbox_em,
+                contact_email=to_email,
+                msgid=msgid,
+                references=thread_kw.get("references"),
+            )
+        return ok, err, msgid
 
     meta_fm = FULL_META.get((acc_id, uid)) or {}
     db_user_id: int | None = None
@@ -3278,11 +3340,12 @@ async def mail_reply_text(message: Message, state: FSMContext):
             )
             sender_name = account_sender_display_name(user)
             uid_db = int(user.id)
+            inbox_em = getattr(acc, "email", None) or ""
             try:
                 session.expunge(acc)
             except Exception:
                 pass
-        return await send_email_via_account_with_proxy(
+        ok, err, msgid = await send_email_via_account_with_proxy(
             None,
             uid_db,
             acc,
@@ -3293,6 +3356,15 @@ async def mail_reply_text(message: Message, state: FSMContext):
             fast=True,
             **thread_kw,
         )
+        if ok:
+            await _remember_reply_msgid(
+                user_id=uid_db,
+                inbox_email=inbox_em,
+                contact_email=to_email,
+                msgid=msgid,
+                references=thread_kw.get("references"),
+            )
+        return ok, err, msgid
 
     meta_fm = FULL_META.get((acc_id, uid)) or {}
     state_snap = dict(data)
@@ -3363,13 +3435,12 @@ async def mail_reply_custom_html(message: Message, state: FSMContext):
 
             from services.html_reply import (
                 build_offer_html_ctx,
-                get_html_reply_subject,
                 get_html_sender_name,
                 prepare_html_body,
                 resolve_aqua_link_for_reply,
             )
 
-            subject = await get_html_reply_subject(session, user, fallback=_reply_subject(subject_raw))
+            subject = _reply_subject(subject_raw)
             sender_name = await get_html_sender_name(session, user)
 
             html_signature = (
@@ -3439,11 +3510,12 @@ async def mail_reply_custom_html(message: Message, state: FSMContext):
                 account_email=account_email or getattr(acc, "email", None),
             )
             uid_db = int(user.id)
+            inbox_em = account_email or getattr(acc, "email", None) or ""
             try:
                 session.expunge(acc)
             except Exception:
                 pass
-        return await send_email_via_account_with_proxy(
+        ok, err, msgid = await send_email_via_account_with_proxy(
             None,
             uid_db,
             acc,
@@ -3455,6 +3527,15 @@ async def mail_reply_custom_html(message: Message, state: FSMContext):
             fast=True,
             **thread_kw,
         )
+        if ok:
+            await _remember_reply_msgid(
+                user_id=uid_db,
+                inbox_email=inbox_em,
+                contact_email=to_email,
+                msgid=msgid,
+                references=thread_kw.get("references"),
+            )
+        return ok, err, msgid
 
     meta_fm = FULL_META.get((acc_id, mail_uid)) or {}
     db_user_id: int | None = None

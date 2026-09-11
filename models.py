@@ -354,6 +354,9 @@ class ConversationLink(Base):
     # ✅ ТЗ: чтобы повторные письма от одного продавца крепились к первому сообщению в TG.
     # Храним message_id первого сообщения (pin/anchor).
     tg_message_id = Column(BigInteger, nullable=True)
+    # Цепочка Gmail-диалога: последний наш исходящий Message-ID + накопленные References.
+    last_outbound_rfc_message_id = Column(String(512), nullable=True)
+    thread_rfc_references = Column(Text, nullable=True)
     # Для продавцов из ЧС: закреплённое объявление по диалогу (не путать разные лоты).
     pinned_offer_id = Column(ForeignKey("offers.id", ondelete="SET NULL"), nullable=True, index=True)
     pinned_outgoing_subject = Column(String(500), nullable=True)

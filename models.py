@@ -60,6 +60,9 @@ class User(Base):
     quick_templates = relationship("QuickTemplate", back_populates="user", cascade="all, delete-orphan")
     conversation_links = relationship("ConversationLink", back_populates="user", cascade="all, delete-orphan")
     seller_blacklist = relationship("SellerBlacklist", back_populates="user", cascade="all, delete-orphan")
+    validated_email_blacklist = relationship(
+        "ValidatedEmailBlacklist", back_populates="user", cascade="all, delete-orphan"
+    )
     lines = relationship("Line", back_populates="user", cascade="all, delete-orphan")
     facebook_accounts = relationship(
         "FacebookAccount", back_populates="user", cascade="all, delete-orphan"
@@ -258,6 +261,8 @@ class MailingSendLog(Base):
 
 
 class SentEmail(Base):
+    """Личный ЧС успешно отправленных recipient email (на user_id)."""
+
     __tablename__ = "sent_emails"
     __table_args__ = (UniqueConstraint("user_id", "email", name="uq_sent_email_user_email"),)
 
@@ -266,6 +271,23 @@ class SentEmail(Base):
     email = Column(String, nullable=False, index=True)
     sent_at = Column(DateTime, default=datetime.utcnow)
     sent_count = Column(Integer, default=1)
+
+
+class ValidatedEmailBlacklist(Base):
+    """Личный ЧС валидированных seller email — повторно в очередь не ставим."""
+
+    __tablename__ = "validated_email_blacklist"
+    __table_args__ = (
+        UniqueConstraint("user_id", "email", name="uq_validated_email_bl_user_email"),
+    )
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    email = Column(String, nullable=False, index=True)
+    offer_id = Column(Integer, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    user = relationship("User", back_populates="validated_email_blacklist")
 
 
 class GlobalSentEmail(Base):

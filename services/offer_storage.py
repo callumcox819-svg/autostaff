@@ -1427,6 +1427,19 @@ async def save_all_offers_from_import(
     """
     vindex = index_validated_rows(validated_rows)
     reserved_emails = await load_user_validated_email_keys(session, int(user_id))
+    from services.email_blacklist import (
+        add_validated_email,
+        load_blocked_email_keys,
+    )
+
+    # ЧС валид + ЧС отправленных (+ skip после /reset) — в очередь не возвращаем.
+    blocked = await load_blocked_email_keys(session, int(user_id))
+    reserved_emails |= blocked
+    if skip_queue_emails:
+        for em in skip_queue_emails:
+            c = normalize_incoming_seller_email(str(em or "")) or str(em or "").strip().lower()
+            if c:
+                reserved_emails.add(c)
     offers_saved = 0
     offers_with_email = 0
     email_rows_saved = 0
@@ -1502,6 +1515,12 @@ async def save_all_offers_from_import(
             by_email.setdefault(canon, off)
             email_rows_saved += 1
             offers_with_email += 1
+            try:
+                await add_validated_email(
+                    session, int(user_id), canon, offer_id=int(off.id)
+                )
+            except Exception:
+                pass
 
     work: list[tuple[dict[str, Any], dict[str, Any] | None]] = []
     for row in validated_rows or []:
@@ -1647,6 +1666,12 @@ async def save_all_offers_from_import(
             session.add(OfferEmail(offer_id=int(offer.id), email=em))
             reserved_emails.add(canon)
             email_rows_saved += 1
+            try:
+                await add_validated_email(
+                    session, int(user_id), canon, offer_id=int(offer.id)
+                )
+            except Exception:
+                pass
         payload["offer_id"] = int(offer.id)
 
     from services.seller_blacklist import seller_name_key, seller_name_key_from_item

@@ -224,6 +224,120 @@ async def _ensure_incoming_mail_product_title_column() -> None:
         )
 
 
+async def _ensure_email_blacklist_tables() -> None:
+    """Личный ЧС: validated_email_blacklist + sent_emails (+ backfill из mailing_send_log)."""
+    if engine.dialect.name != "postgresql":
+        return
+
+    async with engine.begin() as conn:
+        await conn.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS validated_email_blacklist (
+                    id SERIAL PRIMARY KEY,
+                    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                    email VARCHAR NOT NULL,
+                    offer_id INTEGER,
+                    created_at TIMESTAMP WITHOUT TIME ZONE DEFAULT (NOW() AT TIME ZONE 'utc'),
+                    CONSTRAINT uq_validated_email_bl_user_email UNIQUE (user_id, email)
+                )
+                """
+            )
+        )
+        await conn.execute(
+            text(
+                "CREATE INDEX IF NOT EXISTS ix_validated_email_bl_user "
+                "ON validated_email_blacklist (user_id)"
+            )
+        )
+        await conn.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS sent_emails (
+                    id SERIAL PRIMARY KEY,
+                    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                    email VARCHAR NOT NULL,
+                    sent_at TIMESTAMP WITHOUT TIME ZONE DEFAULT (NOW() AT TIME ZONE 'utc'),
+                    sent_count INTEGER DEFAULT 1,
+                    CONSTRAINT uq_sent_email_user_email UNIQUE (user_id, email)
+                )
+                """
+            )
+        )
+        # Уже отправленные из журнала → ЧС отправленных.
+        await conn.execute(
+            text(
+                """
+                INSERT INTO sent_emails (user_id, email, sent_at, sent_count)
+                SELECT sub.user_id, sub.em, sub.last_sent, sub.cnt
+                FROM (
+                    SELECT
+                        m.user_id AS user_id,
+                        lower(trim(m.recipient_email)) AS em,
+                        MAX(m.sent_at) AS last_sent,
+                        COUNT(*)::integer AS cnt
+                    FROM mailing_send_log m
+                    WHERE m.recipient_email IS NOT NULL
+                      AND trim(m.recipient_email) <> ''
+                      AND position('@' in m.recipient_email) > 0
+                    GROUP BY m.user_id, lower(trim(m.recipient_email))
+                ) sub
+                WHERE NOT EXISTS (
+                    SELECT 1 FROM sent_emails s
+                    WHERE s.user_id = sub.user_id
+                      AND lower(s.email) = sub.em
+                )
+                """
+            )
+        )
+        # Живые OfferEmail → ЧС валидированных.
+        await conn.execute(
+            text(
+                """
+                INSERT INTO validated_email_blacklist (user_id, email, offer_id, created_at)
+                SELECT o.user_id, lower(trim(oe.email)), oe.offer_id,
+                       COALESCE(oe.created_at, NOW() AT TIME ZONE 'utc')
+                FROM offer_emails oe
+                JOIN offers o ON o.id = oe.offer_id
+                WHERE oe.email IS NOT NULL
+                  AND trim(oe.email) <> ''
+                  AND position('@' in oe.email) > 0
+                  AND NOT EXISTS (
+                    SELECT 1 FROM validated_email_blacklist v
+                    WHERE v.user_id = o.user_id
+                      AND lower(v.email) = lower(trim(oe.email))
+                  )
+                """
+            )
+        )
+        # Журнал рассылки → ЧС валидированных (уже слали = уже валидировали).
+        await conn.execute(
+            text(
+                """
+                INSERT INTO validated_email_blacklist (user_id, email, offer_id, created_at)
+                SELECT sub.user_id, sub.em, sub.offer_id, sub.first_sent
+                FROM (
+                    SELECT DISTINCT ON (m.user_id, lower(trim(m.recipient_email)))
+                        m.user_id AS user_id,
+                        lower(trim(m.recipient_email)) AS em,
+                        m.offer_id AS offer_id,
+                        m.sent_at AS first_sent
+                    FROM mailing_send_log m
+                    WHERE m.recipient_email IS NOT NULL
+                      AND trim(m.recipient_email) <> ''
+                      AND position('@' in m.recipient_email) > 0
+                    ORDER BY m.user_id, lower(trim(m.recipient_email)), m.sent_at ASC
+                ) sub
+                WHERE NOT EXISTS (
+                    SELECT 1 FROM validated_email_blacklist v
+                    WHERE v.user_id = sub.user_id
+                      AND lower(v.email) = sub.em
+                )
+                """
+            )
+        )
+
+
 async def _ensure_mailing_send_log_table() -> None:
     """Журнал отправок: email → offer_id (poputka recipients.lead_id)."""
     if engine.dialect.name != "postgresql":
@@ -381,6 +495,11 @@ async def init_db() -> None:
         await _ensure_mailing_send_log_table()
     except Exception as e:
         log.error("Failed mailing_send_log migration: %s", e)
+
+    try:
+        await _ensure_email_blacklist_tables()
+    except Exception as e:
+        log.error("Failed email blacklist migration: %s", e)
 
     try:
         await _ensure_incoming_mail_telegram_message_id_column()

@@ -102,20 +102,37 @@ async def _get_targets(session: AsyncSession, user_id: int) -> List[OfferEmail]:
     )
     if reset_dt is not None:
         stmt = stmt.where(Offer.created_at >= reset_dt)
-    return list((await session.execute(stmt)).scalars().all())
+    rows = list((await session.execute(stmt)).scalars().all())
+    from services.email_blacklist import load_sent_email_keys
+    from services.offer_matching import canon_seller_email
+
+    sent_keys = await load_sent_email_keys(session, int(user_id))
+    if not sent_keys:
+        return rows
+    keep: List[OfferEmail] = []
+    drop_ids: list[int] = []
+    for oe in rows:
+        canon = canon_seller_email(oe.email or "") or (oe.email or "").strip().lower()
+        if canon and canon in sent_keys:
+            drop_ids.append(int(oe.id))
+            continue
+        keep.append(oe)
+    if drop_ids:
+        await session.execute(
+            delete(OfferEmail)
+            .where(OfferEmail.id.in_(drop_ids))
+            .where(
+                OfferEmail.offer_id.in_(
+                    select(Offer.id).where(Offer.user_id == int(user_id))
+                )
+            )
+        )
+        await session.commit()
+    return keep
 
 
 async def _get_targets_count(session: AsyncSession, user_id: int) -> int:
-    reset_dt = await _mailing_reset_since_dt(session, user_id)
-    stmt = (
-        select(func.count(OfferEmail.id))
-        .select_from(OfferEmail)
-        .join(Offer, Offer.id == OfferEmail.offer_id)
-        .where(Offer.user_id == user_id)
-    )
-    if reset_dt is not None:
-        stmt = stmt.where(Offer.created_at >= reset_dt)
-    return (await session.execute(stmt)).scalar() or 0
+    return len(await _get_targets(session, user_id))
 
 
 async def _purge_target(session: AsyncSession, user_id: int, offer_email_id: int):

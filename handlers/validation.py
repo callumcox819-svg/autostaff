@@ -624,8 +624,7 @@ async def _run_validation_pipeline_inner(
             int(user_bl.id),
             include_offer_names=False,
         )
-        # ЧС без живого email не стопает API.
-        chs_keys &= already_keys
+        # Имена в ЧС всегда стопают API (не только пока OfferEmail жив).
         if append_active:
             with_offers = await load_seller_name_keys(
                 session,
@@ -777,6 +776,9 @@ async def _run_validation_pipeline_inner(
         append_to_active_mailing = await is_user_mailing_active(tg_id)
         # Не сносим offers: тот же item_link = тот же id; новый JSON только добавляет/обновляет.
 
+        from services.mailing_reset import get_mailing_reset_skip_emails
+
+        skip_emails = await get_mailing_reset_skip_emails(session, int(user.id))
         offers_saved, offers_with_email, saved_email_count, output = await save_all_offers_from_import(
             session,
             user_id=int(user.id),
@@ -784,6 +786,7 @@ async def _run_validation_pipeline_inner(
             validated_rows=validated or [],
             norm_email=_norm_email,
             max_emails_per_offer=MAX_EMAILS_PER_OFFER,
+            skip_queue_emails=skip_emails or None,
         )
         await session.commit()
 

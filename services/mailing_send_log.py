@@ -219,6 +219,13 @@ async def record_mailing_send(
         rfc_message_id=(mid[:512] if mid else None),
     )
     session.add(row)
+    try:
+        from services.email_blacklist import add_validated_email, mark_email_sent
+
+        await mark_email_sent(session, int(user_id), rcpt)
+        await add_validated_email(session, int(user_id), rcpt, offer_id=int(offer_id))
+    except Exception:
+        pass
 
 
 async def _mailing_log_rows_for_recipient(

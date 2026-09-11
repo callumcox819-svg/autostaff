@@ -614,6 +614,136 @@ def _find_all_mailbox_name(M: imaplib.IMAP4_SSL) -> str | None:
         return None
 
 
+def _find_spam_mailbox_name(M: imaplib.IMAP4_SSL) -> str | None:
+    """Spam/Junk: Gmail `[Gmail]/Spam`, GMX Spam/Junk, и т.п."""
+    hardcoded = (
+        "[Gmail]/Spam",
+        "[Google Mail]/Spam",
+        "Spam",
+        "Junk",
+        "SPAM",
+        "JUNK",
+        "INBOX.Spam",
+        "INBOX.Junk",
+    )
+    try:
+        typ, data = M.list()
+        names: list[str] = []
+        if typ == "OK" and data:
+            for raw in data:
+                if not raw:
+                    continue
+                line = raw.decode("utf-8", "ignore") if isinstance(raw, bytes) else str(raw)
+                low = line.lower()
+                m = re.findall(r'"([^"]+)"', line)
+                name = m[-1] if m else line.split()[-1].strip('"')
+                if not name:
+                    continue
+                if (
+                    "\\junk" in low
+                    or "\\spam" in low
+                    or "spam" in low
+                    or "junk" in low
+                    or "undesirable" in low
+                    or "junk-e-mail" in low
+                ):
+                    names.append(name)
+        for p in hardcoded:
+            if p in names:
+                return p
+        for p in hardcoded:
+            try:
+                typ_sel, _ = M.select(p, readonly=True)
+                if typ_sel == "OK":
+                    try:
+                        M.select("INBOX")
+                    except Exception:
+                        pass
+                    return p
+            except Exception:
+                continue
+        return names[0] if names else None
+    except Exception:
+        return None
+
+
+async def _spam_mail_allowed_for_user(
+    session,
+    *,
+    user_id: int,
+    account_id: int,
+    from_email: str,
+    subject: str,
+) -> bool:
+    """
+    Из Spam берём только релевантное:
+    - уже писали/получали от этого продавца, или
+    - тема Re:/Aw: (ответ в переписке), или
+    - тема похожа на лот в БД.
+    """
+    from services.offer_storage import normalize_incoming_seller_email
+
+    fe = normalize_incoming_seller_email(from_email) or (from_email or "").strip().lower()
+    if not fe or "@" not in fe:
+        return False
+
+    prior = (
+        await session.execute(
+            sa_select(IncomingMail.id)
+            .where(IncomingMail.user_id == int(user_id))
+            .where(func.lower(IncomingMail.from_email) == fe)
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if prior:
+        return True
+
+    try:
+        from models import MailingSendLog
+
+        link = (
+            await session.execute(
+                sa_select(ConversationLink.id)
+                .where(ConversationLink.user_id == int(user_id))
+                .where(func.lower(ConversationLink.from_email) == fe)
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+        if link:
+            return True
+        sent = (
+            await session.execute(
+                sa_select(MailingSendLog.id)
+                .where(MailingSendLog.user_id == int(user_id))
+                .where(func.lower(MailingSendLog.recipient_email) == fe)
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+        if sent:
+            return True
+    except Exception:
+        pass
+
+    subj = (subject or "").strip()
+    low = subj.lower()
+    if low.startswith("re:") or low.startswith("aw:") or low.startswith("sv:"):
+        return True
+
+    subj_norm = _normalize_subject(subj)
+    if len(subj_norm) >= 4:
+        hit = (
+            await session.execute(
+                sa_select(Offer.id)
+                .where(Offer.user_id == int(user_id))
+                .where(Offer.title.ilike(f"%{subj_norm}%"))
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+        if hit:
+            return True
+    return False
+
+
 def _imap_connect_and_select(host: str, port: int, email_addr: str, password: str) -> imaplib.IMAP4_SSL:
     M = imaplib.IMAP4_SSL(host, port, timeout=IMAP_CONNECT_TIMEOUT_SEC)
     M.login(email_addr, password)
@@ -698,10 +828,10 @@ def _imap_fetch_new_sync_raw(
     password: str,
     last_uid: Optional[int],
 ) -> tuple[List[Tuple[str, str, str, str, str, str, str]], Optional[int]]:
-    """Fetch new mails from INBOX and (for GMX only) from Spam/Junk.
+    """Fetch new mails from INBOX + Spam/Junk (Gmail/GMX).
 
     - INBOX: uses UID > last_uid (first run returns empty and sets last_uid=max_uid).
-    - GMX Spam/Junk: fetches UNSEEN only, marks them as \\Seen to avoid repeats,
+    - Spam/Junk: fetches UNSEEN only, marks them as \\Seen to avoid repeats,
       and prefixes uid as 'S:<uid>' so the async layer can filter/handle separately.
 
     Each mail tuple: (uid, from_email, from_name, subject, date_str, body,
@@ -767,11 +897,11 @@ def _imap_fetch_new_sync_raw(
         if typ != "OK":
             inbox_uids = []
         else:
-            inbox_uids: list[int] = []
+            inbox_uids = []
             if data and data[0]:
                 inbox_uids = [int(x) for x in data[0].split() if x.isdigit()]
 
-        inbox_mails: list[Tuple[str, str, str, str, str, str, str]] = []
+        inbox_mails: list = []
         max_uid = last_uid
 
         if inbox_uids:
@@ -779,8 +909,7 @@ def _imap_fetch_new_sync_raw(
 
             # first run: don't forward old inbox mails
             if last_uid is None:
-                # still may check GMX spam below
-                inbox_new_uids: list[int] = []
+                inbox_new_uids = []
             else:
                 inbox_new_uids = [u for u in inbox_uids if u > int(last_uid)]
                 if inbox_new_uids:
@@ -788,53 +917,43 @@ def _imap_fetch_new_sync_raw(
         else:
             inbox_new_uids = []
 
-        # Determine updated last_uid for inbox
         updated_last_uid: Optional[int] = int(max_uid) if max_uid is not None else last_uid
         if last_uid is None and max_uid is not None:
             updated_last_uid = int(max_uid)
 
-        # --- GMX Spam/Junk (UNSEEN only) ---
-        spam_mails: list[Tuple[str, str, str, str, str, str, str]] = []
-        is_gmx = ("gmx" in (host or "").lower()) or ("gmx" in (email_addr or "").lower())
-        if is_gmx:
-            spam_box_candidates = ["Spam", "Junk", "SPAM", "JUNK", "INBOX.Spam", "INBOX.Junk"]
-            selected = False
-            for box in spam_box_candidates:
-                try:
-                    typ_sel, _ = M.select(box)
-                    if typ_sel == "OK":
-                        selected = True
-                        break
-                except Exception:
-                    continue
-
-            if selected:
-                try:
+        # --- Spam/Junk (Gmail + GMX + others): UNSEEN only ---
+        spam_mails: list = []
+        spam_box = _find_spam_mailbox_name(M)
+        if spam_box:
+            try:
+                typ_sel, _ = M.select(spam_box)
+                if typ_sel == "OK":
                     typ_s, data_s = M.uid("search", None, "UNSEEN")
                     if typ_s == "OK" and data_s and data_s[0]:
                         spam_uids = [int(x) for x in data_s[0].split() if x.isdigit()]
                         if spam_uids:
-                            spam_mails = _fetch_uids(sorted(spam_uids)[-DEFAULT_MAX_PER_ACCOUNT:], uid_prefix="S:")
-                            # mark seen to avoid re-processing forever
+                            spam_mails = _fetch_uids(
+                                sorted(spam_uids)[-DEFAULT_MAX_PER_ACCOUNT:],
+                                uid_prefix="S:",
+                            )
                             for su in spam_uids:
                                 try:
                                     M.uid("store", str(su), "+FLAGS", r"(\\Seen)")
                                 except Exception:
                                     pass
-                finally:
-                    # return to INBOX for consistency
-                    try:
-                        M.select("INBOX")
-                    except Exception:
-                        pass
+            except Exception:
+                logger.exception("IMAP spam folder fetch failed box=%s", spam_box)
+            finally:
+                try:
+                    M.select("INBOX")
+                except Exception:
+                    pass
 
         mails = inbox_mails + spam_mails
 
-        # If first run and no inbox new mails, we still return spam matches (if any)
         if last_uid is None:
             return mails, (int(max_uid) if max_uid is not None else last_uid)
 
-        # If no inbox new mails and no spam mails
         if not mails:
             return [], (int(max_uid) if max_uid is not None else last_uid)
 
@@ -846,6 +965,8 @@ def _imap_fetch_new_sync_raw(
                 M.logout()
         except Exception:
             pass
+
+
 def _strip_html_to_text(text: str) -> str:
     if not text:
         return ""
@@ -1949,20 +2070,21 @@ async def _process_mails_for_account_impl(
             except Exception:
                 continue
 
-        # GMX: allow Spam/Junk only when subject matches an existing offer in DB
+        # Spam/Junk: только известные продавцы / Re: / тема лота (не весь спам ящика).
         if is_spam_box:
-            if "gmx" not in (account_email or "").lower():
-                continue
-            subj_norm = _normalize_subject(subject)
-            if len(subj_norm) < 4:
-                continue
             try:
                 async with _imap_db_session() as _s:
-                    hit = (await _s.execute(sa_select(Offer.id).where(Offer.title.ilike(f"%{subj_norm}%")).limit(1))).scalar()
-                if not hit:
+                    ok_spam = await _spam_mail_allowed_for_user(
+                        _s,
+                        user_id=int(user_id),
+                        account_id=int(acc_id),
+                        from_email=str(from_email or ""),
+                        subject=str(subject or ""),
+                    )
+                if not ok_spam:
                     continue
             except Exception:
-                logger.exception("Failed to check offer title for GMX spam")
+                logger.exception("spam allow-check failed acc=%s", acc_id)
                 continue
         # Только явный Gmail block / 5.7.1 — не любой DSN об недоставке получателю.
         smtp_block_bounce = _is_smtp_block_bounce(from_email, subject, body)

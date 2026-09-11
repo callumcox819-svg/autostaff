@@ -311,6 +311,7 @@ async def mail_tmpl_send(callback: CallbackQuery, state: FSMContext):
                     uid=uid,
                     mail_id=mail_id or meta.get("_mail_id"),
                     meta=meta,
+                    from_email=to_email,
                 )
                 outbound_mid = await resolve_outbound_rfc_message_id(
                     session,
@@ -318,8 +319,17 @@ async def mail_tmpl_send(callback: CallbackQuery, state: FSMContext):
                     contact_email=to_email,
                     inbox_email=(meta.get("account_email") or getattr(acc, "email", None) or ""),
                 )
+                from services.email_threading import resolve_inbound_parent_references
+
+                parent_refs = await resolve_inbound_parent_references(
+                    session,
+                    mail_id=mail_id or meta.get("_mail_id"),
+                    meta=meta,
+                )
                 thread_kw = threading_send_kwargs(
-                    inbound_mid, outbound_rfc_message_id=outbound_mid
+                    inbound_mid,
+                    outbound_rfc_message_id=outbound_mid,
+                    parent_references=parent_refs,
                 )
 
                 subj_insert = str(await get_user_setting(session, user, "subj_insert") or "").strip().lower() in {

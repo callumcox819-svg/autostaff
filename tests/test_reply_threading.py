@@ -31,6 +31,16 @@ def test_threading_send_kwargs_outbound_plus_inbound():
     assert kw["references"] == "<1789.1.99@gmail.com> <inbound@mail.gmail.com>"
 
 
+def test_threading_send_kwargs_with_parent_references():
+    kw = threading_send_kwargs(
+        "<ja@mail.gmail.com>",
+        outbound_rfc_message_id="<cold@gmail.com>",
+        parent_references="<cold@gmail.com>",
+    )
+    assert kw["in_reply_to"] == "<ja@mail.gmail.com>"
+    assert kw["references"] == "<cold@gmail.com> <ja@mail.gmail.com>"
+
+
 def test_build_references_header_dedupes():
     assert (
         build_references_header("<a@b.c>", "<a@b.c>", "<d@e.f>")

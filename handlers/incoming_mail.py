@@ -688,6 +688,24 @@ async def _open_mail_reply_menu(
             "tg_card_message_id": int(callback.message.message_id) if callback.message else None,
         }
     )
+    if mail_id:
+        fm["_mail_id"] = int(mail_id)
+    try:
+        if mail_id:
+            async with db_session() as s2:
+                mrow = await _load_incoming_mail_by_id(s2, int(mail_id))
+                if mrow:
+                    mid = (getattr(mrow, "rfc_message_id", None) or "").strip()
+                    if mid:
+                        fm["rfc_message_id"] = mid
+                    irt = (getattr(mrow, "rfc_in_reply_to", None) or "").strip()
+                    if irt:
+                        fm["rfc_in_reply_to"] = irt
+                    refs = (getattr(mrow, "rfc_references", None) or "").strip()
+                    if refs:
+                        fm["rfc_references"] = refs
+    except Exception:
+        pass
     FULL_META[(acc_id, uid_key)] = fm
 
     await state.set_state(_MailReplyState.waiting_choice)
@@ -2780,10 +2798,11 @@ async def cb_mail_reply_preset_send(callback: CallbackQuery, state: FSMContext):
                 session,
                 acc_id=int(acc_id),
                 uid=str(mail_uid),
+                mail_id=data.get("mail_id"),
                 meta=FULL_META.get((acc_id, mail_uid)),
                 user_id=int(user.id),
                 to_email=to_email,
-                account_email=getattr(acc, "email", None),
+                account_email=getattr(acc, "email", None) or account_email,
             )
             sender_name = account_sender_display_name(user)
             uid_db = int(user.id)
@@ -2845,13 +2864,24 @@ async def _reply_thread_kwargs(
     to_email: str | None = None,
     account_email: str | None = None,
 ) -> dict:
-    """In-Reply-To = входящее продавца; References = наш исходящий + входящее (один тред)."""
+    """In-Reply-To = входящее продавца; References = cold + parent chain + входящее."""
+    import logging
+
     from services.email_threading import (
         normalize_rfc_message_id,
+        resolve_inbound_parent_references,
         resolve_inbound_rfc_message_id,
         resolve_outbound_rfc_message_id,
         threading_send_kwargs,
     )
+
+    log = logging.getLogger(__name__)
+    mid = int(mail_id) if mail_id else None
+    if mid is None and mail_row is not None and getattr(mail_row, "id", None):
+        try:
+            mid = int(mail_row.id)
+        except Exception:
+            mid = None
 
     inbound = None
     if mail_row is not None:
@@ -2861,8 +2891,22 @@ async def _reply_thread_kwargs(
             session,
             acc_id=acc_id,
             uid=uid,
-            mail_id=mail_id,
+            mail_id=mid,
             meta=meta,
+            from_email=to_email,
+        )
+
+    parent_refs = None
+    if mail_row is not None:
+        refs = (getattr(mail_row, "rfc_references", None) or "").strip()
+        irt = normalize_rfc_message_id(getattr(mail_row, "rfc_in_reply_to", None))
+        if refs or irt:
+            from services.email_threading import build_references_header
+
+            parent_refs = build_references_header(*(refs.split() if refs else []), irt)
+    if not parent_refs:
+        parent_refs = await resolve_inbound_parent_references(
+            session, mail_id=mid, meta=meta
         )
 
     contact = (to_email or "").strip()
@@ -2889,7 +2933,28 @@ async def _reply_thread_kwargs(
             inbox_email=inbox or None,
         )
 
-    return threading_send_kwargs(inbound, outbound_rfc_message_id=outbound)
+    kw = threading_send_kwargs(
+        inbound,
+        outbound_rfc_message_id=outbound,
+        parent_references=parent_refs,
+    )
+    if not kw:
+        log.warning(
+            "reply threading empty acc=%s uid=%s mail_id=%s to=%s — Gmail may split thread",
+            acc_id,
+            uid,
+            mid,
+            (contact or "")[:80],
+        )
+    else:
+        log.info(
+            "reply threading acc=%s mail_id=%s in_reply_to=%s refs=%s",
+            acc_id,
+            mid,
+            (kw.get("in_reply_to") or "")[:80],
+            (kw.get("references") or "")[:120],
+        )
+    return kw
 
 
 def _html_attachment_filename(subject: str) -> str:

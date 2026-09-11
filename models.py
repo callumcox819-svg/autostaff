@@ -420,6 +420,9 @@ class IncomingMail(Base):
 
     # RFC822 Message-ID входящего (для In-Reply-To / References при ответе)
     rfc_message_id = Column(String(512), nullable=True)
+    # Цепочка треда из письма продавца (чтобы пресет попал в тот же Gmail conversation)
+    rfc_in_reply_to = Column(String(512), nullable=True)
+    rfc_references = Column(Text, nullable=True)
 
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

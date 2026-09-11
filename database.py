@@ -191,6 +191,12 @@ async def _ensure_incoming_mail_rfc_message_id_column() -> None:
         await conn.execute(
             text("ALTER TABLE incoming_mails ADD COLUMN IF NOT EXISTS rfc_message_id VARCHAR(512)")
         )
+        await conn.execute(
+            text("ALTER TABLE incoming_mails ADD COLUMN IF NOT EXISTS rfc_in_reply_to VARCHAR(512)")
+        )
+        await conn.execute(
+            text("ALTER TABLE incoming_mails ADD COLUMN IF NOT EXISTS rfc_references TEXT")
+        )
 
 
 async def _ensure_incoming_mail_product_title_column() -> None:

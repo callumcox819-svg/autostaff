@@ -44,21 +44,29 @@ def threading_send_kwargs(
     inbound_rfc_message_id: str | None = None,
     *,
     outbound_rfc_message_id: str | None = None,
+    parent_references: str | None = None,
 ) -> dict[str, str]:
     """
     Kwargs for SMTP reply:
     - In-Reply-To = last inbound (seller), else our outbound
-    - References = our cold/outbound Message-ID + inbound (same Gmail thread)
+    - References = cold outbound + parent chain + inbound (same Gmail thread)
     """
     inbound = normalize_rfc_message_id(inbound_rfc_message_id)
     outbound = normalize_rfc_message_id(outbound_rfc_message_id)
-    if not inbound and not outbound:
+    parent_parts: list[str | None] = []
+    if parent_references:
+        parent_parts.extend((parent_references or "").split())
+    if not inbound and not outbound and not any(parent_parts):
         return {}
     in_reply_to = inbound or outbound
-    refs = build_references_header(outbound, inbound)
-    kw: dict[str, str] = {"in_reply_to": in_reply_to}
+    refs = build_references_header(outbound, *parent_parts, inbound)
+    kw: dict[str, str] = {}
+    if in_reply_to:
+        kw["in_reply_to"] = in_reply_to
     if refs:
         kw["references"] = refs
+    elif in_reply_to:
+        kw["references"] = in_reply_to
     return kw
 
 
@@ -69,6 +77,7 @@ async def resolve_inbound_rfc_message_id(
     uid: str | None = None,
     mail_id: int | None = None,
     meta: dict[str, Any] | None = None,
+    from_email: str | None = None,
 ) -> str | None:
     """Load seller Message-ID from FULL_META cache or IncomingMail row."""
     if meta:
@@ -76,7 +85,7 @@ async def resolve_inbound_rfc_message_id(
         if hit:
             return hit
 
-    from sqlalchemy import select
+    from sqlalchemy import func, select
 
     from models import IncomingMail
 
@@ -102,12 +111,64 @@ async def resolve_inbound_rfc_message_id(
                     .limit(1)
                 )
             ).scalars().first()
+        # Fallback: последнее входящее от этого продавца на ящик с Message-ID.
+        if (not row or not getattr(row, "rfc_message_id", None)) and acc_id and from_email:
+            from services.offer_storage import normalize_incoming_seller_email
+
+            fe = normalize_incoming_seller_email(from_email) or (from_email or "").strip().lower()
+            if fe:
+                row = (
+                    await session.execute(
+                        select(IncomingMail)
+                        .where(IncomingMail.account_id == int(acc_id))
+                        .where(func.lower(IncomingMail.from_email) == fe)
+                        .where(IncomingMail.rfc_message_id.isnot(None))
+                        .order_by(IncomingMail.id.desc())
+                        .limit(1)
+                    )
+                ).scalars().first()
     except Exception:
         return None
 
     if not row:
         return None
     return normalize_rfc_message_id(getattr(row, "rfc_message_id", None))
+
+
+async def resolve_inbound_parent_references(
+    session,
+    *,
+    mail_id: int | None = None,
+    meta: dict[str, Any] | None = None,
+) -> str | None:
+    """References/In-Reply-To цепочка из письма продавца (FULL_META или БД)."""
+    if meta:
+        refs = (meta.get("rfc_references") or "").strip()
+        irt = normalize_rfc_message_id(str(meta.get("rfc_in_reply_to") or ""))
+        if refs or irt:
+            return build_references_header(*(refs.split() if refs else []), irt)
+
+    if not mail_id:
+        return None
+    try:
+        from sqlalchemy import select
+
+        from models import IncomingMail
+
+        row = (
+            await session.execute(
+                select(IncomingMail).where(IncomingMail.id == int(mail_id)).limit(1)
+            )
+        ).scalars().first()
+    except Exception:
+        return None
+    if not row:
+        return None
+    refs = (getattr(row, "rfc_references", None) or "").strip()
+    irt = normalize_rfc_message_id(getattr(row, "rfc_in_reply_to", None))
+    if not refs and not irt:
+        return None
+    return build_references_header(*(refs.split() if refs else []), irt)
 
 
 async def resolve_outbound_rfc_message_id(

@@ -381,16 +381,20 @@ async def _run_mass_test(message: Message, tg_id: int) -> None:
                         session, tg_id=tg_id, user=user, offer=offer
                     )
                     sender_name = getattr(user, "sender_name", None)
-                    ok, err, msgid = await send_email_via_account_with_proxy(
-                        session,
-                        user_id,
-                        account,
-                        to_email,
-                        subject,
-                        body,
-                        sender_name=sender_name,
-                        mailing_fast=False,
-                    )
+                    try:
+                        session.expunge(account)
+                    except Exception:
+                        pass
+                ok, err, msgid = await send_email_via_account_with_proxy(
+                    None,
+                    user_id,
+                    account,
+                    to_email,
+                    subject,
+                    body,
+                    sender_name=sender_name,
+                    mailing_fast=False,
+                )
 
                 acc_email = account.email
                 subj_short = (subject or "")[:50]

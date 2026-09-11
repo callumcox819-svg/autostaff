@@ -140,7 +140,7 @@ async def send_mailing_one(
 
 
 async def send_mailing_one_parallel(
-    session: AsyncSession,
+    session: AsyncSession | None,
     user_id: int,
     account: EmailAccount,
     to_email: str,
@@ -152,6 +152,7 @@ async def send_mailing_one_parallel(
 ) -> Tuple[bool, Optional[str], Optional[str]]:
     """
     Фаст-волна: параллельный SMTP через один ротирующий SOCKS5 (новое соединение = новый IP).
+    session можно не передавать — SMTP не удерживает соединение к БД.
     """
     last_err: Optional[str] = None
     last_msgid: Optional[str] = None

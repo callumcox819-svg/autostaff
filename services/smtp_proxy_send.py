@@ -1,10 +1,10 @@
 """SMTP sending that always runs through the user's proxy."""
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import random
-import time
 from typing import List, Optional, Tuple
 
 from sqlalchemy import or_ as sa_or
@@ -188,8 +188,62 @@ def _proxy_deactivate_on_fail(*, mailing_fast: bool, err: str | None) -> bool:
     return is_definite_proxy_failure(err)
 
 
+async def _load_mailing_proxies_detached(
+    user_id: int,
+    session: AsyncSession | None = None,
+) -> List[Proxy]:
+    """Короткий DB-запрос + expunge — ORM-объекты живы после закрытия сессии."""
+    from database import db_session
+
+    async def _load(s: AsyncSession) -> List[Proxy]:
+        proxies = await _list_active_mailing_proxies(s, int(user_id))
+        for p in proxies:
+            try:
+                s.expunge(p)
+            except Exception:
+                pass
+        return proxies
+
+    if session is not None:
+        return await _load(session)
+    async with db_session() as s:
+        return await _load(s)
+
+
+async def _note_proxy_ok(proxy_id: int) -> None:
+    from database import db_session
+
+    try:
+        async with db_session() as s:
+            await ProxyManager.note_proxy_success(s, int(proxy_id))
+    except Exception:
+        pass
+
+
+async def _note_proxy_fail(
+    proxy_id: int,
+    err: str | None,
+    *,
+    mailing_fast: bool,
+) -> None:
+    from database import db_session
+
+    dead = _proxy_deactivate_on_fail(mailing_fast=mailing_fast, err=err)
+    try:
+        async with db_session() as s:
+            await ProxyManager.note_proxy_failure(
+                s,
+                int(proxy_id),
+                (err or "")[:500],
+                deactivate=dead,
+                from_mailing=True,
+            )
+    except Exception:
+        pass
+
+
 async def send_email_via_account_with_proxy(
-    session: AsyncSession,
+    session: AsyncSession | None,
     user_id: int,
     account: EmailAccount,
     to_email: str,
@@ -204,7 +258,11 @@ async def send_email_via_account_with_proxy(
     in_reply_to: Optional[str] = None,
     references: Optional[str] = None,
 ) -> Tuple[bool, Optional[str], Optional[str]]:
-    proxies = await _list_active_mailing_proxies(session, user_id)
+    """
+    SMTP без удержания DB-сессии: список прокси — короткий запрос,
+    note success/fail — отдельные короткие сессии. session=None ок.
+    """
+    proxies = await _load_mailing_proxies_detached(user_id, session)
     if not proxies:
         return False, NO_MAILING_PROXY, None
 
@@ -285,10 +343,7 @@ async def send_email_via_account_with_proxy(
             if ok:
                 _LAST_OK_PROXY_ID[int(user_id)] = pid
                 _LAST_OK_PROXY_BY_ACCOUNT[(int(user_id), int(account.id))] = pid
-                try:
-                    await ProxyManager.note_proxy_success(session, pid)
-                except Exception:
-                    pass
+                await _note_proxy_ok(pid)
                 return True, err, msgid
 
             last_err = err
@@ -303,21 +358,11 @@ async def send_email_via_account_with_proxy(
             if not should_retry_send_with_other_proxy(err):
                 break
             if attempt < attempts:
-                time.sleep(1.2)
+                await asyncio.sleep(1.2)
                 continue
             break
 
-        dead = _proxy_deactivate_on_fail(mailing_fast=mailing_fast, err=last_err)
-        try:
-            await ProxyManager.note_proxy_failure(
-                session,
-                pid,
-                (last_err or "")[:500],
-                deactivate=dead,
-                from_mailing=True,
-            )
-        except Exception:
-            pass
+        await _note_proxy_fail(pid, last_err, mailing_fast=mailing_fast)
 
         if not should_retry_send_with_other_proxy(last_err):
             return False, last_err, last_msgid
@@ -333,7 +378,7 @@ async def send_email_via_account_with_proxy(
 
 
 async def send_email_via_account_with_proxy_isolated(
-    session: AsyncSession,
+    session: AsyncSession | None,
     user_id: int,
     account: EmailAccount,
     to_email: str,
@@ -348,8 +393,9 @@ async def send_email_via_account_with_proxy_isolated(
     """
     Параллельный фаст: каждый ящик — свой SOCKS5/HTTP-сокет, без глобального _PROXY_LOCK.
     Ротирующий gateway: sticky_proxy_id = один прокси на всю /send.
+    DB-сессию не держим на время SMTP (session=None предпочтительно).
     """
-    proxies = await _list_active_mailing_proxies(session, user_id)
+    proxies = await _load_mailing_proxies_detached(user_id, session)
     if not proxies:
         return False, NO_MAILING_PROXY, None
 
@@ -425,10 +471,7 @@ async def send_email_via_account_with_proxy_isolated(
             if ok:
                 _LAST_OK_PROXY_ID[int(user_id)] = pid
                 _LAST_OK_PROXY_BY_ACCOUNT[(int(user_id), int(account.id))] = pid
-                try:
-                    await ProxyManager.note_proxy_success(session, pid)
-                except Exception:
-                    pass
+                await _note_proxy_ok(pid)
                 return True, err, msgid
 
             last_err = err
@@ -442,17 +485,7 @@ async def send_email_via_account_with_proxy_isolated(
                 (err or "")[:200],
             )
 
-            dead = _proxy_deactivate_on_fail(mailing_fast=mailing_fast, err=err)
-            try:
-                await ProxyManager.note_proxy_failure(
-                    session,
-                    pid,
-                    (err or "")[:500],
-                    deactivate=dead,
-                    from_mailing=True,
-                )
-            except Exception:
-                pass
+            await _note_proxy_fail(pid, err, mailing_fast=mailing_fast)
 
             if not should_retry_send_with_other_proxy(err):
                 return False, err, last_msgid
@@ -460,8 +493,6 @@ async def send_email_via_account_with_proxy_isolated(
             # EOF/timeout на ротаторе — пауза и новое TCP (часто новый IP).
             if reconnect < sticky_reconnects:
                 if MAIL_STICKY_PROXY_RECONNECT_PAUSE_SEC > 0:
-                    import asyncio
-
                     await asyncio.sleep(MAIL_STICKY_PROXY_RECONNECT_PAUSE_SEC)
                 continue
             break

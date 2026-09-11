@@ -49,8 +49,8 @@ BURST_RETRY_PAUSE_SEC = max(
 BURST_MAX_INFLIGHT = max(
     4, min(120, int(os.getenv("BURST_MAX_INFLIGHT", "40")))
 )
-# Один sticky-прокси + много Gmail: параллель по ящикам (как в быстрых мейлерах),
-# не 2–3 — иначе 300 писем растягиваются на минуты.
+# Один sticky-прокси + много Gmail: параллель по ящикам (как в быстрых мейлерах).
+# DB-сессия на SMTP больше не держится — пул свободен для /start при волне 40.
 BURST_SINGLE_PROXY_INFLIGHT = max(
     8, min(80, int(os.getenv("BURST_SINGLE_PROXY_INFLIGHT", "40")))
 )
@@ -130,20 +130,20 @@ async def _send_one_with_retry(
     last_msgid = ""
     for attempt in range(1, BURST_SMTP_RETRIES + 1):
         try:
-            async with db_session() as session:
-                ok, err, msgid = await asyncio.wait_for(
-                    send_mailing_one_parallel(
-                        session,
-                        db_user_id,
-                        account,
-                        to_email,
-                        subject,
-                        body,
-                        sender_name=sender_name,
-                        sticky_proxy_id=sticky_proxy_id,
-                    ),
-                    timeout=float(per_letter_timeout_sec),
-                )
+            # Не держим db_session на время SMTP — иначе пул (15+25) и /start умирают.
+            ok, err, msgid = await asyncio.wait_for(
+                send_mailing_one_parallel(
+                    None,
+                    db_user_id,
+                    account,
+                    to_email,
+                    subject,
+                    body,
+                    sender_name=sender_name,
+                    sticky_proxy_id=sticky_proxy_id,
+                ),
+                timeout=float(per_letter_timeout_sec),
+            )
             if ok:
                 return True, "", (msgid or "")
             last_err = normalize_send_error(err)
@@ -269,6 +269,11 @@ async def run_burst_mailing(
         from services.smtp_proxy_send import _list_active_mailing_proxies
 
         n_proxies = len(await _list_active_mailing_proxies(session, int(db_user_id)))
+        if sticky_px is not None:
+            try:
+                session.expunge(sticky_px)
+            except Exception:
+                pass
     if not sticky_px:
         raise RuntimeError("NO_ROTATING_PROXY")
 

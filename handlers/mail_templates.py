@@ -285,16 +285,16 @@ async def mail_tmpl_send(callback: CallbackQuery, state: FSMContext):
     tg_id = callback.from_user.id
     body_copy = body
 
-    async def _send() -> tuple[bool, str | None]:
+    async def _send() -> tuple[bool, str | None, str | None]:
         async with Session() as session:
             acc = (await session.execute(select(EmailAccount).where(EmailAccount.id == acc_id))).scalars().first()
             if not acc:
-                return False, "SMTP аккаунт не найден"
+                return False, "SMTP аккаунт не найден", None
             user = (
                 await session.execute(select(User).where(User.telegram_id == int(tg_id)))
             ).scalars().first()
             if not user:
-                return False, "Пользователь не найден"
+                return False, "Пользователь не найден", None
             out_subject = subject
             thread_kw: dict = {}
             try:
@@ -352,18 +352,24 @@ async def mail_tmpl_send(callback: CallbackQuery, state: FSMContext):
             except Exception:
                 pass
             is_html_body = "<html" in body_copy.lower() or "<body" in body_copy.lower()
-            return await send_email_via_account_with_proxy(
-                session,
-                int(user.id),
-                acc,
-                to_email,
-                out_subject,
-                body_copy,
-                sender_name=getattr(user, "sender_name", None),
-                is_html=is_html_body or None,
-                fast=True,
-                **thread_kw,
-            )
+            sender_name = getattr(user, "sender_name", None)
+            uid_db = int(user.id)
+            try:
+                session.expunge(acc)
+            except Exception:
+                pass
+        return await send_email_via_account_with_proxy(
+            None,
+            uid_db,
+            acc,
+            to_email,
+            out_subject,
+            body_copy,
+            sender_name=sender_name,
+            is_html=is_html_body or None,
+            fast=True,
+            **thread_kw,
+        )
 
     data = await state.get_data()
     db_user_id: int | None = None

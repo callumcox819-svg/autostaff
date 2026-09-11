@@ -2765,14 +2765,14 @@ async def cb_mail_reply_preset_send(callback: CallbackQuery, state: FSMContext):
     if not (preset_body or "").strip():
         return await callback.answer("Пресет пустой или не найден", show_alert=True)
 
-    async def _send() -> tuple[bool, str | None]:
+    async def _send() -> tuple[bool, str | None, str | None]:
         async with Session() as session:
             user = await get_or_create_user(session, tg_id)
             acc = (
                 await session.execute(sa_select(EmailAccount).where(EmailAccount.id == int(acc_id)))
             ).scalar_one_or_none()
             if not acc:
-                return False, "SMTP аккаунт не найден"
+                return False, "SMTP аккаунт не найден", None
             out_subject = _reply_subject(subject)
             from services.html_reply import account_sender_display_name
 
@@ -2785,17 +2785,23 @@ async def cb_mail_reply_preset_send(callback: CallbackQuery, state: FSMContext):
                 to_email=to_email,
                 account_email=getattr(acc, "email", None),
             )
-            return await send_email_via_account_with_proxy(
-                session,
-                int(user.id),
-                acc,
-                to_email,
-                out_subject,
-                preset_body,
-                sender_name=account_sender_display_name(user),
-                fast=True,
-                **thread_kw,
-            )
+            sender_name = account_sender_display_name(user)
+            uid_db = int(user.id)
+            try:
+                session.expunge(acc)
+            except Exception:
+                pass
+        return await send_email_via_account_with_proxy(
+            None,
+            uid_db,
+            acc,
+            to_email,
+            out_subject,
+            preset_body,
+            sender_name=sender_name,
+            fast=True,
+            **thread_kw,
+        )
 
     meta_fm = FULL_META.get((acc_id, mail_uid)) or {}
     state_snap = dict(data)
@@ -3013,14 +3019,14 @@ async def cb_mail_reply_html_send(callback: CallbackQuery, state: FSMContext):
                 show_alert=True,
             )
 
-    async def _send() -> tuple[bool, str | None]:
+    async def _send() -> tuple[bool, str | None, str | None]:
         async with Session() as session:
             user = await get_or_create_user(session, tg_id)
             acc = (
                 await session.execute(sa_select(EmailAccount).where(EmailAccount.id == int(acc_id)))
             ).scalar_one_or_none()
             if not acc:
-                return False, "SMTP аккаунт не найден"
+                return False, "SMTP аккаунт не найден", None
 
             from services.html_reply import (
                 build_offer_html_ctx,
@@ -3043,7 +3049,7 @@ async def cb_mail_reply_html_send(callback: CallbackQuery, state: FSMContext):
 
             raw_html, tpl_err = await _load_html_template_for_user(session, user, filename)
             if tpl_err or not raw_html:
-                return False, tpl_err or "HTML шаблон не найден"
+                return False, tpl_err or "HTML шаблон не найден", None
 
             from services.placeholders import apply_placeholders
 
@@ -3083,6 +3089,7 @@ async def cb_mail_reply_html_send(callback: CallbackQuery, state: FSMContext):
                     False,
                     "Для HTML заполни ФИО и адрес: Команды API → Evoleum → "
                     "«ФИО для HTML» и «Адрес для HTML» (как в Profile ID на лендинге).",
+                    None,
                 )
             html_body = await prepare_html_body(_apply_link(raw_html, link), session, user)
             if html_signature:
@@ -3102,18 +3109,23 @@ async def cb_mail_reply_html_send(callback: CallbackQuery, state: FSMContext):
                 to_email=to_email,
                 account_email=account_email or getattr(acc, "email", None),
             )
-            return await send_email_via_account_with_proxy(
-                session,
-                int(user.id),
-                acc,
-                to_email,
-                subject,
-                html_body,
-                is_html=True,
-                sender_name=sender_name,
-                fast=True,
-                **thread_kw,
-            )
+            uid_db = int(user.id)
+            try:
+                session.expunge(acc)
+            except Exception:
+                pass
+        return await send_email_via_account_with_proxy(
+            None,
+            uid_db,
+            acc,
+            to_email,
+            subject,
+            html_body,
+            is_html=True,
+            sender_name=sender_name,
+            fast=True,
+            **thread_kw,
+        )
 
     meta_fm = FULL_META.get((acc_id, uid)) or {}
     db_user_id: int | None = None
@@ -3176,17 +3188,17 @@ async def mail_reply_text(message: Message, state: FSMContext):
 
     out_subject = _reply_subject(subject)
 
-    async def _send() -> tuple[bool, str | None]:
+    async def _send() -> tuple[bool, str | None, str | None]:
         async with Session() as session:
             acc = (
                 await session.execute(sa_select(EmailAccount).where(EmailAccount.id == acc_id))
             ).scalar_one_or_none()
             if not acc:
-                return False, "SMTP аккаунт не найден в БД."
+                return False, "SMTP аккаунт не найден в БД.", None
             user = await get_or_create_user(session, tg_id)
             owner_user_id = await _get_acc_owner_user_id(session, acc_id)
             if owner_user_id and int(owner_user_id) != int(user.id):
-                return False, "Этот ящик не принадлежит вам."
+                return False, "Этот ящик не принадлежит вам.", None
             from services.html_reply import account_sender_display_name
 
             thread_kw = await _reply_thread_kwargs(
@@ -3199,17 +3211,23 @@ async def mail_reply_text(message: Message, state: FSMContext):
                 to_email=to_email,
                 account_email=getattr(acc, "email", None),
             )
-            return await send_email_via_account_with_proxy(
-                session,
-                int(user.id),
-                acc,
-                to_email,
-                out_subject,
-                text,
-                sender_name=account_sender_display_name(user),
-                fast=True,
-                **thread_kw,
-            )
+            sender_name = account_sender_display_name(user)
+            uid_db = int(user.id)
+            try:
+                session.expunge(acc)
+            except Exception:
+                pass
+        return await send_email_via_account_with_proxy(
+            None,
+            uid_db,
+            acc,
+            to_email,
+            out_subject,
+            text,
+            sender_name=sender_name,
+            fast=True,
+            **thread_kw,
+        )
 
     meta_fm = FULL_META.get((acc_id, uid)) or {}
     state_snap = dict(data)
@@ -3269,14 +3287,14 @@ async def mail_reply_custom_html(message: Message, state: FSMContext):
             f"{html_emoji('fail')} Не вижу email получателя. Откройте карточку письма снова."
         )
 
-    async def _send() -> tuple[bool, str | None]:
+    async def _send() -> tuple[bool, str | None, str | None]:
         async with Session() as session:
             user = await get_or_create_user(session, tg_id)
             acc = (
                 await session.execute(sa_select(EmailAccount).where(EmailAccount.id == acc_id))
             ).scalar_one_or_none()
             if not acc:
-                return False, "SMTP аккаунт не найден в БД."
+                return False, "SMTP аккаунт не найден в БД.", None
 
             from services.html_reply import (
                 build_offer_html_ctx,
@@ -3335,6 +3353,7 @@ async def mail_reply_custom_html(message: Message, state: FSMContext):
                     False,
                     "Для HTML заполни ФИО и адрес: Команды API → Evoleum → "
                     "«ФИО для HTML» и «Адрес для HTML» (как в Profile ID на лендинге).",
+                    None,
                 )
             html_body = await prepare_html_body(_apply_link(html_text, link), session, user)
             if html_signature:
@@ -3354,18 +3373,23 @@ async def mail_reply_custom_html(message: Message, state: FSMContext):
                 to_email=to_email,
                 account_email=account_email or getattr(acc, "email", None),
             )
-            return await send_email_via_account_with_proxy(
-                session,
-                int(user.id),
-                acc,
-                to_email,
-                subject,
-                html_body,
-                is_html=True,
-                sender_name=sender_name,
-                fast=True,
-                **thread_kw,
-            )
+            uid_db = int(user.id)
+            try:
+                session.expunge(acc)
+            except Exception:
+                pass
+        return await send_email_via_account_with_proxy(
+            None,
+            uid_db,
+            acc,
+            to_email,
+            subject,
+            html_body,
+            is_html=True,
+            sender_name=sender_name,
+            fast=True,
+            **thread_kw,
+        )
 
     meta_fm = FULL_META.get((acc_id, mail_uid)) or {}
     db_user_id: int | None = None

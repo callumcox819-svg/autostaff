@@ -70,12 +70,12 @@ def _uid_lookup_keys(uid: str) -> list[str]:
     keys: list[str] = []
     if u:
         keys.append(u)
-    if u and not u.startswith("S:"):
-        keys.append(f"S:{u}")
     if ":" in u:
         tail = u.rsplit(":", 1)[-1].strip()
         if tail and tail not in keys:
             keys.append(tail)
+    elif u:
+        keys.append(f"S:{u}")
     return keys
 
 
@@ -614,6 +614,29 @@ def _find_all_mailbox_name(M: imaplib.IMAP4_SSL) -> str | None:
         return None
 
 
+async def is_inbound_from_mailed_seller(
+    session,
+    user_id: int,
+    from_email: str,
+) -> bool:
+    """
+    В бот пускаем только продавцов, которым уходила рассылка (/send|тест) у этого user.
+    Левые письма на ящик — не в TG и не в IncomingMail.
+    """
+    from services.mailing_send_log import has_mailing_send_for_contact
+    from services.email_blacklist import is_email_already_sent
+    from services.offer_storage import normalize_incoming_seller_email
+
+    fe = normalize_incoming_seller_email(from_email) or (from_email or "").strip().lower()
+    if not fe or "@" not in fe or not user_id:
+        return False
+    if await has_mailing_send_for_contact(session, int(user_id), fe):
+        return True
+    if await is_email_already_sent(session, int(user_id), fe):
+        return True
+    return False
+
+
 def _find_spam_mailbox_name(M: imaplib.IMAP4_SSL) -> str | None:
     """Spam/Junk: Gmail `[Gmail]/Spam`, GMX Spam/Junk, и т.п."""
     hardcoded = (
@@ -675,80 +698,68 @@ async def _spam_mail_allowed_for_user(
     from_email: str,
     subject: str,
 ) -> bool:
-    """
-    Из Spam берём только релевантное:
-    - уже писали/получали от этого продавца, или
-    - тема Re:/Aw: (ответ в переписке), или
-    - тема похожа на лот в БД.
-    """
-    from services.offer_storage import normalize_incoming_seller_email
+    """Из Spam — только продавцы с рассылкой у этого user."""
+    _ = account_id, subject
+    return await is_inbound_from_mailed_seller(session, int(user_id), from_email)
 
-    fe = normalize_incoming_seller_email(from_email) or (from_email or "").strip().lower()
-    if not fe or "@" not in fe:
-        return False
 
-    prior = (
-        await session.execute(
-            sa_select(IncomingMail.id)
-            .where(IncomingMail.user_id == int(user_id))
-            .where(func.lower(IncomingMail.from_email) == fe)
-            .limit(1)
-        )
-    ).scalar_one_or_none()
-    if prior:
-        return True
+_SKIP_MAILBOX_SUBSTR = (
+    "draft",
+    "sent",
+    "trash",
+    "bin",
+    "deleted",
+    "junk",
+    "spam",
+    "all mail",
+    "alle nachrichten",
+    "important",
+    "starred",
+    "flagged",
+    "chats",
+    "scheduled",
+    "snoozed",
+    "outbox",
+    "archive",
+)
 
+
+def _list_extra_watch_mailboxes(M: imaplib.IMAP4_SSL, *, spam_box: str | None) -> list[str]:
+    """Доп. папки кроме INBOX/Spam: UNSEEN (не Sent/Trash/All Mail)."""
+    out: list[str] = []
+    spam_l = (spam_box or "").strip().lower()
     try:
-        from models import MailingSendLog
-
-        link = (
-            await session.execute(
-                sa_select(ConversationLink.id)
-                .where(ConversationLink.user_id == int(user_id))
-                .where(func.lower(ConversationLink.from_email) == fe)
-                .limit(1)
-            )
-        ).scalar_one_or_none()
-        if link:
-            return True
-        sent = (
-            await session.execute(
-                sa_select(MailingSendLog.id)
-                .where(MailingSendLog.user_id == int(user_id))
-                .where(func.lower(MailingSendLog.recipient_email) == fe)
-                .limit(1)
-            )
-        ).scalar_one_or_none()
-        if sent:
-            return True
+        typ, data = M.list()
+        if typ != "OK" or not data:
+            return out
+        for raw in data:
+            if not raw:
+                continue
+            line = raw.decode("utf-8", "ignore") if isinstance(raw, bytes) else str(raw)
+            low = line.lower()
+            if "\\noselect" in low:
+                continue
+            m = re.findall(r'"([^"]+)"', line)
+            name = m[-1] if m else line.split()[-1].strip('"')
+            if not name:
+                continue
+            nl = name.lower().replace("\\", "/")
+            if nl == "inbox" or nl.endswith("/inbox"):
+                continue
+            if spam_l and nl == spam_l:
+                continue
+            if any(s in nl for s in _SKIP_MAILBOX_SUBSTR):
+                continue
+            out.append(name)
     except Exception:
-        pass
-
-    subj = (subject or "").strip()
-    low = subj.lower()
-    if low.startswith("re:") or low.startswith("aw:") or low.startswith("sv:"):
-        return True
-
-    subj_norm = _normalize_subject(subj)
-    if len(subj_norm) >= 4:
-        hit = (
-            await session.execute(
-                sa_select(Offer.id)
-                .where(Offer.user_id == int(user_id))
-                .where(Offer.title.ilike(f"%{subj_norm}%"))
-                .limit(1)
-            )
-        ).scalar_one_or_none()
-        if hit:
-            return True
-    return False
+        logger.exception("IMAP LIST mailboxes failed")
+    return out[:12]
 
 
 def _imap_connect_and_select(host: str, port: int, email_addr: str, password: str) -> imaplib.IMAP4_SSL:
     M = imaplib.IMAP4_SSL(host, port, timeout=IMAP_CONNECT_TIMEOUT_SEC)
     M.login(email_addr, password)
 
-    # ✅ читаем только INBOX
     typ, _ = M.select("INBOX")
     if typ != "OK":
         raise RuntimeError("IMAP select INBOX failed")
@@ -828,11 +839,11 @@ def _imap_fetch_new_sync_raw(
     password: str,
     last_uid: Optional[int],
 ) -> tuple[List[Tuple[str, str, str, str, str, str, str]], Optional[int]]:
-    """Fetch new mails from INBOX + Spam/Junk (Gmail/GMX).
+    """Fetch new mails from INBOX + Spam/Junk + other folders (not Sent/Trash/All).
 
     - INBOX: uses UID > last_uid (first run returns empty and sets last_uid=max_uid).
-    - Spam/Junk: fetches UNSEEN only, marks them as \\Seen to avoid repeats,
-      and prefixes uid as 'S:<uid>' so the async layer can filter/handle separately.
+    - Spam/Junk and other folders: UNSEEN only, mark \\Seen; uid prefixes S: / Xn:.
+    - TG/DB whitelist (mailed sellers) is applied in the async processor.
 
     Each mail tuple: (uid, from_email, from_name, subject, date_str, body,
                       rfc_message_id, rfc_in_reply_to, rfc_references)
@@ -949,7 +960,38 @@ def _imap_fetch_new_sync_raw(
                 except Exception:
                     pass
 
-        mails = inbox_mails + spam_mails
+        # --- Other folders (categories / custom): UNSEEN only ---
+        extra_mails: list = []
+        for i, box in enumerate(_list_extra_watch_mailboxes(M, spam_box=spam_box)):
+            try:
+                typ_sel, _ = M.select(box)
+                if typ_sel != "OK":
+                    continue
+                typ_x, data_x = M.uid("search", None, "UNSEEN")
+                if typ_x != "OK" or not data_x or not data_x[0]:
+                    continue
+                xuids = [int(x) for x in data_x[0].split() if x.isdigit()]
+                if not xuids:
+                    continue
+                batch = _fetch_uids(
+                    sorted(xuids)[-DEFAULT_MAX_PER_ACCOUNT:],
+                    uid_prefix=f"X{i}:",
+                )
+                extra_mails.extend(batch)
+                for xu in xuids:
+                    try:
+                        M.uid("store", str(xu), "+FLAGS", r"(\\Seen)")
+                    except Exception:
+                        pass
+            except Exception:
+                logger.exception("IMAP extra folder fetch failed box=%s", box)
+            finally:
+                try:
+                    M.select("INBOX")
+                except Exception:
+                    pass
+
+        mails = inbox_mails + spam_mails + extra_mails
 
         if last_uid is None:
             return mails, (int(max_uid) if max_uid is not None else last_uid)
@@ -2057,11 +2099,18 @@ async def _process_mails_for_account_impl(
             rfc_message_id = ""
         uid_key = uid
         is_spam_box = False
+        is_extra_box = False
         uid_num = None
         if isinstance(uid, str) and uid.startswith("S:"):
             is_spam_box = True
             try:
                 uid_num = int(uid.split(":", 1)[1])
+            except Exception:
+                continue
+        elif isinstance(uid, str) and re.match(r"^X\d+:", uid):
+            is_extra_box = True
+            try:
+                uid_num = int(uid.rsplit(":", 1)[1])
             except Exception:
                 continue
         else:
@@ -2070,22 +2119,6 @@ async def _process_mails_for_account_impl(
             except Exception:
                 continue
 
-        # Spam/Junk: только известные продавцы / Re: / тема лота (не весь спам ящика).
-        if is_spam_box:
-            try:
-                async with _imap_db_session() as _s:
-                    ok_spam = await _spam_mail_allowed_for_user(
-                        _s,
-                        user_id=int(user_id),
-                        account_id=int(acc_id),
-                        from_email=str(from_email or ""),
-                        subject=str(subject or ""),
-                    )
-                if not ok_spam:
-                    continue
-            except Exception:
-                logger.exception("spam allow-check failed acc=%s", acc_id)
-                continue
         # Только явный Gmail block / 5.7.1 — не любой DSN об недоставке получателю.
         smtp_block_bounce = _is_smtp_block_bounce(from_email, subject, body)
         from_email_clean_pre = (from_email or "").strip().lower()
@@ -2094,11 +2127,28 @@ async def _process_mails_for_account_impl(
             and _is_mailer_daemon_notice(from_email_clean_pre, subject or "")
             and _is_recipient_delivery_failure_bounce(subject or "", body or "")
         )
+        mailer_daemon = _is_mailer_daemon_notice(from_email_clean_pre, subject or "")
 
-        if (not is_spam_box) and _looks_like_spam(from_email, from_name, subject, body):
+        # Whitelist: в бот/БД только продавцы с рассылкой у этого user.
+        # Bounce/mailer-daemon пропускаем (блок SMTP / недоставка).
+        if not smtp_block_bounce and not mailer_daemon:
+            try:
+                async with _imap_db_session() as _s:
+                    ok_mailed = await is_inbound_from_mailed_seller(
+                        _s, int(user_id), str(from_email or "")
+                    )
+                if not ok_mailed:
+                    continue
+            except Exception:
+                logger.exception("mailed-seller allow-check failed acc=%s", acc_id)
+                continue
+
+        if (not is_spam_box) and (not is_extra_box) and _looks_like_spam(
+            from_email, from_name, subject, body
+        ):
             continue
 
-        if (not is_spam_box) and _is_automated_system_sender(
+        if (not is_spam_box) and (not is_extra_box) and _is_automated_system_sender(
             from_email_clean_pre, from_name or "", subject or ""
         ):
             continue

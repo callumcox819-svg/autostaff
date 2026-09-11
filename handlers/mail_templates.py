@@ -367,7 +367,7 @@ async def mail_tmpl_send(callback: CallbackQuery, state: FSMContext):
             sender_name = account_sender_display_name(user)
             uid_db = int(user.id)
             inbox_em = getattr(acc, "email", None) or meta.get("account_email") or ""
-            acc_password = account.password or ""
+            acc_password = getattr(acc, "password", None) or ""
             try:
                 session.expunge(acc)
             except Exception:

@@ -65,6 +65,18 @@ def test_threading_falls_back_to_cold_when_no_inbound():
     assert kw["references"] == "<cold@gmail.com>"
 
 
+def test_no_inbound_uses_gmail_parent_not_local_smtp():
+    from services.email_threading import threading_send_kwargs
+
+    kw = threading_send_kwargs(
+        None,
+        outbound_rfc_message_id="<local.1.smtp@gmail.com>",
+        parent_references="<CAFooBar@mail.gmail.com>",
+    )
+    assert kw["in_reply_to"] == "<CAFooBar@mail.gmail.com>"
+    assert "<CAFooBar@mail.gmail.com>" in kw["references"]
+
+
 def test_build_references_header_dedupes():
     assert (
         build_references_header("<a@b.c>", "<a@b.c>", "<d@e.f>")

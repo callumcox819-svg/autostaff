@@ -331,7 +331,11 @@ async def mail_tmpl_send(callback: CallbackQuery, state: FSMContext):
                 return False, "Пользователь не найден", None
             # Тема только Re: исходного треда — иначе Gmail рвёт диалог.
             out_subject = subject
-            from handlers.incoming_mail import _reply_thread_kwargs
+            from handlers.incoming_mail import (
+                _load_incoming_mail_by_id,
+                _load_incoming_mail_for_uid,
+                _reply_thread_kwargs,
+            )
             from services.html_reply import account_sender_display_name
 
             mid = mail_id or meta.get("_mail_id")
@@ -339,12 +343,23 @@ async def mail_tmpl_send(callback: CallbackQuery, state: FSMContext):
                 mid_i = int(mid) if mid else None
             except Exception:
                 mid_i = None
+            mail_row = await _load_incoming_mail_by_id(session, mid_i) if mid_i else None
+            if mail_row is None and acc_id and uid:
+                mail_row = await _load_incoming_mail_for_uid(session, int(acc_id), str(uid))
+            if mail_row:
+                subj_src = (
+                    (mail_row.subject or "").strip()
+                    or (mail_row.outgoing_mail_subject or "").strip()
+                    or subject_orig
+                )
+                out_subject = _reply_subject(subj_src)
             thread_kw = await _reply_thread_kwargs(
                 session,
                 acc_id=int(acc_id),
                 uid=str(uid or ""),
                 mail_id=mid_i,
                 meta=meta,
+                mail_row=mail_row,
                 user_id=int(user.id),
                 to_email=to_email,
                 account_email=(meta.get("account_email") or getattr(acc, "email", None) or ""),

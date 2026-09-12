@@ -49,7 +49,9 @@ def threading_send_kwargs(
 ) -> dict[str, str]:
     """
     Kwargs for SMTP reply:
-    - In-Reply-To = last inbound (seller), else our outbound
+    - In-Reply-To = last inbound (seller). Never our local SMTP id if the
+      seller already named a Gmail parent — Gmail rewrites our Message-ID
+      and that split turns the preset into a new conversation.
     - References = cold outbound + parent chain + inbound (same Gmail thread)
     """
     inbound = normalize_rfc_message_id(inbound_rfc_message_id)
@@ -57,9 +59,15 @@ def threading_send_kwargs(
     parent_parts: list[str | None] = []
     if parent_references:
         parent_parts.extend((parent_references or "").split())
-    if not inbound and not outbound and not any(parent_parts):
+    parent_ids = [normalize_rfc_message_id(p) for p in parent_parts]
+    parent_ids = [p for p in parent_ids if p]
+    if not inbound and not outbound and not parent_ids:
         return {}
-    in_reply_to = inbound or outbound
+    in_reply_to = inbound
+    if not in_reply_to and parent_ids:
+        in_reply_to = parent_ids[-1]
+    if not in_reply_to:
+        in_reply_to = outbound
     refs = build_references_header(outbound, *parent_parts, inbound)
     kw: dict[str, str] = {}
     if in_reply_to:

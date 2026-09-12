@@ -1318,6 +1318,9 @@ def _meta_from_incoming_mail(mail: IncomingMail) -> dict:
         "subject": mail.subject or "",
         "account_email": (mail.account_email or "").strip(),
         "date_str": mail.date_str or "",
+        "rfc_message_id": (getattr(mail, "rfc_message_id", None) or "").strip(),
+        "rfc_in_reply_to": (getattr(mail, "rfc_in_reply_to", None) or "").strip(),
+        "rfc_references": (getattr(mail, "rfc_references", None) or "").strip(),
     }
 
 
@@ -2792,14 +2795,45 @@ async def cb_mail_reply_preset_send(callback: CallbackQuery, state: FSMContext):
             if not acc:
                 return False, "SMTP аккаунт не найден", None
             out_subject = _reply_subject(subject)
+            from services.email_threading import format_gmail_style_reply_body
             from services.html_reply import account_sender_display_name
+            from services.incoming_mail_worker import FULL_BODIES
 
+            meta_now = FULL_META.get((acc_id, mail_uid)) or {}
+            parent_body = ""
+            mail_mid = data.get("mail_id")
+            try:
+                mail_mid_i = int(mail_mid) if mail_mid else None
+            except Exception:
+                mail_mid_i = None
+            m_body = None
+            if mail_mid_i:
+                m_body = await _load_incoming_mail_by_id(session, mail_mid_i)
+            if m_body is None:
+                m_body = await _load_incoming_mail_for_uid(session, int(acc_id), str(mail_uid))
+            if m_body:
+                parent_body = (m_body.body or "").strip()
+                out_subject = _reply_subject(
+                    (m_body.subject or "").strip()
+                    or (m_body.outgoing_mail_subject or "").strip()
+                    or subject
+                )
+            if not parent_body:
+                parent_body = (FULL_BODIES.get((int(acc_id), str(mail_uid))) or "").strip()
+            body_copy = format_gmail_style_reply_body(
+                preset_body,
+                parent_from_name=meta_now.get("from_name"),
+                parent_from_email=to_email,
+                parent_date_str=meta_now.get("date_str"),
+                parent_body=parent_body,
+            )
             thread_kw = await _reply_thread_kwargs(
                 session,
                 acc_id=int(acc_id),
                 uid=str(mail_uid),
-                mail_id=data.get("mail_id"),
-                meta=FULL_META.get((acc_id, mail_uid)),
+                mail_id=mail_mid_i,
+                meta=meta_now,
+                mail_row=m_body,
                 user_id=int(user.id),
                 to_email=to_email,
                 account_email=getattr(acc, "email", None) or account_email,
@@ -2819,7 +2853,7 @@ async def cb_mail_reply_preset_send(callback: CallbackQuery, state: FSMContext):
             acc,
             to_email,
             out_subject,
-            preset_body,
+            body_copy,
             sender_name=sender_name,
             fast=True,
             **thread_kw,
@@ -2900,6 +2934,13 @@ async def _reply_thread_kwargs(
             mid = int(mail_row.id)
         except Exception:
             mid = None
+    if mail_row is None and mid:
+        mail_row = await _load_incoming_mail_by_id(session, mid)
+    if mail_row is None and acc_id and uid:
+        mail_row = await _load_incoming_mail_for_uid(session, acc_id, uid)
+    if mail_row is not None:
+        extra = _meta_from_incoming_mail(mail_row)
+        meta = {**(meta or {}), **{k: v for k, v in extra.items() if v}}
 
     inbound = None
     if mail_row is not None:

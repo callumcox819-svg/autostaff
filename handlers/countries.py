@@ -14,9 +14,7 @@ from database import Session
 from services.enabled_countries import (
     countries_for_settings_ui,
     get_active_country,
-    get_enabled_country_ids,
     set_active_country,
-    set_country_enabled,
 )
 from services.users import get_or_create_user
 from utils.ui_emoji import (
@@ -31,11 +29,11 @@ router = Router(name="countries")
 logger = logging.getLogger(__name__)
 
 
-def _countries_kb(enabled: set[str], active: str) -> InlineKeyboardMarkup:
+def _countries_kb(active: str) -> InlineKeyboardMarkup:
     rows: list[list[InlineKeyboardButton]] = []
     for cid, label, emoji_key in countries_for_settings_ui():
-        on = cid in enabled
-        if cid == active:
+        working = cid == active
+        if working:
             name_btn = toggle_button(True, label, f"country_select:{cid}")
         else:
             name_btn = inline_button(
@@ -46,14 +44,18 @@ def _countries_kb(enabled: set[str], active: str) -> InlineKeyboardMarkup:
         rows.append(
             [
                 name_btn,
-                toggle_button(on, "Вкл" if on else "Выкл", f"country_toggle:{cid}"),
+                toggle_button(
+                    working,
+                    "Вкл" if working else "Выкл",
+                    f"country_toggle:{cid}",
+                ),
             ]
         )
     rows.append([back_inline("settings_open")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def _countries_text(enabled: set[str], active: str) -> str:
+def _countries_text(active: str) -> str:
     names = {cid: label for cid, label, _ in countries_for_settings_ui()}
     active_name = names.get(active, active.upper())
     extra = ""
@@ -64,12 +66,10 @@ def _countries_text(enabled: set[str], active: str) -> str:
         )
     return (
         f"{html_emoji('compass')} <b>Страны</b>\n\n"
-        f"Рабочая: <b>{html.escape(active_name)}</b> — зелёная кнопка слева.\n"
-        f"Пресеты, умные пресеты, темы писем и домены — у рабочей страны.\n"
+        f"Рабочая: <b>{html.escape(active_name)}</b>\n"
+        f"Пресеты, умные пресеты, темы писем и домены — у этой страны.\n"
         f"{extra}\n\n"
-        f"Слева — выбрать рабочую.\n"
-        f"Справа тумблер — показывать страну в Командах API "
-        f"(по умолчанию все включены, это не «рабочая»)."
+        f"Тумблер справа — включить страну. Слева она загорается."
     )
 
 
@@ -83,10 +83,22 @@ async def _edit(callback: CallbackQuery, text: str, kb: InlineKeyboardMarkup) ->
             pass
 
 
-async def _payload(session, user) -> tuple[set[str], str]:
-    enabled = await get_enabled_country_ids(session, user)
-    active = await get_active_country(session, user)
-    return enabled, active
+async def _set_working(callback: CallbackQuery, cid: str) -> None:
+    async with Session() as session:
+        user = await get_or_create_user(session, callback.from_user.id)
+        current = await get_active_country(session, user)
+        if cid == current:
+            await callback.answer(toast("ok", "Уже рабочая"))
+            return
+        try:
+            active = await set_active_country(session, user, cid)
+        except ValueError as e:
+            await callback.answer(toast("fail", str(e)[:180]), show_alert=True)
+            return
+    await _edit(callback, _countries_text(active), _countries_kb(active))
+    from services.country_scope import country_display_name
+
+    await callback.answer(toast("ok", country_display_name(active)))
 
 
 @router.callback_query(F.data == "countries_menu")
@@ -94,8 +106,8 @@ async def countries_menu(callback: CallbackQuery, state: FSMContext) -> None:
     await state.clear()
     async with Session() as session:
         user = await get_or_create_user(session, callback.from_user.id)
-        enabled, active = await _payload(session, user)
-    await _edit(callback, _countries_text(enabled, active), _countries_kb(enabled, active))
+        active = await get_active_country(session, user)
+    await _edit(callback, _countries_text(active), _countries_kb(active))
     await callback.answer()
 
 
@@ -103,35 +115,11 @@ async def countries_menu(callback: CallbackQuery, state: FSMContext) -> None:
 async def country_select(callback: CallbackQuery, state: FSMContext) -> None:
     await state.clear()
     cid = (callback.data or "").split(":", 1)[-1].strip().lower()
-    async with Session() as session:
-        user = await get_or_create_user(session, callback.from_user.id)
-        try:
-            active = await set_active_country(session, user, cid)
-            enabled = await get_enabled_country_ids(session, user)
-        except ValueError as e:
-            await callback.answer(toast("fail", str(e)[:180]), show_alert=True)
-            return
-    await _edit(callback, _countries_text(enabled, active), _countries_kb(enabled, active))
-    from services.country_scope import country_display_name
-
-    await callback.answer(toast("ok", country_display_name(active)))
+    await _set_working(callback, cid)
 
 
 @router.callback_query(F.data.startswith("country_toggle:"))
 async def country_toggle(callback: CallbackQuery, state: FSMContext) -> None:
     await state.clear()
     cid = (callback.data or "").split(":", 1)[-1].strip().lower()
-    async with Session() as session:
-        user = await get_or_create_user(session, callback.from_user.id)
-        enabled = await get_enabled_country_ids(session, user)
-        turning_on = cid not in enabled
-        try:
-            enabled = await set_country_enabled(session, user, cid, turning_on)
-            if turning_on:
-                await set_active_country(session, user, cid)
-            active = await get_active_country(session, user)
-        except ValueError as e:
-            await callback.answer(toast("fail", str(e)[:180]), show_alert=True)
-            return
-    await _edit(callback, _countries_text(enabled, active), _countries_kb(enabled, active))
-    await callback.answer(toast("ok" if turning_on else "fail", "Сохранено"))
+    await _set_working(callback, cid)

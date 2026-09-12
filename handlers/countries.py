@@ -35,14 +35,17 @@ def _countries_kb(enabled: set[str], active: str) -> InlineKeyboardMarkup:
     rows: list[list[InlineKeyboardButton]] = []
     for cid, label, emoji_key in countries_for_settings_ui():
         on = cid in enabled
-        name = f"{label} ✓" if cid == active else label
+        if cid == active:
+            name_btn = toggle_button(True, label, f"country_select:{cid}")
+        else:
+            name_btn = inline_button(
+                emoji_key,
+                label,
+                callback_data=f"country_select:{cid}",
+            )
         rows.append(
             [
-                inline_button(
-                    emoji_key,
-                    name,
-                    callback_data=f"country_select:{cid}",
-                ),
+                name_btn,
                 toggle_button(on, "Вкл" if on else "Выкл", f"country_toggle:{cid}"),
             ]
         )
@@ -61,10 +64,12 @@ def _countries_text(enabled: set[str], active: str) -> str:
         )
     return (
         f"{html_emoji('compass')} <b>Страны</b>\n\n"
-        f"Рабочая: <b>{html.escape(active_name)}</b>\n"
-        f"Пресеты, умные пресеты, темы писем и домены — отдельно для каждой страны.\n"
+        f"Рабочая: <b>{html.escape(active_name)}</b> — зелёная кнопка слева.\n"
+        f"Пресеты, умные пресеты, темы писем и домены — у рабочей страны.\n"
         f"{extra}\n\n"
-        f"Название — выбрать страну · тумблер — вкл/выкл в списке."
+        f"Слева — выбрать рабочую.\n"
+        f"Справа тумблер — показывать страну в Командах API "
+        f"(по умолчанию все включены, это не «рабочая»)."
     )
 
 

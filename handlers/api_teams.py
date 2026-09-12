@@ -182,7 +182,7 @@ def _mask_secret(value: str) -> str:
     return f"{v[:4]}…{v[-4:]}"
 
 
-def _team_detail_text(cfg, *, buyer_name: str = "", address: str = "") -> str:
+def _team_detail_text(cfg, *, buyer_name: str = "", address: str = "", country_name: str = "") -> str:
     lines = [
         f"{html_emoji('key')} <b>{html.escape(cfg.label)}</b>\n",
         f"<b>API-ключ:</b> <code>{html.escape(_mask_secret(cfg.api_key))}</code>",
@@ -201,17 +201,19 @@ def _team_detail_text(cfg, *, buyer_name: str = "", address: str = "") -> str:
         lines.append(f"<b>Код сервиса:</b> <code>{html.escape(cfg.service_code or '—')}</code>")
     lines.append(f"<b>Profile ID:</b> <code>{html.escape(cfg.profile_id or '—')}</code>")
     if cfg.team_id == "evoleum":
+        cc = f" ({html.escape(country_name)})" if country_name else ""
         lines.append(
-            f"<b>ФИО для HTML:</b> <code>{html.escape(buyer_name or '—')}</code>\n"
-            f"<b>Адрес для HTML:</b> <code>{html.escape(address or '—')}</code>\n"
-            "<i>На лендинге ФИО/адрес из Profile ID. В HTML-письме — из этих полей "
-            "(GOO API не отдаёт их наружу).</i>"
+            f"<b>ФИО для HTML{cc}:</b> <code>{html.escape(buyer_name or '—')}</code>\n"
+            f"<b>Адрес для HTML{cc}:</b> <code>{html.escape(address or '—')}</code>\n"
+            "<i>Свои на каждую рабочую страну. В HTML-письме — эти поля. "
+            "На лендинге Evoleum ФИО/адрес из Profile ID.</i>"
         )
     if cfg.team_id == "hustle":
+        cc = f" ({html.escape(country_name)})" if country_name else ""
         lines.append(
-            f"<b>ФИО:</b> <code>{html.escape(buyer_name or '—')}</code>\n"
-            f"<b>Адрес:</b> <code>{html.escape(address or '—')}</code>\n"
-            "<i>Нужны для генерации без ссылки на объявление и для eBay (custom). "
+            f"<b>ФИО{cc}:</b> <code>{html.escape(buyer_name or '—')}</code>\n"
+            f"<b>Адрес{cc}:</b> <code>{html.escape(address or '—')}</code>\n"
+            "<i>Те же поля для генерации ссылки и для HTML этой страны. "
             "Team-ключ — только на сервере: <code>HUSTLE_TEAM_KEY</code>.</i>"
         )
     lines.append(
@@ -373,8 +375,12 @@ async def _evoleum_html_profile_fields(session, user) -> tuple[str, str]:
 
 
 async def _team_detail_payload(session, user, tid: str) -> tuple[object, str]:
+    from services.country_scope import country_display_name
+    from services.enabled_countries import get_active_country
+
     cfg = await get_team_config(session, user, tid)
     buyer = addr = ""
+    cc_name = country_display_name(await get_active_country(session, user))
     if cfg.team_id == "evoleum":
         buyer, addr = await _evoleum_html_profile_fields(session, user)
     elif cfg.team_id == "hustle":
@@ -382,7 +388,7 @@ async def _team_detail_payload(session, user, tid: str) -> tuple[object, str]:
 
         buyer = await get_team_field(session, user, "hustle", "buyer_name")
         addr = await get_team_field(session, user, "hustle", "address")
-    return cfg, _team_detail_text(cfg, buyer_name=buyer, address=addr)
+    return cfg, _team_detail_text(cfg, buyer_name=buyer, address=addr, country_name=cc_name)
 
 
 @router.callback_query(F.data.startswith("api_team_open:"))
@@ -748,14 +754,14 @@ async def api_team_field_save(message: Message, state: FSMContext) -> None:
                     AQUA_PROFILE_NAME_KEY,
                     get_user_goo_profile_id,
                 )
-                from services.user_settings import set_user_setting
+                from services.country_scope import set_scoped_setting
 
                 key = (
                     AQUA_PROFILE_NAME_KEY
                     if field == "buyer_name"
                     else AQUA_PROFILE_ADDRESS_KEY
                 )
-                await set_user_setting(session, user, key, raw)
+                await set_scoped_setting(session, user, key, raw)
                 cfg = await get_team_config(session, user, tid)
                 # Привязка к текущему Profile ID, чтобы HTML не считал ФИО «чужим».
                 if (cfg.profile_id or "").strip():

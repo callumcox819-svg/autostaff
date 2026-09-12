@@ -19,9 +19,14 @@ BACK_FILENAME = "return.html"
 
 
 def html_subdir_for_service(service_code: str | None) -> str | None:
-    if not is_valid_aqua_service(service_code):
+    code = (service_code or "").strip().lower()
+    if not code:
         return None
-    sub = aqua_service_for_html_dir(service_code)
+    if (HTML_ROOT / code / "confirmation.html").is_file():
+        return code
+    if not is_valid_aqua_service(code):
+        return None
+    sub = aqua_service_for_html_dir(code)
     return sub or None
 
 
@@ -61,25 +66,17 @@ async def load_html_for_user(
     from services.aqua_keys import resolve_html_service
 
     raw = (await resolve_html_service(session, user) or "").strip()
-    if not is_valid_aqua_service(raw):
-        return (
-            "",
-            None,
-            "Не выбран сервис с HTML. Выбери площадку в Команды API "
-            "(например Marktplaats → NL) или Профиль → Сервис. "
-            f"Папка: <code>data/{HTML_DATA_DIR}/&lt;service&gt;/</code>.",
-        )
-    sub = html_subdir_for_service(raw)
     p = html_template_path(raw, filename)
     if not p:
-        label = service_label_for_path(sub or raw)
+        sub = html_subdir_for_service(raw)
+        label = service_label_for_path(sub or raw or "—")
         return (
             "",
             sub,
-            f"Шаблон <code>{filename}</code> не найден для сервиса <b>{label}</b> "
+            f"Шаблон <code>{filename}</code> не найден для <b>{label}</b> "
             f"(положи файл в <code>data/{HTML_DATA_DIR}/{label}/</code>).",
         )
     try:
-        return p.read_text(encoding="utf-8"), sub, None
+        return p.read_text(encoding="utf-8"), html_subdir_for_service(raw), None
     except OSError as e:
-        return "", sub, f"Не удалось прочитать шаблон: {e}"
+        return "", html_subdir_for_service(raw), f"Не удалось прочитать шаблон: {e}"

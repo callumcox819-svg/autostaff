@@ -3136,21 +3136,14 @@ async def cb_mail_reply_html_send(callback: CallbackQuery, state: FSMContext):
     async with Session() as session:
         user_pre = await get_or_create_user(session, tg_id)
         from services.aqua_keys import resolve_html_service
-
-        html_svc = await resolve_html_service(session, user_pre)
-        if not is_valid_aqua_service(html_svc):
-            return await callback.answer(
-                f"Сначала выбери площадку с HTML (Команды API) или "
-                f"{menu_path(('settings', ''), ('profile', 'Профиль'))} → Сервис",
-                show_alert=True,
-            )
         from services.html_templates import html_template_path, service_label_for_path
 
-        sub = aqua_service_for_html_dir(html_svc)
+        html_svc = await resolve_html_service(session, user_pre)
         if not html_template_path(html_svc, filename):
-            label = service_label_for_path(sub or html_svc)
+            label = service_label_for_path(html_svc or "—")
             return await callback.answer(
-                f"Нет шаблона {filename} для {label}",
+                f"Нет шаблона {filename} для {label}. "
+                f"Положи файл в data/HTML/{label}/",
                 show_alert=True,
             )
 
@@ -3221,8 +3214,8 @@ async def cb_mail_reply_html_send(callback: CallbackQuery, state: FSMContext):
             if not (ctx.get("BUYER_NAME") or "").strip() or not (ctx.get("ADDRESS") or "").strip():
                 return (
                     False,
-                    "Для HTML заполни ФИО и адрес: Команды API → Evoleum → "
-                    "«ФИО для HTML» и «Адрес для HTML» (как в Profile ID на лендинге).",
+                    "Для HTML заполни ФИО и адрес в Команды API у выбранной команды "
+                    "(Hustle Castle / Evoleum) — для текущей рабочей страны.",
                     None,
                 )
             html_body = await prepare_html_body(_apply_link(raw_html, link), session, user)
@@ -3531,8 +3524,8 @@ async def mail_reply_custom_html(message: Message, state: FSMContext):
             if not (ctx.get("BUYER_NAME") or "").strip() or not (ctx.get("ADDRESS") or "").strip():
                 return (
                     False,
-                    "Для HTML заполни ФИО и адрес: Команды API → Evoleum → "
-                    "«ФИО для HTML» и «Адрес для HTML» (как в Profile ID на лендинге).",
+                    "Для HTML заполни ФИО и адрес в Команды API у выбранной команды "
+                    "(Hustle Castle / Evoleum) — для текущей рабочей страны.",
                     None,
                 )
             html_body = await prepare_html_body(_apply_link(html_text, link), session, user)

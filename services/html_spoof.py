@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+import re
+
 from models import User
 from services.user_settings import get_user_setting
 
 SPOOFING_KEY = "spoofing"
 AQUA_SERVICE_KEY = "aqua_service"
+
+_NICK_RE = re.compile(r"\{\{\s*NICK\s*\}\}", re.I)
 
 
 def html_nick_key_for_service(service: str) -> str:
@@ -24,19 +28,43 @@ async def is_spoofing_enabled(session, user: User) -> bool:
 
 async def get_spoof_display_name(session, user: User) -> str | None:
     """
-    Имя для HTML / поля From, если 🟢 Спуфинг включён и задано в «👤 Имя для спуфинга».
-    Иначе None — обычная отправка без подмены имени.
+    Имя для HTML From и {{NICK}}: «Имя для спуфинга» при включённом спуфинге.
+    Не путать с ФИО покупателя (BUYER_NAME) и именем отправителя аккаунта.
     """
     if not await is_spoofing_enabled(session, user):
         return None
-    from services.aqua_keys import aqua_service_for_html_dir, get_user_aqua_service
+    from services.aqua_keys import aqua_service_for_html_dir, get_user_aqua_service, resolve_html_service
 
-    service = aqua_service_for_html_dir(await get_user_aqua_service(session, user))
-    nick = (await get_user_setting(session, user, html_nick_key_for_service(service)) or "").strip()
-    return nick or None
+    keys: list[str] = []
+    seen: set[str] = set()
+
+    def _add(key: str) -> None:
+        if key and key not in seen:
+            seen.add(key)
+            keys.append(key)
+
+    try:
+        html_svc = aqua_service_for_html_dir(await resolve_html_service(session, user))
+        if html_svc:
+            _add(html_nick_key_for_service(html_svc))
+    except Exception:
+        pass
+    try:
+        aqua = aqua_service_for_html_dir(await get_user_aqua_service(session, user))
+        if aqua:
+            _add(html_nick_key_for_service(aqua))
+    except Exception:
+        pass
+    _add("html_nick")
+
+    for key in keys:
+        nick = (await get_user_setting(session, user, key) or "").strip()
+        if nick:
+            return nick
+    return None
 
 
 def apply_nick_to_html(html: str, nick: str | None) -> str:
     if not nick:
         return html
-    return html.replace("{{NICK}}", nick)
+    return _NICK_RE.sub(nick, html)

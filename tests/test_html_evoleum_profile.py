@@ -3,6 +3,8 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from services.html_reply import _format_eur_price, _pick_non_zero_price, build_offer_html_ctx
+from services.html_spoof import apply_nick_to_html
+from services.placeholders import apply_placeholders
 
 
 class HtmlPriceFormatTests(unittest.TestCase):
@@ -17,6 +19,16 @@ class HtmlPriceFormatTests(unittest.TestCase):
 
     def test_pick_prefers_nonzero(self):
         self.assertEqual(_pick_non_zero_price("0 €", "55.00 EUR"), "EUR 55.00")
+
+
+class HtmlSpoofNickTests(unittest.TestCase):
+    def test_nick_in_html_and_from_placeholders(self):
+        html = "<p>Hi {{NICK}}</p><p>Koper: {{BUYER_NAME}}</p>"
+        out = apply_nick_to_html(html, "Lisa Support")
+        out = apply_placeholders(out, ctx={"BUYER_NAME": "Maria", "NICK": "Lisa Support"})
+        self.assertIn("Lisa Support", out)
+        self.assertIn("Maria", out)
+        self.assertNotIn("{{NICK}}", out)
 
 
 class HtmlCtxBuyerTests(unittest.IsolatedAsyncioTestCase):
@@ -41,14 +53,21 @@ class HtmlCtxBuyerTests(unittest.IsolatedAsyncioTestCase):
         exec_offer.scalars.return_value.first.return_value = offer
         session.execute = AsyncMock(return_value=exec_offer)
 
-        with patch(
-            "services.aqua_keys.resolve_html_buyer_profile",
-            new=AsyncMock(return_value=("Maria Zeglier", "Keizersgracht 1, Amsterdam")),
+        with (
+            patch(
+                "services.aqua_keys.resolve_html_buyer_profile",
+                new=AsyncMock(return_value=("Maria Zeglier", "Keizersgracht 1, Amsterdam")),
+            ),
+            patch(
+                "services.html_reply.get_spoof_display_name",
+                new=AsyncMock(return_value="Marktplaats Support"),
+            ),
         ):
             ctx = await build_offer_html_ctx(
                 session, 1, "seller@hotmail.com", link="https://x.test/l", mail=mail
             )
         self.assertEqual(ctx["BUYER_NAME"], "Maria Zeglier")
+        self.assertEqual(ctx["NICK"], "Marktplaats Support")
         self.assertIn("Amsterdam", ctx["ADDRESS"])
         self.assertEqual(ctx["ITEM_TITLE"], "Philips 3200")
         self.assertIn("55", ctx["PRICE"])
@@ -78,6 +97,30 @@ class HtmlCtxBuyerTests(unittest.IsolatedAsyncioTestCase):
             name, addr = await resolve_html_buyer_profile(session, user)
         self.assertEqual(name, "")
         self.assertEqual(addr, "")
+
+    async def test_hustle_html_uses_team_name_address(self):
+        from services.aqua_keys import resolve_html_buyer_profile
+
+        session = AsyncMock()
+        user = SimpleNamespace(id=1)
+        cfg = SimpleNamespace(team_id="hustle", profile_id="")
+
+        async def _field(_s, _u, _tid, field):
+            return {"buyer_name": "Anna Gremlis", "address": "Musterstraße 12, Berlin"}.get(field, "")
+
+        with (
+            patch(
+                "services.api_teams.get_selected_team_config",
+                new=AsyncMock(return_value=cfg),
+            ),
+            patch(
+                "services.api_teams.get_team_field",
+                new=_field,
+            ),
+        ):
+            name, addr = await resolve_html_buyer_profile(session, user)
+        self.assertEqual(name, "Anna Gremlis")
+        self.assertIn("Berlin", addr)
 
 
 if __name__ == "__main__":

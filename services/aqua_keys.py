@@ -121,24 +121,39 @@ async def get_user_aqua_service(session, user: User) -> str:
 
 
 async def resolve_html_service(session, user: User) -> str:
-    """
-    HTML только из папки выбранной площадки:
-    1) service_code выбранной команды API (CSM/Evoleum), если есть data/HTML/<code>/
-    2) иначе aqua_service из профиля
-    Verify (*_verify_all) HTML не использует — остаётся профиль.
-    """
+    """HTML-папка: рабочая страна + площадка команды (ebay_de / marktplaats_nl)."""
+    from services.country_scope import force_germany_ebay_service
+    from services.enabled_countries import get_active_country
+
+    cc = "nl"
+    svc = ""
+    try:
+        cc = await get_active_country(session, user) or "nl"
+    except Exception:
+        pass
     try:
         from services.api_teams import get_selected_team_config
         from services.csm_catalog import is_verify_service
 
         cfg = await get_selected_team_config(session, user)
         sc = (cfg.service_code or "").strip().lower()
-        if sc and not is_verify_service(sc):
-            n = normalize_aqua_service(sc)
-            if n:
-                return n
+        if cc == "de" and sc and not is_verify_service(sc):
+            sc = force_germany_ebay_service(cfg.team_id, sc)
+        svc = sc
     except Exception:
         pass
+
+    candidates: list[str] = []
+    for raw in (svc, f"marktplaats_{cc}", cc, "marktplaats_nl"):
+        code = (raw or "").strip().lower()
+        if code and code not in candidates:
+            candidates.append(code)
+    for code in candidates:
+        if _html_confirmation_exists(code):
+            return code
+        n = normalize_aqua_service(code)
+        if n and _html_confirmation_exists(n):
+            return n
     return await get_user_aqua_service(session, user)
 
 
@@ -237,10 +252,20 @@ async def get_user_profile_title(session, user: User) -> str:
 
 
 async def get_user_profile_buyer_name(session, user: User) -> str:
+    from services.country_scope import get_scoped_setting
+
+    val = (await get_scoped_setting(session, user, AQUA_PROFILE_NAME_KEY) or "").strip()
+    if val:
+        return val
     return (await get_user_setting(session, user, AQUA_PROFILE_NAME_KEY) or "").strip()
 
 
 async def get_user_profile_address(session, user: User) -> str:
+    from services.country_scope import get_scoped_setting
+
+    val = (await get_scoped_setting(session, user, AQUA_PROFILE_ADDRESS_KEY) or "").strip()
+    if val:
+        return val
     return (await get_user_setting(session, user, AQUA_PROFILE_ADDRESS_KEY) or "").strip()
 
 
@@ -288,29 +313,28 @@ async def get_user_aqua_profile_display(session, user: User) -> str:
 
 async def resolve_html_buyer_profile(session, user: User) -> tuple[str, str]:
     """
-    Имя и адрес покупателя для HTML.
-
-    GOO не отдаёт ФИО/адрес по Profile ID через публичный generate API
-    (list-профилей 404) — они есть только на лендинге. Для HTML нужны
-    поля «ФИО / Адрес» в Evoleum (те же, что в профиле GOO).
+    ФИО/адрес в HTML — те же поля, что для генерации ссылки выбранной команды
+    и текущей рабочей страны.
     """
-    from services.api_teams import get_selected_team_config
+    from services.api_teams import get_selected_team_config, get_team_field
 
-    name = await get_user_profile_buyer_name(session, user)
-    address = await get_user_profile_address(session, user)
     try:
         cfg = await get_selected_team_config(session, user)
     except Exception:
         cfg = None
 
+    if cfg and cfg.team_id == "hustle":
+        name = (await get_team_field(session, user, "hustle", "buyer_name") or "").strip()
+        address = (await get_team_field(session, user, "hustle", "address") or "").strip()
+        return name, address
+
+    name = await get_user_profile_buyer_name(session, user)
+    address = await get_user_profile_address(session, user)
     if cfg and cfg.team_id == "evoleum":
         pid = (cfg.profile_id or "").strip()
         bound = get_user_goo_profile_id(user)
-        # Если Profile ID сменили, а ФИО не обновили — не подставляем чужое.
         if pid and bound and bound != pid:
             return "", ""
-        return (name or "").strip(), (address or "").strip()
-
     return (name or "").strip(), (address or "").strip()
 
 

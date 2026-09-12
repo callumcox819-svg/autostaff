@@ -170,10 +170,13 @@ async def build_offer_html_ctx(
 
     buyer_name = ""
     address = ""
+    nick = ""
     try:
         user = await session.get(User, int(user_id))
         if user:
             buyer_name, address = await resolve_html_buyer_profile(session, user)
+            spoof = await get_spoof_display_name(session, user)
+            nick = (spoof or "").strip()
     except Exception:
         pass
 
@@ -183,6 +186,7 @@ async def build_offer_html_ctx(
         "IMAGE_URL": photo,
         "SELLER_EMAIL": _canon_email(seller_email),
         "BUYER_NAME": buyer_name,
+        "NICK": nick,
         "ADDRESS": address,
         "DATE": datetime.now().strftime("%d/%m/%Y"),
         "LINK": (link or "").strip(),

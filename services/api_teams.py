@@ -99,15 +99,25 @@ async def set_selected_team_id(session, user: User, team_id: str) -> str:
     return tid
 
 
+_COUNTRY_PROFILE_FIELDS = frozenset({"buyer_name", "address"})
+
+
 async def get_team_field(session, user: User, team_id: str, field: str) -> str:
     tid = normalize_team_id(team_id) or ""
     if not tid:
         return ""
+    if field in _COUNTRY_PROFILE_FIELDS:
+        from services.country_scope import get_scoped_setting
+
+        val = (await get_scoped_setting(session, user, _sk(tid, field)) or "").strip()
+        if val:
+            return val
+        return (await get_user_setting(session, user, _sk(tid, field)) or "").strip()
     val = (await get_user_setting(session, user, _sk(tid, field)) or "").strip()
     if val:
         return val
     if field == "service_code":
-                return default_service_for_team(tid)
+        return default_service_for_team(tid)
     if field == "link_type":
         return default_type_for_team(tid)
     return ""
@@ -130,6 +140,11 @@ async def set_team_field(session, user: User, team_id: str, field: str, value: s
         value = clean_secret(value)
     else:
         value = (value or "").strip()
+    if field in _COUNTRY_PROFILE_FIELDS:
+        from services.country_scope import set_scoped_setting
+
+        await set_scoped_setting(session, user, _sk(tid, field), value)
+        return
     await set_user_setting(session, user, _sk(tid, field), value)
     if tid == "evoleum" and field == "profile_id":
         from services.aqua_keys import bind_evoleum_profile_id

@@ -282,8 +282,10 @@ async def mail_tmpl_send(callback: CallbackQuery, state: FSMContext):
     if not body:
         return await callback.answer("Пустой шаблон", show_alert=True)
 
+    from handlers.incoming_mail import _reply_subject
+
     subject_orig = (meta.get("subject") or "").strip()
-    subject = _safe_re_subject(subject_orig)
+    subject = _reply_subject(subject_orig)
     tg_id = callback.from_user.id
     body_copy = body
     try:

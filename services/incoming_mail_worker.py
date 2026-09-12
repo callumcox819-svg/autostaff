@@ -808,27 +808,44 @@ def _decode_mime_words(s: str) -> str:
         return s
 
 
-def _extract_text_from_msg(msg: email.message.Message) -> str:
-    if msg.is_multipart():
-        parts = []
-        for part in msg.walk():
-            ctype = part.get_content_type()
-            disp = (part.get("Content-Disposition") or "").lower()
-            if ctype in ("text/plain", "text/html") and "attachment" not in disp:
-                payload = part.get_payload(decode=True) or b""
-                charset = part.get_content_charset() or "utf-8"
-                try:
-                    txt = payload.decode(charset, errors="ignore")
-                except Exception:
-                    txt = payload.decode("utf-8", errors="ignore")
-                parts.append(txt)
-        return "\n\n".join(parts).strip()
-    payload = msg.get_payload(decode=True) or b""
-    charset = msg.get_content_charset() or "utf-8"
+def _decode_part_text(part: email.message.Message) -> str:
+    payload = part.get_payload(decode=True) or b""
+    charset = part.get_content_charset() or "utf-8"
     try:
-        return payload.decode(charset, errors="ignore").strip()
+        return payload.decode(charset, errors="ignore")
     except Exception:
-        return payload.decode("utf-8", errors="ignore").strip()
+        return payload.decode("utf-8", errors="ignore")
+
+
+def _extract_text_from_msg(msg: email.message.Message) -> str:
+    """Один текст: text/plain предпочтительнее HTML (иначе Gmail дублирует ответ+цитату)."""
+    plains: list[str] = []
+    htmls: list[str] = []
+    if msg.is_multipart():
+        for part in msg.walk():
+            if part.get_content_maintype() == "multipart":
+                continue
+            disp = (part.get("Content-Disposition") or "").lower()
+            if "attachment" in disp:
+                continue
+            ctype = part.get_content_type()
+            txt = _decode_part_text(part)
+            if ctype == "text/plain":
+                plains.append(txt)
+            elif ctype == "text/html":
+                htmls.append(txt)
+    else:
+        ctype = msg.get_content_type()
+        txt = _decode_part_text(msg)
+        if ctype == "text/html":
+            htmls.append(txt)
+        else:
+            plains.append(txt)
+    if plains:
+        return "\n\n".join(p.strip() for p in plains if p.strip()).strip()
+    if htmls:
+        return _strip_html_to_text("\n\n".join(htmls)).strip()
+    return ""
 
 
 def _imap_fetch_new_sync_raw(
@@ -1096,6 +1113,7 @@ def _extract_reply_only_preview(raw: str) -> str:
     markers = [
         "\nOn ", "On ",
         "\nAm ", "Am ",
+        "\nOp ", "Op ",
         "\nLe ", "Le ",
         "\n-----Original Message-----",
         "\nFrom:",
@@ -1127,7 +1145,13 @@ def _extract_reply_only_preview(raw: str) -> str:
             l = line.strip()
             if not l:
                 continue
-            if (" schrieb" in l.lower()) or (" wrote" in l.lower()) or ("original message" in l.lower()):
+            if (
+                (" schrieb" in l.lower())
+                or (" wrote" in l.lower())
+                or (" schreef" in l.lower())
+                or (" a écrit" in l.lower())
+                or ("original message" in l.lower())
+            ):
                 start_idx = i + 1
                 break
             if l.startswith(">"):
@@ -2251,25 +2275,6 @@ async def _process_mails_for_account_impl(
                     await session.flush()
                     mail_db_id = int(existing.id)
 
-                    if not smtp_block_bounce and not mailer_daemon:
-                        try:
-                            from services.email_threading import absorb_inbound_thread_hints
-
-                            await absorb_inbound_thread_hints(
-                                session,
-                                user_id=int(user_id),
-                                inbox_email=inbox_email_clean,
-                                contact_email=from_email_clean,
-                                inbound_message_id=rfc_mid_clean or None,
-                                in_reply_to=rfc_irt_clean or None,
-                                references=rfc_refs_clean or None,
-                            )
-                        except Exception:
-                            logger.exception(
-                                "absorb inbound thread hints failed mail_id=%s",
-                                mail_db_id,
-                            )
-
                     try:
                         from services.incoming_lead_resolve import resolve_offer_for_incoming_lead
                         from services.offer_storage import normalize_incoming_seller_email
@@ -2334,6 +2339,41 @@ async def _process_mails_for_account_impl(
                             acc_id,
                             uid_key,
                         )
+
+                    if not smtp_block_bounce and not mailer_daemon:
+                        try:
+                            from models import MailingSendLog
+                            from services.email_threading import absorb_inbound_thread_hints
+
+                            mailed_rcpt = None
+                            if resolved_offer_id:
+                                mailed_rcpt = (
+                                    await session.execute(
+                                        sa_select(MailingSendLog.recipient_email)
+                                        .where(MailingSendLog.user_id == int(user_id))
+                                        .where(MailingSendLog.offer_id == int(resolved_offer_id))
+                                        .order_by(
+                                            MailingSendLog.sent_at.desc(),
+                                            MailingSendLog.id.desc(),
+                                        )
+                                        .limit(1)
+                                    )
+                                ).scalar_one_or_none()
+                            await absorb_inbound_thread_hints(
+                                session,
+                                user_id=int(user_id),
+                                inbox_email=inbox_email_clean,
+                                contact_email=from_email_clean,
+                                inbound_message_id=rfc_mid_clean or None,
+                                in_reply_to=rfc_irt_clean or None,
+                                references=rfc_refs_clean or None,
+                                mailing_recipient=(str(mailed_rcpt).strip() if mailed_rcpt else None),
+                            )
+                        except Exception:
+                            logger.exception(
+                                "absorb inbound thread hints failed mail_id=%s",
+                                mail_db_id,
+                            )
 
                     await _db_commit_retry(session)
 

@@ -375,6 +375,69 @@ async def merge_dialog_references(
     await session.flush()
 
 
+def thread_contact_aliases(*emails: str | None) -> list[str]:
+    """Рассылка могла уйти на MP-ящик, ответ прийти с Gmail — оба адреса один диалог."""
+    from services.offer_storage import normalize_incoming_seller_email
+
+    out: list[str] = []
+    seen: set[str] = set()
+    for raw in emails:
+        n = normalize_incoming_seller_email(raw) or (raw or "").strip().lower()
+        if not n or "@" not in n or n in seen:
+            continue
+        seen.add(n)
+        out.append(n)
+    return out
+
+
+async def alias_dialog_thread(
+    session,
+    *,
+    user_id: int,
+    inbox_email: str,
+    source_contact: str,
+    dest_contact: str,
+    extra_references: str | None = None,
+    cold_message_id: str | None = None,
+) -> None:
+    """Перенести якорь треда с адреса рассылки на From ответа продавца."""
+    src = (source_contact or "").strip().lower()
+    dst = (dest_contact or "").strip().lower()
+    if not user_id or not src or not dst or src == dst:
+        return
+    last_src, refs_src = await load_dialog_thread_state(
+        session,
+        user_id=int(user_id),
+        inbox_email=inbox_email,
+        contact_email=src,
+    )
+    last_dst, refs_dst = await load_dialog_thread_state(
+        session,
+        user_id=int(user_id),
+        inbox_email=inbox_email,
+        contact_email=dst,
+    )
+    chain = build_references_header(
+        *((refs_src or "").split() if refs_src else []),
+        *((refs_dst or "").split() if refs_dst else []),
+        *((extra_references or "").split() if extra_references else []),
+        last_src,
+        last_dst,
+        cold_message_id,
+    )
+    anchor = normalize_rfc_message_id(cold_message_id) or last_src or last_dst
+    if not anchor and not chain:
+        return
+    await remember_dialog_outbound(
+        session,
+        user_id=int(user_id),
+        inbox_email=inbox_email,
+        contact_email=dst,
+        outbound_message_id=anchor,
+        references_header=chain,
+    )
+
+
 async def absorb_inbound_thread_hints(
     session,
     *,
@@ -384,19 +447,20 @@ async def absorb_inbound_thread_hints(
     inbound_message_id: str | None,
     in_reply_to: str | None,
     references: str | None,
+    mailing_recipient: str | None = None,
 ) -> None:
     """
     Ответ продавца знает реальный Message-ID нашей рассылки (In-Reply-To).
     Gmail иногда переписывает MID при SMTP — подменяем журнал на тот, что видит продавец.
+    Если From ≠ адрес из /send — склеиваем оба контакта в один тред.
     """
     from sqlalchemy import func, or_, select
 
     from models import MailingSendLog
-    from services.offer_storage import normalize_incoming_seller_email
 
-    contact = normalize_incoming_seller_email(contact_email) or (contact_email or "").strip().lower()
+    aliases = thread_contact_aliases(contact_email, mailing_recipient)
     inbox = (inbox_email or "").strip().lower()
-    if not user_id or not contact:
+    if not user_id or not aliases:
         return
 
     irt = normalize_rfc_message_id(in_reply_to)
@@ -407,54 +471,75 @@ async def absorb_inbound_thread_hints(
         inbound,
     )
     if inbox and ref_chain:
-        await merge_dialog_references(
-            session,
-            user_id=int(user_id),
-            inbox_email=inbox,
-            contact_email=contact,
-            references_header=ref_chain,
-        )
+        for em in aliases:
+            await merge_dialog_references(
+                session,
+                user_id=int(user_id),
+                inbox_email=inbox,
+                contact_email=em,
+                references_header=ref_chain,
+            )
 
-    # Реальный MID холодного = In-Reply-To (или первый id в References).
     cold_hint = irt
     if not cold_hint and references:
         parts = [normalize_rfc_message_id(p) for p in (references or "").split()]
         parts = [p for p in parts if p]
         if parts:
             cold_hint = parts[0]
-    if not cold_hint:
-        return
 
-    raw = (contact_email or "").strip().lower()
-    conds = [func.lower(MailingSendLog.recipient_email) == contact]
-    if raw and raw != contact:
-        conds.append(func.lower(MailingSendLog.recipient_email) == raw)
-    logs = (
-        await session.execute(
-            select(MailingSendLog)
-            .where(MailingSendLog.user_id == int(user_id))
-            .where(or_(*conds))
-            .order_by(MailingSendLog.sent_at.desc(), MailingSendLog.id.desc())
-            .limit(10)
+    inbound_ids = {
+        (normalize_rfc_message_id(p) or "").lower()
+        for p in (
+            *((references or "").split() if references else []),
+            irt,
         )
-    ).scalars().all()
-    matched = list(logs)
-    if inbox:
-        same_inbox = [
-            r for r in logs if (r.from_account_email or "").strip().lower() == inbox
-        ]
-        if same_inbox:
-            matched = same_inbox
+        if p
+    }
+    inbound_ids.discard("")
 
-    for log in matched:
-        cur = normalize_rfc_message_id(getattr(log, "rfc_message_id", None))
-        if cur and cur.lower() == cold_hint.lower():
-            return
-        log.rfc_message_id = cold_hint[:512]
-        if inbox and not (log.from_account_email or "").strip():
-            log.from_account_email = inbox[:255]
-        await session.flush()
-        return
+    if cold_hint:
+        conds = [func.lower(MailingSendLog.recipient_email) == em for em in aliases]
+        logs = (
+            await session.execute(
+                select(MailingSendLog)
+                .where(MailingSendLog.user_id == int(user_id))
+                .where(or_(*conds))
+                .order_by(MailingSendLog.sent_at.desc(), MailingSendLog.id.desc())
+                .limit(20)
+            )
+        ).scalars().all()
+        matched = list(logs)
+        if inbox:
+            same_inbox = [
+                r for r in logs if (r.from_account_email or "").strip().lower() == inbox
+            ]
+            if same_inbox:
+                matched = same_inbox
+
+        for log in matched:
+            cur = normalize_rfc_message_id(getattr(log, "rfc_message_id", None))
+            if cur and cur.lower() == cold_hint.lower():
+                break
+            if cur and cur.lower() in inbound_ids and cur.lower() != (inbound or "").lower():
+                break
+            log.rfc_message_id = cold_hint[:512]
+            if inbox and not (log.from_account_email or "").strip():
+                log.from_account_email = inbox[:255]
+            await session.flush()
+            break
+
+    mailed = thread_contact_aliases(mailing_recipient)
+    reply_from = thread_contact_aliases(contact_email)
+    if inbox and mailed and reply_from and mailed[0] != reply_from[0]:
+        await alias_dialog_thread(
+            session,
+            user_id=int(user_id),
+            inbox_email=inbox,
+            source_contact=mailed[0],
+            dest_contact=reply_from[0],
+            extra_references=ref_chain,
+            cold_message_id=cold_hint,
+        )
 
 
 def threading_send_kwargs_for_dialog(
@@ -507,7 +592,12 @@ def format_gmail_style_reply_body(
     for ln in parent.split("\n"):
         if ln.startswith(">"):
             continue
-        if re.match(r"^(On .+ wrote:|Am .+ schrieb .+|[-_]{2,}\s*Original Message)", ln, re.I):
+        if re.match(
+            r"^(On .+ wrote:|Am .+ schrieb .+|Op .+ schreef .+|Le .+ a écrit|"
+            r"[-_]{2,}\s*Original Message)",
+            ln.strip(),
+            re.I,
+        ):
             break
         if re.match(r"^(пн|вт|ср|чт|пт|сб|вс|mon|tue|wed|thu|fri|sat|sun).{0,40}пиш", ln, re.I):
             break

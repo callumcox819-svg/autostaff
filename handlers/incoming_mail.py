@@ -2857,10 +2857,14 @@ async def cb_mail_reply_preset_send(callback: CallbackQuery, state: FSMContext):
 def _reply_subject(subject: str) -> str:
     from services.subject_offer import sanitize_email_subject
 
-    subj_norm = sanitize_email_subject(
-        re.sub(r"^(re|aw|fw|fwd)\s*:\s*", "", (subject or ""), flags=re.I)
-    )
-    out = f"Re: {subj_norm}" if subj_norm else "Re:"
+    s = sanitize_email_subject(subject or "")
+    prefix = re.compile(r"^(re|aw|fw|fwd|sv|antw)\s*:\s*", re.I)
+    while True:
+        nxt = prefix.sub("", s).strip()
+        if nxt == s:
+            break
+        s = nxt
+    out = f"Re: {s}" if s else "Re:"
     return sanitize_email_subject(out)
 
 

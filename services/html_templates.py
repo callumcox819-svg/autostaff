@@ -16,11 +16,6 @@ HTML_ROOT = Path("data") / HTML_DATA_DIR
 GO_FILENAME = "confirmation.html"
 GO_NEW_FILENAME = "confirmation_new.html"
 BACK_FILENAME = "back.html"
-# BACK: back.html, иначе старое имя return.html
-_FILE_ALIASES: dict[str, tuple[str, ...]] = {
-    "back.html": ("back.html", "return.html"),
-    "return.html": ("return.html", "back.html"),
-}
 
 
 def html_subdir_for_service(service_code: str | None) -> str | None:
@@ -39,12 +34,8 @@ def html_template_path(service_code: str | None, filename: str) -> Path | None:
     sub = html_subdir_for_service(service_code)
     if not sub:
         return None
-    names = _FILE_ALIASES.get(filename, (filename,))
-    for name in names:
-        p = HTML_ROOT / sub / name
-        if p.is_file():
-            return p
-    return None
+    p = HTML_ROOT / sub / filename
+    return p if p.is_file() else None
 
 
 def list_html_templates_for_service(service_code: str | None) -> list[str]:

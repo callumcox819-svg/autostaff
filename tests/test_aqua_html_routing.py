@@ -35,7 +35,6 @@ class AquaHtmlRoutingTests(unittest.TestCase):
             self.assertTrue(ht.html_template_path("ebay_de", "confirmation.html"))
             self.assertEqual(ht.html_subdir_for_service("ebay_de"), "ebay_de")
             self.assertTrue(ht.html_template_path("ebay_de", "back.html"))
-            self.assertTrue(ht.html_template_path("ebay_de", "return.html"))
             self.assertTrue(ht.html_template_path("ebay_de", "confirmation_new.html"))
             # чужой сервис без папки — не валиден
             self.assertIsNone(ak.normalize_aqua_service("kleinanzeigen_de"))

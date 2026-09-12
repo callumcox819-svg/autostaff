@@ -1223,6 +1223,7 @@ _MARKETPLACE_SERVICE_RULES: tuple[tuple[str, str, str], ...] = (
     ("tutti.ch", "tutti.ch", "tutti_ch"),
     ("kleinanzeigen.de", "Kleinanzeigen", "kleinanzeigen_de"),
     ("ebay-kleinanzeigen", "Kleinanzeigen", "kleinanzeigen_de"),
+    ("ebay.de", "eBay", "ebay_de"),
     ("2dehands.be", "2dehands.be", "2dehands_be"),
     ("2ememain.be", "2dehands.be", "2dehands_be"),
     ("link.marktplaats.nl", "marktplaats.nl", "marktplaats_nl"),

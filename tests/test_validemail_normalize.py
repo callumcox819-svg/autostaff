@@ -375,6 +375,13 @@ class ValidEmailNormalizeTests(unittest.TestCase):
         ):
             self.assertEqual(_validemail_api_timeout(), 8)
 
+    def test_gmx_mailbox_helper(self):
+        from services.validemail_fast import _is_gmx_mailbox
+
+        self.assertTrue(_is_gmx_mailbox("max@gmx.de"))
+        self.assertTrue(_is_gmx_mailbox("max@web.de"))
+        self.assertFalse(_is_gmx_mailbox("max@gmail.com"))
+
 
 if __name__ == "__main__":
     unittest.main()

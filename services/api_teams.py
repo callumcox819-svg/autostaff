@@ -1,4 +1,4 @@
-"""Команды API: CSM / Evoleum — выбор и поля для генерации."""
+"""Команды API: CSM / Evoleum / Hustle Castle — выбор и поля для генерации."""
 
 from __future__ import annotations
 
@@ -15,6 +15,7 @@ SELECTED_TEAM_KEY = "api_team_selected"
 API_TEAMS: tuple[tuple[str, str], ...] = (
     ("csm", "CSM"),
     ("evoleum", "Evoleum"),
+    ("hustle", "Hustle Castle"),
 )
 
 _TEAM_IDS = {tid for tid, _ in API_TEAMS}
@@ -59,6 +60,8 @@ def normalize_team_id(raw: str | None) -> str | None:
         return s
     if s in {"evollum", "evoleum_nl", "evolium"}:
         return "evoleum"
+    if s in {"hustle_castle", "hustlecastle", "incore", "inc-core", "inc_core", "inccore"}:
+        return "hustle"
     return None
 
 
@@ -71,6 +74,8 @@ def default_service_for_team(team_id: str) -> str:
         return "marktplaats_nl"
     if team_id == "csm":
         return "marktplaats_nl"
+    if team_id == "hustle":
+        return "kleinanzeigen_de"
     return ""
 
 
@@ -132,13 +137,21 @@ async def set_team_field(session, user: User, team_id: str, field: str, value: s
         await bind_evoleum_profile_id(session, user, value)
 
 
+def _team_key_for(team_id: str) -> str:
+    if team_id == "hustle":
+        from services.hustle_network import hustle_team_key
+
+        return hustle_team_key()
+    return get_global_aqua_team_key()
+
+
 async def get_team_config(session, user: User, team_id: str) -> ApiTeamConfig:
     tid = normalize_team_id(team_id) or (team_id or "").strip().lower()
     return ApiTeamConfig(
         team_id=tid,
         label=team_label(tid),
         api_key=await get_team_field(session, user, tid, "api_key"),
-        team_key=get_global_aqua_team_key(),
+        team_key=_team_key_for(tid),
         service_code=await get_team_field(session, user, tid, "service_code"),
         profile_id=await get_team_field(session, user, tid, "profile_id"),
         link_type=await get_team_field(session, user, tid, "link_type") or "lk",

@@ -31,6 +31,10 @@ class Work88InboundPickTests(unittest.IsolatedAsyncioTestCase):
             "Kleinanzeigen",
         )
         self.assertEqual(
+            marketplace_service_label_from_link("https://www.ebay.de/itm/123"),
+            "eBay",
+        )
+        self.assertEqual(
             marketplace_service_label_from_link("https://www.ricardo.ch/de/a/1/"),
             "ricardo.ch",
         )

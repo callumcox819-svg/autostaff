@@ -21,6 +21,7 @@ DEFAULT_VALIDATION_DOMAINS: tuple[str, ...] = (
     "outlook.com",
     "yahoo.com",
     "icloud.com",
+    "gmx.de",
     "gmx.net",
     "web.de",
     "me.com",

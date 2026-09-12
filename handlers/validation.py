@@ -599,6 +599,17 @@ async def _run_validation_pipeline_inner(
 
         pr = [str(x or "").strip().lower() for x in priority_list if str(x or "").strip()]
         domains = merge_validation_domains(pr + db_domains)
+        if not pr:
+            try:
+                from services.api_teams import get_selected_team_config
+
+                team_cfg = await get_selected_team_config(session, user)
+                sc = (team_cfg.service_code or "").strip().lower()
+                if sc.endswith("_de"):
+                    de_mail = ["gmx.de", "web.de", "gmx.net", "t-online.de"]
+                    domains = merge_validation_domains(de_mail + domains)
+            except Exception:
+                pass
         if not domains:
             from region import DEFAULT_VALIDATION_DOMAINS
 

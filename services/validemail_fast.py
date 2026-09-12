@@ -39,6 +39,42 @@ _DEFINITIVE_BAD_REASONS = frozenset(
     }
 )
 
+_GMX_SEM: asyncio.Semaphore | None = None
+_GMX_DOMAINS = frozenset(
+    {
+        "gmx.de",
+        "gmx.net",
+        "gmx.at",
+        "gmx.ch",
+        "gmx.com",
+        "web.de",
+        "t-online.de",
+        "online.de",
+    }
+)
+
+
+def _is_gmx_mailbox(email: str) -> bool:
+    em = (email or "").strip().lower()
+    if "@" not in em:
+        return False
+    dom = em.rsplit("@", 1)[-1]
+    return dom in _GMX_DOMAINS or dom.startswith("gmx.")
+
+
+def _gmx_sem() -> asyncio.Semaphore:
+    """GMX/web.de не любят залп — меньше параллельных SMTP."""
+    global _GMX_SEM
+    if _GMX_SEM is None:
+        raw = (os.getenv("VALIDEMAIL_GMX_CONCURRENCY") or "2").strip()
+        try:
+            n = max(1, min(8, int(raw)))
+        except (TypeError, ValueError):
+            n = 2
+        _GMX_SEM = asyncio.Semaphore(n)
+    return _GMX_SEM
+
+
 _SESSION: aiohttp.ClientSession | None = None
 _KEY_SEMAPHORES: dict[str, asyncio.Semaphore] = {}
 _KEY_SEM_LIMITS: dict[str, int] = {}
@@ -139,8 +175,9 @@ def _global_inflight_sem() -> asyncio.Semaphore:
 
 def reset_validemail_runtime() -> None:
     """Сброс пулов: старый GLOBAL_INFLIGHT=200 иначе живёт до рестарта процесса."""
-    global _GLOBAL_INFLIGHT
+    global _GLOBAL_INFLIGHT, _GMX_SEM
     _GLOBAL_INFLIGHT = None
+    _GMX_SEM = None
     _KEY_SEMAPHORES.clear()
     _KEY_SEM_LIMITS.clear()
 
@@ -553,6 +590,11 @@ async def _fetch_validemail_once(
         await _rate_limiter_for_key(api_key).acquire()
     s = await _get_session()
     headers, params = _build_request(url, api_key, email_lc)
+    if _is_gmx_mailbox(email_lc):
+        try:
+            params["timeout"] = str(max(int(params.get("timeout") or 8), 12))
+        except Exception:
+            params["timeout"] = "12"
     ssl = None if use_ssl_verify else False
     async with s.get(url, params=params, headers=headers, ssl=ssl) as r:
         status = int(r.status)
@@ -616,73 +658,79 @@ async def _check_one(
 
     async with _global_inflight_sem():
         async with semaphore:
-            if cancel_event and cancel_event.is_set():
-                return email, False, {"error": "cancelled", "_cancelled": True}
-            async with lock:
-                counters["in_use"] += 1
-                if progress_cb:
-                    try:
-                        progress_cb(counters["done"], counters["total"], limit, counters["in_use"])
-                    except Exception:
-                        pass
-
+            gmx_cm = _gmx_sem() if _is_gmx_mailbox(email_lc) else None
+            if gmx_cm is not None:
+                await gmx_cm.acquire()
             try:
-                ok = False
-                for attempt in range(max_attempts):
-                    if cancel_event and cancel_event.is_set():
-                        return email, False, {"error": "cancelled", "_cancelled": True}
-                    try:
-                        ok, last_raw = await _fetch_validemail_once(
-                            email_lc,
-                            api_key=api_key,
-                            url=url,
-                            use_ssl_verify=use_ssl_verify,
-                        )
-                    except Exception as e:
-                        last_raw = {"error": str(e)}
-                        ok = False
-
-                    if ok:
-                        _cache_set(url, email_lc, True, last_raw)
-                        if cancel_event:
-                            cancel_event.set()
-                        return email, True, last_raw
-
-                    if not _is_transient_failure(last_raw) or attempt >= max_attempts - 1:
-                        if _should_cache_result(last_raw):
-                            _cache_set(url, email_lc, False, last_raw)
-                        return email, False, last_raw
-
-                    if isinstance(last_raw, dict):
-                        if int(last_raw.get("_http_status") or 0) == 429:
-                            _register_validemail_429(last_raw, api_key=api_key, attempt=attempt)
-
-                    if isinstance(last_raw, dict) and last_raw.get("_api_key_error"):
-                        if _should_cache_result(last_raw):
-                            _cache_set(url, email_lc, False, last_raw)
-                        return email, False, last_raw
-
-                    delay = _retry_delay_sec(attempt, last_raw)
-                    logger.debug(
-                        "validemail retry %s/%s for %s in %.1fs (%s)",
-                        attempt + 2,
-                        max_attempts,
-                        email_lc,
-                        delay,
-                        last_raw.get("reason") or last_raw.get("error") or last_raw.get("_http_status"),
-                    )
-                    await asyncio.sleep(delay)
-
-                return email, False, last_raw
-            finally:
+                if cancel_event and cancel_event.is_set():
+                    return email, False, {"error": "cancelled", "_cancelled": True}
                 async with lock:
-                    counters["in_use"] -= 1
-                    counters["done"] += 1
+                    counters["in_use"] += 1
                     if progress_cb:
                         try:
                             progress_cb(counters["done"], counters["total"], limit, counters["in_use"])
                         except Exception:
                             pass
+                try:
+                    ok = False
+                    for attempt in range(max_attempts):
+                        if cancel_event and cancel_event.is_set():
+                            return email, False, {"error": "cancelled", "_cancelled": True}
+                        try:
+                            ok, last_raw = await _fetch_validemail_once(
+                                email_lc,
+                                api_key=api_key,
+                                url=url,
+                                use_ssl_verify=use_ssl_verify,
+                            )
+                        except Exception as e:
+                            last_raw = {"error": str(e)}
+                            ok = False
+
+                        if ok:
+                            _cache_set(url, email_lc, True, last_raw)
+                            if cancel_event:
+                                cancel_event.set()
+                            return email, True, last_raw
+
+                        if not _is_transient_failure(last_raw) or attempt >= max_attempts - 1:
+                            if _should_cache_result(last_raw):
+                                _cache_set(url, email_lc, False, last_raw)
+                            return email, False, last_raw
+
+                        if isinstance(last_raw, dict):
+                            if int(last_raw.get("_http_status") or 0) == 429:
+                                _register_validemail_429(last_raw, api_key=api_key, attempt=attempt)
+
+                        if isinstance(last_raw, dict) and last_raw.get("_api_key_error"):
+                            if _should_cache_result(last_raw):
+                                _cache_set(url, email_lc, False, last_raw)
+                            return email, False, last_raw
+
+                        delay = _retry_delay_sec(attempt, last_raw)
+                        logger.debug(
+                            "validemail retry %s/%s for %s in %.1fs (%s)",
+                            attempt + 2,
+                            max_attempts,
+                            email_lc,
+                            delay,
+                            last_raw.get("reason") or last_raw.get("error") or last_raw.get("_http_status"),
+                        )
+                        await asyncio.sleep(delay)
+
+                    return email, False, last_raw
+                finally:
+                    async with lock:
+                        counters["in_use"] -= 1
+                        counters["done"] += 1
+                        if progress_cb:
+                            try:
+                                progress_cb(counters["done"], counters["total"], limit, counters["in_use"])
+                            except Exception:
+                                pass
+            finally:
+                if gmx_cm is not None:
+                    gmx_cm.release()
 
 
 async def _validate_emails_single_key(

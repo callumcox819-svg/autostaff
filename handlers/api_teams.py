@@ -27,9 +27,15 @@ from services.csm_catalog import (
     list_csm_countries,
     make_service_key,
     parse_service_key,
-    platform_label,
     platforms_for_country,
     service_key_label,
+)
+from services.hustle_catalog import (
+    hustle_country_label,
+    hustle_service_label,
+    list_hustle_countries,
+    parse_hustle_service,
+    platforms_for_hustle_country,
 )
 from services.users import get_or_create_user
 from utils.ui_emoji import (
@@ -61,7 +67,7 @@ def _teams_list_kb(selected_id: str) -> InlineKeyboardMarkup:
         rows.append(
             [
                 inline_button(
-                    "key" if tid == "csm" else "link",
+                    "key" if tid == "csm" else ("pin" if tid == "hustle" else "link"),
                     label,
                     callback_data=f"api_team_open:{tid}",
                 ),
@@ -92,6 +98,16 @@ def _team_detail_kb(team_id: str) -> InlineKeyboardMarkup:
                     "compass",
                     "Страна / площадка",
                     callback_data=f"api_team_csm_plats:{team_id}",
+                )
+            ]
+        )
+    elif team_id == "hustle":
+        rows.append(
+            [
+                inline_button(
+                    "compass",
+                    "Страна / площадка",
+                    callback_data=f"api_team_hustle_plats:{team_id}",
                 )
             ]
         )
@@ -129,6 +145,25 @@ def _team_detail_kb(team_id: str) -> InlineKeyboardMarkup:
                 ],
             ]
         )
+    if team_id == "hustle":
+        rows.extend(
+            [
+                [
+                    inline_button(
+                        "user",
+                        "ФИО",
+                        callback_data=f"api_team_edit:{team_id}:buyer_name",
+                    )
+                ],
+                [
+                    inline_button(
+                        "pin",
+                        "Адрес",
+                        callback_data=f"api_team_edit:{team_id}:address",
+                    )
+                ],
+            ]
+        )
     rows.extend(
         [
             [inline_button("link", "Тип ссылки", callback_data=f"api_team_type_menu:{team_id}")],
@@ -157,6 +192,11 @@ def _team_detail_text(cfg, *, buyer_name: str = "", address: str = "") -> str:
             f"<b>Площадка:</b> <b>{html.escape(service_key_label(cfg.service_code))}</b>"
             f" (<code>{html.escape(cfg.service_code or '—')}</code>)"
         )
+    elif cfg.team_id == "hustle":
+        lines.append(
+            f"<b>Площадка:</b> <b>{html.escape(hustle_service_label(cfg.service_code))}</b>"
+            f" (<code>{html.escape(cfg.service_code or '—')}</code>)"
+        )
     else:
         lines.append(f"<b>Код сервиса:</b> <code>{html.escape(cfg.service_code or '—')}</code>")
     lines.append(f"<b>Profile ID:</b> <code>{html.escape(cfg.profile_id or '—')}</code>")
@@ -166,6 +206,13 @@ def _team_detail_text(cfg, *, buyer_name: str = "", address: str = "") -> str:
             f"<b>Адрес для HTML:</b> <code>{html.escape(address or '—')}</code>\n"
             "<i>На лендинге ФИО/адрес из Profile ID. В HTML-письме — из этих полей "
             "(GOO API не отдаёт их наружу).</i>"
+        )
+    if cfg.team_id == "hustle":
+        lines.append(
+            f"<b>ФИО:</b> <code>{html.escape(buyer_name or '—')}</code>\n"
+            f"<b>Адрес:</b> <code>{html.escape(address or '—')}</code>\n"
+            "<i>Нужны для генерации без ссылки на объявление и для eBay (custom). "
+            "Team-ключ — только на сервере: <code>HUSTLE_TEAM_KEY</code>.</i>"
         )
     lines.append(
         f"<b>Тип ссылки:</b> <b>{html.escape(link_type_label(cfg.link_type or 'lk'))}</b>"
@@ -319,6 +366,11 @@ async def _team_detail_payload(session, user, tid: str) -> tuple[object, str]:
     buyer = addr = ""
     if cfg.team_id == "evoleum":
         buyer, addr = await _evoleum_html_profile_fields(session, user)
+    elif cfg.team_id == "hustle":
+        from services.api_teams import get_team_field
+
+        buyer = await get_team_field(session, user, "hustle", "buyer_name")
+        addr = await get_team_field(session, user, "hustle", "address")
     return cfg, _team_detail_text(cfg, buyer_name=buyer, address=addr)
 
 
@@ -433,6 +485,121 @@ async def api_team_csm_cc_legacy(callback: CallbackQuery, state: FSMContext) -> 
     await callback.answer()
 
 
+def _hustle_countries_kb(team_id: str, current_service: str) -> InlineKeyboardMarkup:
+    _, cur_cc = parse_hustle_service(current_service)
+    rows: list[list[InlineKeyboardButton]] = []
+    row: list[InlineKeyboardButton] = []
+    for cid, label, emoji_key in list_hustle_countries():
+        on = cid == cur_cc
+        btn = (
+            toggle_button(True, label, f"api_team_hustle_country:{team_id}:{cid}")
+            if on
+            else inline_button(
+                emoji_key, label, callback_data=f"api_team_hustle_country:{team_id}:{cid}"
+            )
+        )
+        row.append(btn)
+        if len(row) == 2:
+            rows.append(row)
+            row = []
+    if row:
+        rows.append(row)
+    rows.append([back_inline(f"api_team_open:{team_id}")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def _hustle_services_kb(team_id: str, country: str, current_service: str) -> InlineKeyboardMarkup:
+    cur, _cc = parse_hustle_service(current_service)
+    rows: list[list[InlineKeyboardButton]] = []
+    row: list[InlineKeyboardButton] = []
+    for sid, label, emoji_key, _mode in platforms_for_hustle_country(country):
+        on = sid == cur
+        btn = (
+            toggle_button(True, label, f"api_team_hustle_svc:{team_id}:{sid}")
+            if on
+            else inline_button(
+                emoji_key, label, callback_data=f"api_team_hustle_svc:{team_id}:{sid}"
+            )
+        )
+        row.append(btn)
+        if len(row) == 2:
+            rows.append(row)
+            row = []
+    if row:
+        rows.append(row)
+    rows.append([back_inline(f"api_team_hustle_plats:{team_id}")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+@router.callback_query(F.data.startswith("api_team_hustle_plats:"))
+async def api_team_hustle_plats(callback: CallbackQuery, state: FSMContext) -> None:
+    await state.clear()
+    tid = (callback.data or "").split(":", 1)[-1].strip()
+    async with Session() as session:
+        user = await get_or_create_user(session, callback.from_user.id)
+        cfg = await get_team_config(session, user, tid)
+    text = (
+        f"{html_emoji('compass')} <b>Страна Hustle Castle</b>\n"
+        f"Сейчас: <b>{html.escape(hustle_service_label(cfg.service_code))}</b>\n\n"
+        f"Выбери страну:"
+    )
+    await _edit(
+        callback,
+        text,
+        _hustle_countries_kb(tid, cfg.service_code or "kleinanzeigen_de"),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("api_team_hustle_country:"))
+async def api_team_hustle_country(callback: CallbackQuery, state: FSMContext) -> None:
+    await state.clear()
+    parts = (callback.data or "").split(":")
+    if len(parts) != 3:
+        await callback.answer()
+        return
+    _, tid, country = parts
+    async with Session() as session:
+        user = await get_or_create_user(session, callback.from_user.id)
+        cfg = await get_team_config(session, user, tid)
+    text = (
+        f"{html_emoji('compass')} <b>{html.escape(hustle_country_label(country))}</b>\n"
+        f"Сейчас: <b>{html.escape(hustle_service_label(cfg.service_code))}</b>\n\n"
+        f"Выбери сервис:"
+    )
+    await _edit(
+        callback,
+        text,
+        _hustle_services_kb(tid, country, cfg.service_code or "kleinanzeigen_de"),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("api_team_hustle_svc:"))
+async def api_team_hustle_svc(callback: CallbackQuery, state: FSMContext) -> None:
+    await state.clear()
+    parts = (callback.data or "").split(":")
+    if len(parts) < 3:
+        await callback.answer()
+        return
+    tid = parts[1]
+    sk = parts[2]
+    async with Session() as session:
+        user = await get_or_create_user(session, callback.from_user.id)
+        try:
+            await set_team_field(session, user, tid, "service_code", sk)
+            from services.aqua_keys import sync_html_service_from_code
+
+            await sync_html_service_from_code(session, user, sk)
+            await session.commit()
+            cfg, text = await _team_detail_payload(session, user, tid)
+        except ValueError as e:
+            await callback.answer(toast("fail", str(e)[:180]), show_alert=True)
+            return
+    await _edit(callback, text, _team_detail_kb(tid))
+    await callback.answer(toast("ok", hustle_service_label(sk)))
+
+
 _FIELD_TITLES = {
     "api_key": "API-ключ",
     "service_code": "Код сервиса",
@@ -492,6 +659,9 @@ async def api_team_edit(callback: CallbackQuery, state: FSMContext) -> None:
     if field == "service_code" and tid == "csm":
         callback.data = f"api_team_csm_plats:{tid}"
         return await api_team_csm_plats(callback, state)
+    if field == "service_code" and tid == "hustle":
+        callback.data = f"api_team_hustle_plats:{tid}"
+        return await api_team_hustle_plats(callback, state)
     if field not in _FIELD_TITLES:
         await callback.answer(toast("fail", "Поле"), show_alert=True)
         return
@@ -510,6 +680,12 @@ async def api_team_edit(callback: CallbackQuery, state: FSMContext) -> None:
         hint = "\n\nКак в профиле Evoleum (например: <code>Maria Zeglier</code>)."
     if field == "address" and tid == "evoleum":
         hint = "\n\nКак в профиле Evoleum (улица, индекс, город, NL)."
+    if field == "profile_id" and tid == "hustle":
+        hint = "\nИз бота Hustle Castle: Настройки › Профили. Нужен для FAST (Kleinanzeigen с ссылкой)."
+    if field == "buyer_name" and tid == "hustle":
+        hint = "\nФИО покупателя для генерации (lonely / eBay)."
+    if field == "address" and tid == "hustle":
+        hint = "\nАдрес в Германии, например: <code>Berliner Straße 115, 63272 Frankfurt</code>."
     await _edit(
         callback,
         f"{html_emoji('settings')} <b>{html.escape(_FIELD_TITLES[field])}</b>\n"

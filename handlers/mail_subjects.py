@@ -47,6 +47,10 @@ async def build_mail_subjects_view(tg_user_id: int, page: int = 0) -> tuple[str,
         lines = await get_subject_lines(session, user)
         mode = await get_subject_mode(session, user)
         fixed_idx = await get_fixed_index(session, user)
+        from services.country_scope import country_display_name
+        from services.enabled_countries import get_active_country
+
+        cc_name = country_display_name(await get_active_country(session, user))
 
     total = len(lines)
     pg = clamp_page(page, total)
@@ -55,7 +59,8 @@ async def build_mail_subjects_view(tg_user_id: int, page: int = 0) -> tuple[str,
     chunk = lines[start : start + PAGE_SIZE]
 
     text = (
-        f"{html_emoji('presets')} <b>Темы писем</b>\n\n"
+        f"{html_emoji('presets')} <b>Темы писем</b>\n"
+        f"Страна: <b>{escape(cc_name)}</b>\n\n"
         f"<b>Режим:</b> {escape(mode_label(mode))}\n"
         f"<b>Строк в списке:</b> {total}\n\n"
         "Кнопка со строкой — сделать её фиксированной темой.\n"

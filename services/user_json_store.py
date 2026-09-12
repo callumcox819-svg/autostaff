@@ -24,10 +24,42 @@ _BLOB_FILES = {
 
 
 def _fs_path(telegram_id: int, blob_key: str) -> Path:
-    pattern = _BLOB_FILES.get(blob_key)
-    if not pattern:
-        raise ValueError(f"unknown blob_key: {blob_key}")
-    return DATA_DIR / pattern.format(tg_id=int(telegram_id))
+    key = (blob_key or "").strip()
+    pattern = _BLOB_FILES.get(key)
+    if pattern:
+        return DATA_DIR / pattern.format(tg_id=int(telegram_id))
+    safe = "".join(ch if ch.isalnum() or ch in {"_", "-"} else "_" for ch in key) or "blob"
+    return DATA_DIR / f"{safe}_{int(telegram_id)}.json"
+
+
+async def peek_json_blob(telegram_id: int, blob_key: str) -> Any | None:
+    """None если ключа ещё нет (отличаем от пустого списка)."""
+    tg_id = int(telegram_id)
+    if _use_postgres():
+        async with Session() as session:
+            row = (
+                await session.execute(
+                    select(UserJsonBlob).where(
+                        UserJsonBlob.telegram_id == tg_id,
+                        UserJsonBlob.blob_key == blob_key,
+                    )
+                )
+            ).scalar_one_or_none()
+            if row and row.payload:
+                try:
+                    return json.loads(row.payload)
+                except json.JSONDecodeError:
+                    return []
+            if row:
+                return []
+        path = _fs_path(tg_id, blob_key)
+        if path.is_file():
+            return _load_from_filesystem(tg_id, blob_key, [])
+        return None
+    path = _fs_path(tg_id, blob_key)
+    if not path.is_file():
+        return None
+    return _load_from_filesystem(tg_id, blob_key, [])
 
 
 def _use_postgres() -> bool:

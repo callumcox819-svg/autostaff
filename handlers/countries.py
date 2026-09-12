@@ -1,0 +1,132 @@
+"""Настройки → Страны: тумблеры + рабочая страна (свои пресеты/домены)."""
+
+from __future__ import annotations
+
+import html
+import logging
+
+from aiogram import F, Router
+from aiogram.exceptions import TelegramBadRequest
+from aiogram.fsm.context import FSMContext
+from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup
+
+from database import Session
+from services.enabled_countries import (
+    countries_for_settings_ui,
+    get_active_country,
+    get_enabled_country_ids,
+    set_active_country,
+    set_country_enabled,
+)
+from services.users import get_or_create_user
+from utils.ui_emoji import (
+    back_inline,
+    html_emoji,
+    inline_button,
+    toast,
+    toggle_button,
+)
+
+router = Router(name="countries")
+logger = logging.getLogger(__name__)
+
+
+def _countries_kb(enabled: set[str], active: str) -> InlineKeyboardMarkup:
+    rows: list[list[InlineKeyboardButton]] = []
+    for cid, label, emoji_key in countries_for_settings_ui():
+        on = cid in enabled
+        name = f"{label} ✓" if cid == active else label
+        rows.append(
+            [
+                inline_button(
+                    emoji_key,
+                    name,
+                    callback_data=f"country_select:{cid}",
+                ),
+                toggle_button(on, "Вкл" if on else "Выкл", f"country_toggle:{cid}"),
+            ]
+        )
+    rows.append([back_inline("settings_open")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def _countries_text(enabled: set[str], active: str) -> str:
+    names = {cid: label for cid, label, _ in countries_for_settings_ui()}
+    active_name = names.get(active, active.upper())
+    extra = ""
+    if active == "de":
+        extra = (
+            "\nГермания: ссылки на <b>eBay.de</b> через выбранную команду API, "
+            "валидация с упором на GMX/WEB.DE."
+        )
+    return (
+        f"{html_emoji('compass')} <b>Страны</b>\n\n"
+        f"Рабочая: <b>{html.escape(active_name)}</b>\n"
+        f"Пресеты, умные пресеты, темы писем и домены — отдельно для каждой страны.\n"
+        f"{extra}\n\n"
+        f"Название — выбрать страну · тумблер — вкл/выкл в списке."
+    )
+
+
+async def _edit(callback: CallbackQuery, text: str, kb: InlineKeyboardMarkup) -> None:
+    try:
+        await callback.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
+    except TelegramBadRequest:
+        try:
+            await callback.message.answer(text, reply_markup=kb, parse_mode="HTML")
+        except Exception:
+            pass
+
+
+async def _payload(session, user) -> tuple[set[str], str]:
+    enabled = await get_enabled_country_ids(session, user)
+    active = await get_active_country(session, user)
+    return enabled, active
+
+
+@router.callback_query(F.data == "countries_menu")
+async def countries_menu(callback: CallbackQuery, state: FSMContext) -> None:
+    await state.clear()
+    async with Session() as session:
+        user = await get_or_create_user(session, callback.from_user.id)
+        enabled, active = await _payload(session, user)
+    await _edit(callback, _countries_text(enabled, active), _countries_kb(enabled, active))
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("country_select:"))
+async def country_select(callback: CallbackQuery, state: FSMContext) -> None:
+    await state.clear()
+    cid = (callback.data or "").split(":", 1)[-1].strip().lower()
+    async with Session() as session:
+        user = await get_or_create_user(session, callback.from_user.id)
+        try:
+            active = await set_active_country(session, user, cid)
+            enabled = await get_enabled_country_ids(session, user)
+        except ValueError as e:
+            await callback.answer(toast("fail", str(e)[:180]), show_alert=True)
+            return
+    await _edit(callback, _countries_text(enabled, active), _countries_kb(enabled, active))
+    from services.country_scope import country_display_name
+
+    await callback.answer(toast("ok", country_display_name(active)))
+
+
+@router.callback_query(F.data.startswith("country_toggle:"))
+async def country_toggle(callback: CallbackQuery, state: FSMContext) -> None:
+    await state.clear()
+    cid = (callback.data or "").split(":", 1)[-1].strip().lower()
+    async with Session() as session:
+        user = await get_or_create_user(session, callback.from_user.id)
+        enabled = await get_enabled_country_ids(session, user)
+        turning_on = cid not in enabled
+        try:
+            enabled = await set_country_enabled(session, user, cid, turning_on)
+            if turning_on:
+                await set_active_country(session, user, cid)
+            active = await get_active_country(session, user)
+        except ValueError as e:
+            await callback.answer(toast("fail", str(e)[:180]), show_alert=True)
+            return
+    await _edit(callback, _countries_text(enabled, active), _countries_kb(enabled, active))
+    await callback.answer(toast("ok" if turning_on else "fail", "Сохранено"))

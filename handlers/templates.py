@@ -41,6 +41,18 @@ MAX_TEXT_LEN = 4000
 MAX_TITLE_LEN = 64
 
 
+async def _preset_country_suffix(tg_id: int) -> str:
+    from html import escape as html_esc
+
+    from services.country_scope import active_country_for_tg, country_display_name
+
+    try:
+        cc = await active_country_for_tg(int(tg_id))
+        return f"\nСтрана: <b>{html_esc(country_display_name(cc))}</b>"
+    except Exception:
+        return ""
+
+
 @dataclass
 class TemplateItem:
     title: str
@@ -114,9 +126,9 @@ def _smart_presets_kb(has_any: bool, *, page: int = 0, total: int = 0) -> Inline
     )
 
 
-def _smart_presets_list_text(texts: list[str], *, page: int = 0) -> str:
+def _smart_presets_list_text(texts: list[str], *, page: int = 0, country_line: str = "") -> str:
     return render_text_presets_page(
-        f"{html_emoji('presets')} <b>Ваши умные пресеты:</b>",
+        f"{html_emoji('presets')} <b>Ваши умные пресеты:</b>{country_line}",
         texts,
         footer_note=NOTE_SMART_PRESETS,
         page=page,
@@ -137,17 +149,45 @@ def _regular_presets_kb(has_any: bool) -> InlineKeyboardMarkup:
 
 
 async def load_templates(tg_id: int) -> List[TemplateItem]:
-    from services.user_json_store import load_json_blob
+    from services.country_scope import LEGACY_COUNTRY, active_country_for_tg, scoped_blob_key
+    from services.user_json_store import load_json_blob, peek_json_blob
 
-    data = await load_json_blob(int(tg_id), "templates", default=[])
-    return _items_from_json(data)
+    cc = await active_country_for_tg(int(tg_id))
+    key = scoped_blob_key("templates", cc)
+    data = await peek_json_blob(int(tg_id), key)
+    if data is None and cc == LEGACY_COUNTRY:
+        data = await load_json_blob(int(tg_id), "templates", default=[])
+    return _items_from_json(data if data is not None else [])
 
 
 async def save_templates(tg_id: int, items: List[TemplateItem]) -> None:
+    from services.country_scope import active_country_for_tg, scoped_blob_key
     from services.user_json_store import save_json_blob
 
+    cc = await active_country_for_tg(int(tg_id))
     data = [{"title": it.title, "text": it.text} for it in items]
-    await save_json_blob(int(tg_id), "templates", data)
+    await save_json_blob(int(tg_id), scoped_blob_key("templates", cc), data)
+
+
+async def load_smart_texts(tg_id: int) -> List[str]:
+    from services.country_scope import LEGACY_COUNTRY, active_country_for_tg, scoped_blob_key
+    from services.user_json_store import load_json_blob, peek_json_blob
+
+    cc = await active_country_for_tg(int(tg_id))
+    key = scoped_blob_key("smart_templates", cc)
+    data = await peek_json_blob(int(tg_id), key)
+    if data is None and cc == LEGACY_COUNTRY:
+        data = await load_json_blob(int(tg_id), "smart_templates", default=[])
+    return _smart_texts_from_json(data if data is not None else [])
+
+
+async def save_smart_texts(tg_id: int, texts: List[str]) -> None:
+    from services.country_scope import active_country_for_tg, scoped_blob_key
+    from services.user_json_store import save_json_blob
+
+    cc = await active_country_for_tg(int(tg_id))
+    clean = [t.strip()[:MAX_TEXT_LEN] for t in texts if (t or "").strip()]
+    await save_json_blob(int(tg_id), scoped_blob_key("smart_templates", cc), clean)
 
 
 def _smart_texts_from_json(data: object) -> List[str]:
@@ -162,20 +202,6 @@ def _smart_texts_from_json(data: object) -> List[str]:
         if txt:
             out.append(txt[:MAX_TEXT_LEN])
     return out
-
-
-async def load_smart_texts(tg_id: int) -> List[str]:
-    from services.user_json_store import load_json_blob
-
-    data = await load_json_blob(int(tg_id), "smart_templates", default=[])
-    return _smart_texts_from_json(data)
-
-
-async def save_smart_texts(tg_id: int, texts: List[str]) -> None:
-    from services.user_json_store import save_json_blob
-
-    clean = [t.strip()[:MAX_TEXT_LEN] for t in texts if (t or "").strip()]
-    await save_json_blob(int(tg_id), "smart_templates", clean)
 
 
 async def _mailing_text_pool(tg_id: int) -> List[str]:
@@ -451,7 +477,8 @@ async def _restore_presets_list(message: Message, state_data: dict, tg_id: int) 
         chat_id=int(chat_id),
         message_id=int(msg_id),
         text=render_text_presets_page(
-            f"{html_emoji('presets')} <b>Ваши пресеты:</b>",
+            f"{html_emoji('presets')} <b>Ваши пресеты:</b>"
+            + await _preset_country_suffix(tg_id),
             texts,
             footer_note=NOTE_REGULAR_PRESETS,
         ),
@@ -503,7 +530,8 @@ async def _send_presets_menu_message(message: Message, tg_id: int) -> None:
     pairs = _template_named_pairs(items)
     await message.answer(
         render_named_presets_page(
-            f"{html_emoji('presets')} <b>Ваши пресеты:</b>",
+            f"{html_emoji('presets')} <b>Ваши пресеты:</b>"
+            + await _preset_country_suffix(tg_id),
             pairs,
             empty_hint=REGULAR_PRESETS_EMPTY_HINT,
             footer_note=NOTE_REGULAR_PRESETS,
@@ -517,8 +545,9 @@ async def _send_presets_menu_message(message: Message, tg_id: int) -> None:
 async def _send_smart_menu_message(message: Message, tg_id: int, *, page: int | None = None) -> None:
     texts = await load_smart_texts(tg_id)
     pg = preset_last_page(len(texts)) if page is None else page
+    suffix = await _preset_country_suffix(tg_id)
     await message.answer(
-        _smart_presets_list_text(texts, page=pg),
+        _smart_presets_list_text(texts, page=pg, country_line=suffix),
         reply_markup=_smart_presets_kb(bool(texts), page=pg, total=len(texts)),
         parse_mode="HTML",
         disable_web_page_preview=True,
@@ -602,7 +631,8 @@ async def presets_menu(call: CallbackQuery, state: FSMContext) -> None:
     pairs = _template_named_pairs(items)
     await call.message.edit_text(
         render_named_presets_page(
-            f"{html_emoji('presets')} <b>Ваши пресеты:</b>",
+            f"{html_emoji('presets')} <b>Ваши пресеты:</b>"
+            + await _preset_country_suffix(tg_id),
             pairs,
             empty_hint=REGULAR_PRESETS_EMPTY_HINT,
             footer_note=NOTE_REGULAR_PRESETS,
@@ -827,8 +857,9 @@ async def stmpl_page_nav(call: CallbackQuery, state: FSMContext) -> None:
 
 async def _edit_smart_presets_menu(call: CallbackQuery, tg_id: int, *, page: int) -> None:
     texts = await load_smart_texts(tg_id)
+    suffix = await _preset_country_suffix(tg_id)
     await call.message.edit_text(
-        _smart_presets_list_text(texts, page=page),
+        _smart_presets_list_text(texts, page=page, country_line=suffix),
         reply_markup=_smart_presets_kb(bool(texts), page=page, total=len(texts)),
         parse_mode="HTML",
         disable_web_page_preview=True,

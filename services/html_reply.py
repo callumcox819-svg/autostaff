@@ -8,6 +8,7 @@ from models import User
 from services.html_spoof import apply_nick_to_html, get_spoof_display_name
 from services.subject_offer import sanitize_email_subject
 from services.user_settings import get_user_setting
+from services.country_scope import get_scoped_setting
 
 # как в handlers/settings.py → html_theme_menu
 HTML_THEME_KEY = "html_theme"
@@ -21,7 +22,7 @@ async def get_html_reply_subject(session, user: User, *, fallback: str = "") -> 
     from services.html_spoof import is_spoofing_enabled
 
     if await is_spoofing_enabled(session, user):
-        subj = sanitize_email_subject(await get_user_setting(session, user, HTML_THEME_KEY) or "")
+        subj = sanitize_email_subject(await get_scoped_setting(session, user, HTML_THEME_KEY) or "")
         if subj:
             return subj[:140] if len(subj) > 140 else subj
     fb = sanitize_email_subject(fallback or "")

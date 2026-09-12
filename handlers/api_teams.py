@@ -220,14 +220,25 @@ def _team_detail_text(cfg, *, buyer_name: str = "", address: str = "") -> str:
     return "\n".join(lines)
 
 
-def _csm_countries_kb(team_id: str, current_service: str) -> InlineKeyboardMarkup:
+def _csm_countries_kb(
+    team_id: str,
+    current_service: str,
+    enabled: set[str] | None = None,
+) -> InlineKeyboardMarkup:
     """Шаг 1: выбрать страну."""
+    from services.enabled_countries import filter_csm_countries, is_country_enabled
+
     _, cur_cc = parse_service_key(current_service)
     if cur_cc == "verify_all":
         cur_cc = ""
     rows: list[list[InlineKeyboardButton]] = []
     row: list[InlineKeyboardButton] = []
-    for cid, label, emoji_key in list_csm_countries():
+    countries = filter_csm_countries(enabled)
+    if cur_cc and not is_country_enabled(enabled or set(), cur_cc):
+        # текущая выбранная — даже если тумблер выкл, чтобы не потерять площадку
+        extra = [(cid, label, em) for cid, label, em in list_csm_countries() if cid == cur_cc]
+        countries = extra + [c for c in countries if c[0] != cur_cc]
+    for cid, label, emoji_key in countries:
         on = cid == cur_cc
         btn = (
             toggle_button(True, label, f"api_team_csm_country:{team_id}:{cid}")
@@ -400,12 +411,15 @@ async def api_team_csm_plats(callback: CallbackQuery, state: FSMContext) -> None
     async with Session() as session:
         user = await get_or_create_user(session, callback.from_user.id)
         cfg = await get_team_config(session, user, tid)
+        from services.enabled_countries import get_enabled_country_ids
+
+        enabled = await get_enabled_country_ids(session, user)
     text = (
         f"{html_emoji('compass')} <b>Страна CSM</b>\n"
         f"Сейчас: <b>{html.escape(service_key_label(cfg.service_code))}</b>\n\n"
         f"Выбери страну:"
     )
-    await _edit(callback, text, _csm_countries_kb(tid, cfg.service_code or "marktplaats_nl"))
+    await _edit(callback, text, _csm_countries_kb(tid, cfg.service_code or "marktplaats_nl", enabled))
     await callback.answer()
 
 
@@ -485,11 +499,19 @@ async def api_team_csm_cc_legacy(callback: CallbackQuery, state: FSMContext) -> 
     await callback.answer()
 
 
-def _hustle_countries_kb(team_id: str, current_service: str) -> InlineKeyboardMarkup:
+def _hustle_countries_kb(
+    team_id: str,
+    current_service: str,
+    enabled: set[str] | None = None,
+) -> InlineKeyboardMarkup:
+    from services.enabled_countries import is_country_enabled
+
     _, cur_cc = parse_hustle_service(current_service)
     rows: list[list[InlineKeyboardButton]] = []
     row: list[InlineKeyboardButton] = []
     for cid, label, emoji_key in list_hustle_countries():
+        if enabled is not None and not is_country_enabled(enabled, cid) and cid != cur_cc:
+            continue
         on = cid == cur_cc
         btn = (
             toggle_button(True, label, f"api_team_hustle_country:{team_id}:{cid}")
@@ -538,6 +560,9 @@ async def api_team_hustle_plats(callback: CallbackQuery, state: FSMContext) -> N
     async with Session() as session:
         user = await get_or_create_user(session, callback.from_user.id)
         cfg = await get_team_config(session, user, tid)
+        from services.enabled_countries import get_enabled_country_ids
+
+        enabled = await get_enabled_country_ids(session, user)
     text = (
         f"{html_emoji('compass')} <b>Страна Hustle Castle</b>\n"
         f"Сейчас: <b>{html.escape(hustle_service_label(cfg.service_code))}</b>\n\n"
@@ -546,7 +571,7 @@ async def api_team_hustle_plats(callback: CallbackQuery, state: FSMContext) -> N
     await _edit(
         callback,
         text,
-        _hustle_countries_kb(tid, cfg.service_code or "kleinanzeigen_de"),
+        _hustle_countries_kb(tid, cfg.service_code or "kleinanzeigen_de", enabled),
     )
     await callback.answer()
 

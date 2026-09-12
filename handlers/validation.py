@@ -577,14 +577,11 @@ async def _run_validation_pipeline_inner(
             if (d.domain or "").strip()
         ]
 
-        # priority list can contain domains not yet in DB, and vice versa.
-        priority_raw = None
-        try:
-            from services.user_settings import get_user_setting
-            priority_raw = await get_user_setting(session, user, "domain_priority")
-        except Exception:
-            priority_raw = None
+        from services.country_scope import default_validation_domains_for, get_scoped_setting
+        from services.enabled_countries import get_active_country
 
+        cc = await get_active_country(session, user)
+        priority_raw = await get_scoped_setting(session, user, "domain_priority", country=cc)
         # domain_priority is normally stored as JSON list (see settings.py),
         # but older DBs / migrations may contain raw text with newlines.
         priority_list = []
@@ -592,28 +589,17 @@ async def _run_validation_pipeline_inner(
             try:
                 priority_list = json.loads(priority_raw)
             except Exception:
-                # fallback: treat as "each domain on new line"
                 priority_list = [x.strip() for x in str(priority_raw).splitlines() if x.strip()]
         if not isinstance(priority_list, list):
             priority_list = []
 
         pr = [str(x or "").strip().lower() for x in priority_list if str(x or "").strip()]
-        domains = merge_validation_domains(pr + db_domains)
-        if not pr:
-            try:
-                from services.api_teams import get_selected_team_config
-
-                team_cfg = await get_selected_team_config(session, user)
-                sc = (team_cfg.service_code or "").strip().lower()
-                if sc.endswith("_de"):
-                    de_mail = ["gmx.de", "web.de", "gmx.net", "t-online.de"]
-                    domains = merge_validation_domains(de_mail + domains)
-            except Exception:
-                pass
-        if not domains:
-            from region import DEFAULT_VALIDATION_DOMAINS
-
-            domains = merge_validation_domains(list(DEFAULT_VALIDATION_DOMAINS))
+        if cc == "nl":
+            domains = merge_validation_domains(pr + db_domains)
+            if not domains:
+                domains = merge_validation_domains(list(default_validation_domains_for(cc)))
+        else:
+            domains = merge_validation_domains(pr or list(default_validation_domains_for(cc)))
 
         if not domains:
             return await status_msg.edit_text(

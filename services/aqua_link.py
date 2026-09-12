@@ -341,6 +341,14 @@ async def aqua_generate_for_offer(
     - Evoleum → GOO parse / no-parse
     """
     cfg = await get_selected_team_config(session, user)
+    from dataclasses import replace
+
+    from services.country_scope import force_germany_ebay_service
+    from services.enabled_countries import get_active_country
+
+    cc = await get_active_country(session, user)
+    if cc == "de":
+        cfg = replace(cfg, service_code=force_germany_ebay_service(cfg.team_id, cfg.service_code))
     if cfg.team_id == "csm":
         return await _generate_csm(session, user, cfg, offer, listing_url=listing_url, price=price)
     if cfg.team_id == "hustle":

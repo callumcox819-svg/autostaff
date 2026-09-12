@@ -6,7 +6,7 @@ import json
 import random
 from typing import Any, Literal, Sequence
 
-from services.user_settings import get_user_setting, set_user_setting
+from services.country_scope import get_scoped_setting, set_scoped_setting
 
 MAIL_SUBJECT_LIST_KEY = "mail_subject_list"
 MAIL_SUBJECT_MODE_KEY = "mail_subject_mode"
@@ -58,15 +58,15 @@ def _loads_list(raw: str | None) -> list[str]:
 
 
 async def get_subject_lines(session, user) -> list[str]:
-    raw = await get_user_setting(session, user, MAIL_SUBJECT_LIST_KEY)
+    raw = await get_scoped_setting(session, user, MAIL_SUBJECT_LIST_KEY)
     return _loads_list(raw)
 
 
 async def set_subject_lines(session, user, lines: Sequence[str]) -> list[str]:
     clean = parse_subject_lines("\n".join(str(x) for x in lines))
-    await set_user_setting(session, user, MAIL_SUBJECT_LIST_KEY, json.dumps(clean, ensure_ascii=False))
+    await set_scoped_setting(session, user, MAIL_SUBJECT_LIST_KEY, json.dumps(clean, ensure_ascii=False))
     if not clean:
-        await set_user_setting(session, user, MAIL_SUBJECT_FIXED_KEY, "0")
+        await set_scoped_setting(session, user, MAIL_SUBJECT_FIXED_KEY, "0")
         return clean
     idx = await get_fixed_index(session, user)
     if idx < 0 or idx >= len(clean):
@@ -75,18 +75,18 @@ async def set_subject_lines(session, user, lines: Sequence[str]) -> list[str]:
 
 
 async def get_subject_mode(session, user) -> SubjectMode:
-    raw = ((await get_user_setting(session, user, MAIL_SUBJECT_MODE_KEY)) or "").strip().lower()
+    raw = ((await get_scoped_setting(session, user, MAIL_SUBJECT_MODE_KEY)) or "").strip().lower()
     if raw in ("fixed", "fix", "only_fixed", "только"):
         return "fixed"
     return "random"
 
 
 async def set_subject_mode(session, user, mode: SubjectMode) -> None:
-    await set_user_setting(session, user, MAIL_SUBJECT_MODE_KEY, "fixed" if mode == "fixed" else "random")
+    await set_scoped_setting(session, user, MAIL_SUBJECT_MODE_KEY, "fixed" if mode == "fixed" else "random")
 
 
 async def get_fixed_index(session, user) -> int:
-    raw = ((await get_user_setting(session, user, MAIL_SUBJECT_FIXED_KEY)) or "0").strip()
+    raw = ((await get_scoped_setting(session, user, MAIL_SUBJECT_FIXED_KEY)) or "0").strip()
     try:
         return max(0, int(raw))
     except ValueError:
@@ -94,7 +94,7 @@ async def get_fixed_index(session, user) -> int:
 
 
 async def set_fixed_index(session, user, index: int) -> None:
-    await set_user_setting(session, user, MAIL_SUBJECT_FIXED_KEY, str(max(0, int(index))))
+    await set_scoped_setting(session, user, MAIL_SUBJECT_FIXED_KEY, str(max(0, int(index))))
 
 
 def pick_template_from_list(

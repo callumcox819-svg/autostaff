@@ -15,8 +15,14 @@ from aiogram.exceptions import TelegramBadRequest
 from database import Session, db_session
 from services.users import get_or_create_user
 from services.user_settings import get_user_setting, set_user_setting
+from services.country_scope import (
+    country_display_name,
+    get_scoped_setting,
+    set_scoped_setting,
+)
+from services.enabled_countries import get_active_country
 from utils.callback_safe import callback_answer_safe
-from utils.ui_emoji import html_emoji, inline_button, menu_path, msg_fail, msg_ok, msg_wait, msg_warn
+from utils.ui_emoji import html_emoji, inline_button, menu_path, msg_fail, msg_ok, msg_wait, msg_warn, toast
 
 
 def _back_kb(callback_data: str = "settings_open") -> InlineKeyboardMarkup:
@@ -82,8 +88,21 @@ logger = logging.getLogger(__name__)
 SETTINGS_MENU_TEXT = "Настройки"
 
 
-def _settings_title_html() -> str:
-    return f"{html_emoji('settings')} <b>Настройки</b>"
+def _settings_title_html(country_name: str = "") -> str:
+    title = f"{html_emoji('settings')} <b>Настройки</b>"
+    if country_name:
+        return f"{title}\nРабочая страна: <b>{html.escape(country_name)}</b>"
+    return title
+
+
+async def _settings_title_for_user(tg_user_id: int) -> str:
+    try:
+        async with db_session() as session:
+            user = await get_or_create_user(session, int(tg_user_id))
+            cc = await get_active_country(session, user)
+        return _settings_title_html(country_display_name(cc))
+    except Exception:
+        return _settings_title_html()
 
 
 def match_settings_menu_text(text: str | None) -> bool:
@@ -106,7 +125,7 @@ async def open_settings_menu(message: Message, state: FSMContext) -> None:
             timeout=float(__import__("os").getenv("SETTINGS_MENU_DB_TIMEOUT_SEC", "12")),
         )
         await message.answer(
-            _settings_title_html(),
+            await _settings_title_for_user(tg_id),
             reply_markup=kb,
             parse_mode="HTML",
         )
@@ -186,6 +205,7 @@ def settings_menu_kb(flags: dict[str, bool]) -> InlineKeyboardMarkup:
             ],
             [
                 inline_button("key", "Команды API", callback_data="api_teams"),
+                inline_button("compass", "Страны", callback_data="countries_menu"),
             ],
             [
                 inline_button("hide", "Скрыть", callback_data="ref_hide"),
@@ -205,8 +225,15 @@ async def _settings_menu_kb_for_user(tg_user_id: int) -> InlineKeyboardMarkup:
             s = str(v).strip().lower()
             return s in {"1", "true", "yes", "on", "y"}
 
+        async def _b_scoped(key: str, default: bool = False) -> bool:
+            v = await get_scoped_setting(session, user, key)
+            if v is None:
+                return default
+            s = str(v).strip().lower()
+            return s in {"1", "true", "yes", "on", "y"}
+
         flags = {
-            "smart_mode": await _b("smart_mode", False),
+            "smart_mode": await _b_scoped("smart_mode", False),
             "spoofing": await _b("spoofing", False),
             "block_control": await _b("block_control", False),
         }
@@ -232,7 +259,7 @@ async def _spoof_name_menu_payload(tg_user_id: int) -> tuple[str, InlineKeyboard
             return None
         key = _html_nick_key_for_service(service)
         cur = (await get_user_setting(session, user, key) or "").strip()
-        html_subj = (await get_user_setting(session, user, HTML_THEME_KEY) or "").strip() or "— не задано —"
+        html_subj = (await get_scoped_setting(session, user, HTML_THEME_KEY) or "").strip() or "— не задано —"
 
     label = _service_label(service)
     cur_disp = html.escape(cur) if cur else "— не задано —"
@@ -354,7 +381,7 @@ async def settings_open_cb(callback: CallbackQuery, state: FSMContext):
     except Exception:
         logger.exception("settings_open_cb failed tg=%s", callback.from_user.id)
         kb = settings_menu_kb({})
-    await _cq_edit_text(callback, _settings_title_html(), reply_markup=kb, parse_mode="HTML")
+    await _cq_edit_text(callback, await _settings_title_for_user(callback.from_user.id), reply_markup=kb, parse_mode="HTML")
 
 
 # =========================
@@ -453,7 +480,7 @@ async def settings_back(callback: CallbackQuery, state: FSMContext):
     await state.clear()
     try:
         await callback.message.edit_text(
-            _settings_title_html(),
+            await _settings_title_for_user(callback.from_user.id),
             reply_markup=await _settings_menu_kb_for_user(callback.from_user.id),
             parse_mode="HTML",
         )
@@ -501,14 +528,27 @@ async def ref_toggle(callback: CallbackQuery):
 
     async with db_session() as session:
         user = await get_or_create_user(session, callback.from_user.id)
-        cur = await get_user_setting(session, user, db_key)
-        cur_s = str(cur or "").strip().lower()
-        cur_b = cur_s in {"1", "true", "yes", "on", "y"}
-        new_b = not cur_b
-        await set_user_setting(session, user, db_key, "1" if new_b else "0")
+        if db_key == "smart_mode":
+            cur = await get_scoped_setting(session, user, db_key)
+            cur_s = str(cur or "").strip().lower()
+            cur_b = cur_s in {"1", "true", "yes", "on", "y"}
+            new_b = not cur_b
+            await set_scoped_setting(session, user, db_key, "1" if new_b else "0")
+        else:
+            cur = await get_user_setting(session, user, db_key)
+            cur_s = str(cur or "").strip().lower()
+            cur_b = cur_s in {"1", "true", "yes", "on", "y"}
+            new_b = not cur_b
+            await set_user_setting(session, user, db_key, "1" if new_b else "0")
 
     kb = await _settings_menu_kb_for_user(callback.from_user.id)
-    await _cq_edit_text(callback, _settings_title_html(), reply_markup=kb, parse_mode="HTML")
+    await _cq_edit_text(
+        callback,
+        await _settings_title_for_user(callback.from_user.id),
+        reply_markup=kb,
+        parse_mode="HTML",
+    )
+    await callback.answer()
 
 
 @router.callback_query(F.data == "ref_hide")
@@ -651,7 +691,7 @@ async def html_theme_menu(callback: CallbackQuery, state: FSMContext):
     await state.clear()
     async with Session() as session:
         user = await get_or_create_user(session, callback.from_user.id)
-        cur = (await get_user_setting(session, user, HTML_THEME_KEY) or "").strip()
+        cur = (await get_scoped_setting(session, user, HTML_THEME_KEY) or "").strip()
 
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [inline_button("edit", "Изменить", callback_data="html_theme_edit")],
@@ -687,7 +727,7 @@ async def html_theme_set(message: Message, state: FSMContext):
         val = ""
     async with Session() as session:
         user = await get_or_create_user(session, message.from_user.id)
-        await set_user_setting(session, user, HTML_THEME_KEY, val)
+        await set_scoped_setting(session, user, HTML_THEME_KEY, val)
     await state.clear()
     await message.answer(
         f"{msg_ok('Тема для HTML сохранена.')}\nПример: <code>Your item sold</code>",
@@ -698,7 +738,7 @@ async def html_theme_set(message: Message, state: FSMContext):
 async def html_theme_clear(callback: CallbackQuery, state: FSMContext):
     async with Session() as session:
         user = await get_or_create_user(session, callback.from_user.id)
-        await set_user_setting(session, user, HTML_THEME_KEY, "")
+        await set_scoped_setting(session, user, HTML_THEME_KEY, "")
     await callback.answer(toast("ok", "Очищено"))
     await html_theme_menu(callback, state)
 
@@ -713,7 +753,8 @@ async def priority_menu(callback: CallbackQuery, state: FSMContext):
     await state.clear()
     async with db_session() as session:
         user = await get_or_create_user(session, callback.from_user.id)
-        raw = await get_user_setting(session, user, DOMAIN_PRIORITY_KEY)
+        raw = await get_scoped_setting(session, user, DOMAIN_PRIORITY_KEY)
+        cc_name = country_display_name(await get_active_country(session, user))
         try:
             items = json.loads(raw) if raw else []
         except Exception:
@@ -732,8 +773,10 @@ async def priority_menu(callback: CallbackQuery, state: FSMContext):
         _back_kb("settings_open").inline_keyboard[0],
     ])
     await _safe_send(callback.message.edit_text(
-        f"{html_emoji('status')} <b>Приоритет отправки</b>\n\n"
-        "Домен №1 валидируется первым, потом №2 и т.д.\n\n"
+        f"{html_emoji('status')} <b>Приоритет отправки</b>\n"
+        f"Страна: <b>{html.escape(cc_name)}</b>\n\n"
+        "Домен №1 валидируется первым, потом №2 и т.д.\n"
+        "Список свой для каждой рабочей страны.\n\n"
         f"<b>Текущий приоритет:</b>\n{lst}",
         reply_markup=kb,
         parse_mode="HTML",
@@ -762,7 +805,7 @@ async def priority_set(message: Message, state: FSMContext):
         items = [re.sub(r"^https?://", "", x.strip().lower()) for x in txt.splitlines() if x.strip()]
     async with Session() as session:
         user = await get_or_create_user(session, message.from_user.id)
-        await set_user_setting(session, user, DOMAIN_PRIORITY_KEY, json.dumps(items))
+        await set_scoped_setting(session, user, DOMAIN_PRIORITY_KEY, json.dumps(items))
     await state.clear()
     await message.answer(msg_ok("Сохранено."), reply_markup=await _settings_menu_kb_for_user(message.from_user.id), parse_mode="HTML")
 
@@ -770,7 +813,7 @@ async def priority_set(message: Message, state: FSMContext):
 async def priority_reset(callback: CallbackQuery, state: FSMContext):
     async with Session() as session:
         user = await get_or_create_user(session, callback.from_user.id)
-        await set_user_setting(session, user, DOMAIN_PRIORITY_KEY, json.dumps([]))
+        await set_scoped_setting(session, user, DOMAIN_PRIORITY_KEY, json.dumps([]))
     await callback.answer(toast("ok", "Сброшено"))
     await priority_menu(callback, state)
 

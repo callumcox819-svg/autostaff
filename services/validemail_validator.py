@@ -17,8 +17,10 @@ from models import User
 from services.validemail_fast import (
     validate_emails_fast,
     _DEFINITIVE_BAD_REASONS,
+    _is_gmx_mailbox,
     _is_transient_failure,
     _retry_delay_sec,
+    gmx_mx_dead,
 )
 
 _TRANSIENT_API_REASONS = frozenset({"connection_error", "timeout"})
@@ -713,6 +715,7 @@ async def _validate_offers_old(
         validation_traffic_mode,
         validation_fast_mode,
         domain_first_probe,
+        validation_wall_sec,
     )
 
     dom_cap = max_domains_per_seller()
@@ -754,6 +757,10 @@ async def _validate_offers_old(
             stats["validemail_api_timeout"] = int(getattr(_cfg, "VALIDEMAIL_API_TIMEOUT", 8))
         except Exception:
             stats["validemail_api_timeout"] = 8
+
+    wall_sec = validation_wall_sec(n_keys)
+    if stats is not None:
+        stats["validation_wall_sec"] = wall_sec
 
     logger.info(
         "validemail start: keys=%s pool=%s per_key=%s sellers=%s domains=%s order=%s domain_first=%s",
@@ -1083,9 +1090,15 @@ async def _validate_offers_old(
         # Нашли — стоп. Нет ящика — следующий домен. Несколько unknown подряд — не ждём 12 минут.
         unknown_streak = 0
         unknown_cap = max_unknown_domains_per_seller()
+        skip_gmx_family = False
         for dom, wave in _domain_priority_waves(locals_list, domains_clean):
             if found_by_idx[i]:
                 break
+            if skip_gmx_family and _is_gmx_mailbox(f"x@{dom}"):
+                continue
+            if gmx_mx_dead() and _is_gmx_mailbox(f"x@{dom}"):
+                skip_gmx_family = True
+                continue
             if stats is not None:
                 async with state_lock:
                     stats["current_domain"] = dom
@@ -1095,6 +1108,8 @@ async def _validate_offers_old(
                 wave,
                 count_api_errors=count_api_errors,
             )
+            if gmx_mx_dead() and _is_gmx_mailbox(f"x@{dom}"):
+                skip_gmx_family = True
             if found_by_idx[i] or verdict == "hit":
                 break
             if verdict == "no":
@@ -1123,12 +1138,25 @@ async def _validate_offers_old(
         nonlocal sellers_completed
         timeout = seller_validation_timeout_sec()
         sem = asyncio.Semaphore(seller_sem_cap)
+        t_end = (time.monotonic() + wall_sec) if wall_sec > 0 else None
 
         async def _run_one_seller(i: int) -> None:
             nonlocal sellers_completed
+            if t_end is not None and time.monotonic() >= t_end:
+                if stats is not None:
+                    stats["deadline_cut"] = int(stats.get("deadline_cut") or 0) + 1
+                async with state_lock:
+                    sellers_completed += 1
+                    if stats is not None:
+                        stats["seller_index"] = sellers_completed
+                        _refresh_stats()
+                return
             my_key = api_keys[i % n_keys]
+            slot = timeout
+            if t_end is not None:
+                slot = max(5.0, min(timeout, t_end - time.monotonic()))
             try:
-                await asyncio.wait_for(_validate_seller(i, my_key), timeout=timeout)
+                await asyncio.wait_for(_validate_seller(i, my_key), timeout=slot)
             except asyncio.TimeoutError:
                 logger.warning("validemail seller timeout idx=%s name=%s", i, prepared[i].get("person_name"))
                 if seller_api_fail[i] == 0 and stats is not None:

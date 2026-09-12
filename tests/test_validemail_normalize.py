@@ -291,9 +291,30 @@ class ValidEmailNormalizeTests(unittest.TestCase):
 
         from services.validemail_keys import max_domains_per_seller, validation_wall_sec
 
-        with patch.dict(os.environ, {"VALIDEMAIL_MAX_DOMAINS_PROBE": "", "VALIDEMAIL_DEADLINE_SEC": ""}, clear=False):
+        with patch.dict(
+            os.environ,
+            {
+                "VALIDEMAIL_MAX_DOMAINS_PROBE": "",
+                "VALIDEMAIL_DEADLINE_SEC": "",
+                "VALIDEMAIL_URL": "https://validemail.co/api/v1/validate",
+                "VALIDEMAIL_MAILCHECK": "0",
+            },
+            clear=False,
+        ):
             self.assertEqual(max_domains_per_seller(), 0)
             self.assertEqual(validation_wall_sec(7), 0.0)
+        with patch.dict(
+            os.environ,
+            {
+                "VALIDEMAIL_DEADLINE_SEC": "",
+                "VALIDEMAIL_URL": "https://validator-production-7106.up.railway.app/api/v1/validate",
+                "VALIDEMAIL_MAILCHECK": "",
+            },
+            clear=False,
+        ):
+            self.assertEqual(validation_wall_sec(1), 120.0)
+        with patch.dict(os.environ, {"VALIDEMAIL_DEADLINE_SEC": "300"}, clear=False):
+            self.assertEqual(validation_wall_sec(1), 120.0)
         with patch.dict(os.environ, {"VALIDEMAIL_MAX_DOMAINS_PROBE": "0"}, clear=False):
             self.assertEqual(max_domains_per_seller(), 0)
 
@@ -381,6 +402,30 @@ class ValidEmailNormalizeTests(unittest.TestCase):
         self.assertTrue(_is_gmx_mailbox("max@gmx.de"))
         self.assertTrue(_is_gmx_mailbox("max@web.de"))
         self.assertFalse(_is_gmx_mailbox("max@gmail.com"))
+
+    def test_gmx_pacing_spreads_large_batch_over_two_minutes(self):
+        from services.validemail_fast import (
+            _gmx_policy_blocked,
+            configure_gmx_pacing,
+            reset_validemail_runtime,
+        )
+
+        reset_validemail_runtime()
+        gap = configure_gmx_pacing([f"u{i}@gmx.de" for i in range(80)])
+        self.assertGreaterEqual(gap, 0.35)
+        self.assertLessEqual(gap, 0.8)
+        self.assertLessEqual(gap * 80, 120.0)
+        small = configure_gmx_pacing(["a@gmx.de", "b@web.de"])
+        self.assertLessEqual(small, 0.4)
+        self.assertTrue(
+            _gmx_policy_blocked(
+                {
+                    "reason": "connection_error",
+                    "detail": "421-gmx.net Reject due to policy restrictions.",
+                }
+            )
+        )
+        self.assertFalse(_gmx_policy_blocked({"reason": "rejected", "detail": "550"}))
 
 
 if __name__ == "__main__":

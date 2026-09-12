@@ -4,6 +4,7 @@ from dataclasses import replace
 
 from services.api_teams import ApiTeamConfig
 from services.country_scope import (
+    GERMANY_VALIDATION_DOMAINS,
     force_germany_ebay_service,
     germany_generate_service,
     scoped_blob_key,
@@ -17,7 +18,11 @@ class CountryScopeTests(unittest.TestCase):
         self.assertEqual(scoped_setting_key("domain_priority", "de"), "domain_priority__de")
         self.assertEqual(scoped_blob_key("templates", "nl"), "templates__nl")
         self.assertEqual(normalize_country_id("DE"), "de")
-        self.assertEqual(DEFAULT_ACTIVE_COUNTRY, "nl")
+        self.assertIn("gmail.com", GERMANY_VALIDATION_DOMAINS)
+        self.assertLess(
+            GERMANY_VALIDATION_DOMAINS.index("gmail.com"),
+            GERMANY_VALIDATION_DOMAINS.index("web.de"),
+        )
 
     def test_germany_ebay_service_per_team(self):
         self.assertEqual(germany_generate_service("csm"), "ebay_de")

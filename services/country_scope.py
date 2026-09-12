@@ -11,12 +11,12 @@ LEGACY_COUNTRY = "nl"
 
 GERMANY_VALIDATION_DOMAINS: tuple[str, ...] = (
     "gmx.de",
-    "web.de",
-    "gmx.net",
-    "t-online.de",
     "gmail.com",
+    "web.de",
     "icloud.com",
+    "gmx.net",
     "outlook.de",
+    "t-online.de",
     "hotmail.de",
 )
 

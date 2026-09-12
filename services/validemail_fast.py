@@ -40,6 +40,11 @@ _DEFINITIVE_BAD_REASONS = frozenset(
 )
 
 _GMX_SEM: asyncio.Semaphore | None = None
+_GMX_PACE_LOCK: asyncio.Lock | None = None
+_GMX_GAP_SEC = 0.4
+_GMX_LAST_MONO = 0.0
+_GMX_PAUSE_UNTIL = 0.0
+_GMX_MX_DEAD = False
 _GMX_DOMAINS = frozenset(
     {
         "gmx.de",
@@ -62,17 +67,95 @@ def _is_gmx_mailbox(email: str) -> bool:
     return dom in _GMX_DOMAINS or dom.startswith("gmx.")
 
 
+def _gmx_env_float(name: str, default: float, *, lo: float, hi: float) -> float:
+    raw = (os.getenv(name) or "").strip()
+    if not raw:
+        return default
+    try:
+        return max(lo, min(hi, float(raw)))
+    except (TypeError, ValueError):
+        return default
+
+
+def configure_gmx_pacing(emails: Iterable[str]) -> float:
+    """
+    GMX/WEB.DE не пачкой: интервал так, чтобы весь прогон уложился в ~2 мин.
+    Gmail и прочие домены не ждут это окно.
+    """
+    global _GMX_GAP_SEC
+    n = sum(1 for e in emails if _is_gmx_mailbox(str(e)))
+    try:
+        from services.validemail_keys import validation_wall_sec
+
+        wall = validation_wall_sec() or 120.0
+    except Exception:
+        wall = _gmx_env_float("VALIDEMAIL_GMX_WINDOW_SEC", 120.0, lo=0.0, hi=120.0)
+    wall = min(120.0, _gmx_env_float("VALIDEMAIL_GMX_WINDOW_SEC", wall, lo=0.0, hi=120.0) or wall)
+    min_gap = _gmx_env_float("VALIDEMAIL_GMX_GAP_SEC", 0.35, lo=0.0, hi=3.0)
+    if n <= 0 or wall <= 0:
+        _GMX_GAP_SEC = min_gap
+        return _GMX_GAP_SEC
+    if n < 20:
+        _GMX_GAP_SEC = min_gap
+        return _GMX_GAP_SEC
+    _GMX_GAP_SEC = min(0.8, max(min_gap, wall / float(n)))
+    return _GMX_GAP_SEC
+
+
 def _gmx_sem() -> asyncio.Semaphore:
-    """GMX/web.de не любят залп — меньше параллельных SMTP."""
+    """GMX/web.de: по умолчанию 1 SMTP за раз + пауза между запросами."""
     global _GMX_SEM
     if _GMX_SEM is None:
-        raw = (os.getenv("VALIDEMAIL_GMX_CONCURRENCY") or "2").strip()
+        raw = (os.getenv("VALIDEMAIL_GMX_CONCURRENCY") or "1").strip()
         try:
             n = max(1, min(8, int(raw)))
         except (TypeError, ValueError):
-            n = 2
+            n = 1
         _GMX_SEM = asyncio.Semaphore(n)
     return _GMX_SEM
+
+
+def _gmx_pace_lock() -> asyncio.Lock:
+    global _GMX_PACE_LOCK
+    if _GMX_PACE_LOCK is None:
+        _GMX_PACE_LOCK = asyncio.Lock()
+    return _GMX_PACE_LOCK
+
+
+def _gmx_policy_blocked(raw: object) -> bool:
+    if not isinstance(raw, dict):
+        return False
+    blob = " ".join(
+        str(raw.get(k) or "")
+        for k in ("detail", "reason", "Reason", "error", "message")
+    ).lower()
+    return "policy restriction" in blob or "421-" in blob or "service unavailable" in blob
+
+
+async def _gmx_pace() -> None:
+    global _GMX_LAST_MONO
+    while True:
+        async with _gmx_pace_lock():
+            now = time.monotonic()
+            wait = max(_GMX_PAUSE_UNTIL - now, _GMX_GAP_SEC - (now - _GMX_LAST_MONO), 0.0)
+            if wait <= 0:
+                _GMX_LAST_MONO = now
+                return
+        await asyncio.sleep(min(2.0, wait))
+
+
+def gmx_mx_dead() -> bool:
+    """GMX уже ответил 421 policy — остальные GMX/WEB.DE в этом прогоне не долбим."""
+    return bool(_GMX_MX_DEAD)
+
+
+def _gmx_note_result(raw: object) -> None:
+    global _GMX_PAUSE_UNTIL, _GMX_MX_DEAD
+    if not _gmx_policy_blocked(raw):
+        return
+    _GMX_MX_DEAD = True
+    cool = _gmx_env_float("VALIDEMAIL_GMX_POLICY_COOLDOWN_SEC", 45.0, lo=0.0, hi=180.0)
+    _GMX_PAUSE_UNTIL = max(_GMX_PAUSE_UNTIL, time.monotonic() + cool)
 
 
 _SESSION: aiohttp.ClientSession | None = None
@@ -175,9 +258,13 @@ def _global_inflight_sem() -> asyncio.Semaphore:
 
 def reset_validemail_runtime() -> None:
     """Сброс пулов: старый GLOBAL_INFLIGHT=200 иначе живёт до рестарта процесса."""
-    global _GLOBAL_INFLIGHT, _GMX_SEM
+    global _GLOBAL_INFLIGHT, _GMX_SEM, _GMX_LAST_MONO, _GMX_PAUSE_UNTIL, _GMX_GAP_SEC, _GMX_MX_DEAD
     _GLOBAL_INFLIGHT = None
     _GMX_SEM = None
+    _GMX_LAST_MONO = 0.0
+    _GMX_PAUSE_UNTIL = 0.0
+    _GMX_GAP_SEC = 0.4
+    _GMX_MX_DEAD = False
     _KEY_SEMAPHORES.clear()
     _KEY_SEM_LIMITS.clear()
 
@@ -639,6 +726,13 @@ async def _check_one(
         return email, False, {"error": "empty"}
     if cancel_event and cancel_event.is_set():
         return email, False, {"error": "cancelled", "_cancelled": True}
+    if _is_gmx_mailbox(email_lc) and gmx_mx_dead():
+        return email, False, {
+            "status": "unknown",
+            "reason": "policy_skip",
+            "isDeliverable": False,
+            "smtp_check": False,
+        }
 
     cached = _cache_get(url, email_lc)
     if cached:
@@ -661,6 +755,7 @@ async def _check_one(
             gmx_cm = _gmx_sem() if _is_gmx_mailbox(email_lc) else None
             if gmx_cm is not None:
                 await gmx_cm.acquire()
+                await _gmx_pace()
             try:
                 if cancel_event and cancel_event.is_set():
                     return email, False, {"error": "cancelled", "_cancelled": True}
@@ -683,6 +778,8 @@ async def _check_one(
                                 url=url,
                                 use_ssl_verify=use_ssl_verify,
                             )
+                            if gmx_cm is not None:
+                                _gmx_note_result(last_raw)
                         except Exception as e:
                             last_raw = {"error": str(e)}
                             ok = False
@@ -848,6 +945,7 @@ async def validate_emails_fast(
         dummy_key = "mailcheck"
     url = (url or "").strip() or default_url
     emails_list = [str(e).strip() for e in emails if str(e).strip()]
+    configure_gmx_pacing(emails_list)
 
     keys = [str(k).strip() for k in (api_keys or []) if str(k).strip()]
     if not keys:

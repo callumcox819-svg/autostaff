@@ -72,14 +72,16 @@ def api_retry_max_sellers() -> int:
 
 
 def validation_wall_sec(num_keys: int | None = None) -> float:
-    """0 = без обрыва. Стена резала 500+ продавцов → 28 почт вместо ~200."""
+    """Потолок всего прогона. Свой SMTP: 120 с. 0 = без обрыва (validemail.co)."""
     raw = (os.getenv("VALIDEMAIL_DEADLINE_SEC") or "").strip()
-    if not raw:
-        return 0.0
-    try:
-        return max(0.0, min(900.0, float(raw)))
-    except (TypeError, ValueError):
-        return 0.0
+    if raw:
+        try:
+            return max(0.0, min(120.0, float(raw)))
+        except (TypeError, ValueError):
+            pass
+    if is_mailcheck_style_url():
+        return 120.0
+    return 0.0
 
 
 def api_retry_wall_sec() -> float:
@@ -176,12 +178,13 @@ def seller_batch_pause_sec() -> float:
 
 def seller_validation_timeout_sec() -> float:
     raw = (os.getenv("VALIDEMAIL_SELLER_TIMEOUT_SEC") or "").strip()
-    if not raw:
-        return 90.0
-    try:
-        return max(30.0, min(300.0, float(raw)))
-    except (TypeError, ValueError):
-        return 90.0
+    if raw:
+        try:
+            return max(8.0, min(120.0, float(raw)))
+        except (TypeError, ValueError):
+            pass
+    # Один продавец не должен съесть весь 2-мин прогон.
+    return 20.0 if is_mailcheck_style_url() else 90.0
 
 
 def domain_probe_wave_size() -> int:

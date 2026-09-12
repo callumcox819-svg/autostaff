@@ -3122,7 +3122,7 @@ async def cb_mail_reply_html_send(callback: CallbackQuery, state: FSMContext):
         "pickup": "pickup.html",
         "sms": "sms.html",
         "push": "push.html",
-        "back": "return.html",
+        "back": "back.html",
     }
     filename = file_map.get(kind)
     if not filename:

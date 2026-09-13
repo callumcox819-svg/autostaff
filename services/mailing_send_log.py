@@ -201,13 +201,18 @@ async def record_mailing_send(
     rfc_message_id: str = "",
 ) -> None:
     """Записать: этому email ушло письмо по конкретному offer_id (+ сервис площадки)."""
-    from services.email_threading import normalize_rfc_message_id
+    from services.email_threading import (
+        is_synthetic_local_message_id,
+        normalize_rfc_message_id,
+    )
     from services.offer_storage import normalize_incoming_seller_email
 
     rcpt = normalize_incoming_seller_email(recipient_email) or _canon_recipient(recipient_email)
     if not rcpt or not int(offer_id or 0):
         return
     mid = normalize_rfc_message_id(rfc_message_id)
+    if mid and is_synthetic_local_message_id(mid):
+        mid = None
     row = MailingSendLog(
         user_id=int(user_id),
         offer_id=int(offer_id),

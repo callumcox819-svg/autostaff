@@ -409,10 +409,15 @@ async def _run_mass_test(message: Message, tg_id: int) -> None:
                             subject=subject,
                             to_email=to_email,
                             local_message_id=msgid,
-                            wait_sec=2.5,
+                            wait_sec=6.0,
                         )
                         if real_mid:
                             msgid = real_mid
+                        else:
+                            from services.email_threading import is_synthetic_local_message_id
+
+                            if is_synthetic_local_message_id(msgid):
+                                msgid = ""
                     except Exception:
                         pass
                     ok_n += 1

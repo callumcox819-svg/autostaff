@@ -887,11 +887,25 @@ def _imap_fetch_new_sync_raw(
             from_raw = _decode_mime_words(msg.get("From", ""))
             subject = _decode_mime_words(msg.get("Subject", ""))
             date_str = msg.get("Date", "") or ""
+            from email.header import decode_header
             from services.email_threading import normalize_rfc_message_id
 
-            rfc_message_id = normalize_rfc_message_id(msg.get("Message-ID") or msg.get("Message-Id") or "") or ""
-            rfc_in_reply_to = normalize_rfc_message_id(msg.get("In-Reply-To") or "") or ""
-            rfc_references = (msg.get("References") or "").strip()
+            def _hdr(name: str) -> str:
+                raw_h = msg.get(name) or msg.get(name.title()) or ""
+                if not raw_h:
+                    return ""
+                parts = decode_header(raw_h)
+                out = []
+                for frag, enc in parts:
+                    if isinstance(frag, bytes):
+                        out.append(frag.decode(enc or "utf-8", "replace"))
+                    else:
+                        out.append(str(frag))
+                return "".join(out)
+
+            rfc_message_id = normalize_rfc_message_id(_hdr("Message-ID") or _hdr("Message-Id")) or ""
+            rfc_in_reply_to = normalize_rfc_message_id(_hdr("In-Reply-To")) or ""
+            rfc_references = (_hdr("References") or "").strip()
 
             name, addr = parseaddr(from_raw)
             from_email = (addr or "").strip().lower()

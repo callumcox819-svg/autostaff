@@ -5,6 +5,13 @@ from __future__ import annotations
 import re
 from typing import Any
 
+# Наш SMTP MID: <unix_ms.1.random@gmail.com>. Gmail его переписывает на
+# <…@mail.gmail.com> — у получателя этого id нет, In-Reply-To рвёт диалог.
+_SYNTHETIC_LOCAL_MID_RE = re.compile(
+    r"^<\d{10,}\.1\.\d{12,}@(?:gmail\.com|googlemail\.com)>$",
+    re.I,
+)
+
 
 def normalize_rfc_message_id(raw: str | None) -> str | None:
     """Normalize Message-ID to angle-bracket form, or None if unusable."""
@@ -23,12 +30,35 @@ def normalize_rfc_message_id(raw: str | None) -> str | None:
     return f"<{s}>"
 
 
+def is_synthetic_local_message_id(raw: str | None) -> bool:
+    """True если id не тот, что видит получатель в Gmail.
+
+    smtp.gmail.com подменяет Message-ID на <…@mail.gmail.com>.
+    Наши <unix.1.rand@gmail.com> и python make_msgid@gmail.com у получателя нет.
+    """
+    mid = normalize_rfc_message_id(raw)
+    if not mid:
+        return False
+    if _SYNTHETIC_LOCAL_MID_RE.match(mid):
+        return True
+    host = mid[1:-1].rsplit("@", 1)[-1].lower()
+    return host in {"gmail.com", "googlemail.com"}
+
+
+def usable_thread_message_id(raw: str | None) -> str | None:
+    """Message-ID, который можно ставить в In-Reply-To / References у Gmail."""
+    mid = normalize_rfc_message_id(raw)
+    if not mid or is_synthetic_local_message_id(mid):
+        return None
+    return mid
+
+
 def build_references_header(*message_ids: str | None) -> str | None:
     """Ordered unique Message-IDs for References (oldest → newest)."""
     out: list[str] = []
     seen: set[str] = set()
     for raw in message_ids:
-        mid = normalize_rfc_message_id(raw)
+        mid = usable_thread_message_id(raw)
         if not mid:
             continue
         key = mid.lower()
@@ -48,18 +78,19 @@ def threading_send_kwargs(
     parent_references: str | None = None,
 ) -> dict[str, str]:
     """
-    Kwargs for SMTP reply:
-    - In-Reply-To = last inbound (seller). Never our local SMTP id if the
-      seller already named a Gmail parent — Gmail rewrites our Message-ID
-      and that split turns the preset into a new conversation.
-    - References = cold outbound + parent chain + inbound (same Gmail thread)
+    Kwargs for SMTP reply (как кнопка Reply в Gmail):
+    - In-Reply-To = Message-ID письма продавца (то, что есть у него в ящике).
+    - Никогда не ставим наш локальный SMTP id — Gmail его переписывает,
+      получатель не знает этот id и открывает новый диалог.
+    - References = цепочка из письма продавца (его References + In-Reply-To)
+      + его Message-ID. Чужие/синтетические id не подмешиваем.
     """
-    inbound = normalize_rfc_message_id(inbound_rfc_message_id)
-    outbound = normalize_rfc_message_id(outbound_rfc_message_id)
+    inbound = usable_thread_message_id(inbound_rfc_message_id)
+    outbound = usable_thread_message_id(outbound_rfc_message_id)
     parent_parts: list[str | None] = []
     if parent_references:
         parent_parts.extend((parent_references or "").split())
-    parent_ids = [normalize_rfc_message_id(p) for p in parent_parts]
+    parent_ids = [usable_thread_message_id(p) for p in parent_parts]
     parent_ids = [p for p in parent_ids if p]
     if not inbound and not outbound and not parent_ids:
         return {}
@@ -90,7 +121,7 @@ async def resolve_inbound_rfc_message_id(
 ) -> str | None:
     """Load seller Message-ID from FULL_META cache or IncomingMail row."""
     if meta:
-        hit = normalize_rfc_message_id(str(meta.get("rfc_message_id") or ""))
+        hit = usable_thread_message_id(str(meta.get("rfc_message_id") or ""))
         if hit:
             return hit
 
@@ -141,7 +172,7 @@ async def resolve_inbound_rfc_message_id(
 
     if not row:
         return None
-    return normalize_rfc_message_id(getattr(row, "rfc_message_id", None))
+    return usable_thread_message_id(getattr(row, "rfc_message_id", None))
 
 
 async def resolve_inbound_parent_references(
@@ -278,7 +309,7 @@ async def remember_dialog_outbound(
     from models import ConversationLink
     from services.offer_storage import normalize_incoming_seller_email
 
-    mid = normalize_rfc_message_id(outbound_message_id)
+    mid = usable_thread_message_id(outbound_message_id)
     if not mid or not user_id:
         return
     inbox = (inbox_email or "").strip().lower()

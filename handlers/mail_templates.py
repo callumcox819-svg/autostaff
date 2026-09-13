@@ -366,13 +366,12 @@ async def mail_tmpl_send(callback: CallbackQuery, state: FSMContext):
             )
             if not thread_kw.get("in_reply_to"):
                 logger.error(
-                    "preset reply WITHOUT In-Reply-To to=%s acc=%s mail_id=%s uid=%s — abort to avoid split thread",
+                    "preset reply WITHOUT In-Reply-To to=%s acc=%s mail_id=%s uid=%s — send anyway (subject-only)",
                     to_email,
                     acc_id,
                     mid_i,
                     uid,
                 )
-                return False, "Нет Message-ID диалога (откройте карточку письма снова)", None
             logger.info(
                 "preset SMTP thread to=%s in_reply_to=%s refs=%s subj=%r",
                 to_email,

@@ -25,44 +25,44 @@ def test_threading_send_kwargs_inbound_only():
 def test_threading_send_kwargs_outbound_plus_inbound():
     kw = threading_send_kwargs(
         "<inbound@mail.gmail.com>",
-        outbound_rfc_message_id="<1789.1.99@gmail.com>",
+        outbound_rfc_message_id="<CACold@mail.gmail.com>",
     )
     assert kw["in_reply_to"] == "<inbound@mail.gmail.com>"
-    assert kw["references"] == "<1789.1.99@gmail.com> <inbound@mail.gmail.com>"
+    assert kw["references"] == "<CACold@mail.gmail.com> <inbound@mail.gmail.com>"
 
 
 def test_threading_send_kwargs_with_parent_references():
     kw = threading_send_kwargs(
         "<ja@mail.gmail.com>",
-        outbound_rfc_message_id="<cold@gmail.com>",
-        parent_references="<cold@gmail.com>",
+        outbound_rfc_message_id="<CAcold@mail.gmail.com>",
+        parent_references="<CAcold@mail.gmail.com>",
     )
     assert kw["in_reply_to"] == "<ja@mail.gmail.com>"
-    assert kw["references"] == "<cold@gmail.com> <ja@mail.gmail.com>"
+    assert kw["references"] == "<CAcold@mail.gmail.com> <ja@mail.gmail.com>"
 
 
 def test_threading_send_kwargs_for_dialog_chain():
     from services.email_threading import threading_send_kwargs_for_dialog
 
     kw = threading_send_kwargs_for_dialog(
-        inbound_rfc_message_id="<seller2@x>",
-        cold_outbound_rfc_message_id="<cold@x>",
-        last_our_outbound_rfc_message_id="<preset@x>",
-        parent_references="<cold@x> <seller1@x> <preset@x>",
-        dialog_references="<cold@x> <preset@x>",
+        inbound_rfc_message_id="<seller2@mail.gmail.com>",
+        cold_outbound_rfc_message_id="<cold@mail.gmail.com>",
+        last_our_outbound_rfc_message_id="<preset@mail.gmail.com>",
+        parent_references="<cold@mail.gmail.com> <seller1@mail.gmail.com> <preset@mail.gmail.com>",
+        dialog_references="<cold@mail.gmail.com> <preset@mail.gmail.com>",
     )
-    assert kw["in_reply_to"] == "<seller2@x>"
-    assert kw["references"].startswith("<cold@x>")
-    assert "<preset@x>" in kw["references"]
-    assert kw["references"].endswith("<seller2@x>")
+    assert kw["in_reply_to"] == "<seller2@mail.gmail.com>"
+    assert kw["references"].startswith("<cold@mail.gmail.com>")
+    assert "<preset@mail.gmail.com>" in kw["references"]
+    assert kw["references"].endswith("<seller2@mail.gmail.com>")
 
 
 def test_threading_falls_back_to_cold_when_no_inbound():
     from services.email_threading import threading_send_kwargs
 
-    kw = threading_send_kwargs(None, outbound_rfc_message_id="<cold@gmail.com>")
-    assert kw["in_reply_to"] == "<cold@gmail.com>"
-    assert kw["references"] == "<cold@gmail.com>"
+    kw = threading_send_kwargs(None, outbound_rfc_message_id="<CAcold@mail.gmail.com>")
+    assert kw["in_reply_to"] == "<CAcold@mail.gmail.com>"
+    assert kw["references"] == "<CAcold@mail.gmail.com>"
 
 
 def test_no_inbound_uses_gmail_parent_not_local_smtp():
@@ -70,11 +70,34 @@ def test_no_inbound_uses_gmail_parent_not_local_smtp():
 
     kw = threading_send_kwargs(
         None,
-        outbound_rfc_message_id="<local.1.smtp@gmail.com>",
+        outbound_rfc_message_id="<1757781234567.1.1234567890123456789@gmail.com>",
         parent_references="<CAFooBar@mail.gmail.com>",
     )
     assert kw["in_reply_to"] == "<CAFooBar@mail.gmail.com>"
-    assert "<CAFooBar@mail.gmail.com>" in kw["references"]
+    assert kw["references"] == "<CAFooBar@mail.gmail.com>"
+    assert "@gmail.com>" not in kw["references"].replace("@mail.gmail.com>", "")
+
+
+def test_synthetic_gmail_smtp_id_never_used_as_in_reply_to():
+    from services.email_threading import threading_send_kwargs
+
+    kw = threading_send_kwargs(
+        "<jaajaja@mail.gmail.com>",
+        outbound_rfc_message_id="<1757781234567.1.1234567890123456789@gmail.com>",
+        parent_references="<1757781234567.1.1234567890123456789@gmail.com> <CAOrig@mail.gmail.com>",
+    )
+    assert kw["in_reply_to"] == "<jaajaja@mail.gmail.com>"
+    assert "<1757781234567.1.1234567890123456789@gmail.com>" not in kw["references"]
+    assert kw["references"] == "<CAOrig@mail.gmail.com> <jaajaja@mail.gmail.com>"
+
+
+def test_synthetic_only_yields_no_headers():
+    from services.email_threading import threading_send_kwargs
+
+    assert threading_send_kwargs(
+        None,
+        outbound_rfc_message_id="<1757781234567.1.1234567890123456789@gmail.com>",
+    ) == {}
 
 
 def test_build_references_header_dedupes():
@@ -110,11 +133,11 @@ def test_build_message_headers_before_body():
         sender_name="Anna",
         is_html=False,
         in_reply_to="<seller-msg@marktplaats.nl>",
-        references="<1789.1.1@gmail.com> <seller-msg@marktplaats.nl>",
+        references="<CA1789@mail.gmail.com> <seller-msg@marktplaats.nl>",
     )
     raw = msg.as_bytes().decode("utf-8", "replace")
     assert msg["In-Reply-To"] == "<seller-msg@marktplaats.nl>"
-    assert msg["References"] == "<1789.1.1@gmail.com> <seller-msg@marktplaats.nl>"
+    assert msg["References"] == "<CA1789@mail.gmail.com> <seller-msg@marktplaats.nl>"
     assert msg["Subject"] == "Re: fiets"
     assert raw.index("In-Reply-To:") < raw.index("\n\nhoi")
     assert "In-Reply-To: <seller-msg@marktplaats.nl>" in raw

@@ -27,7 +27,7 @@ def test_threading_send_kwargs_outbound_plus_inbound():
         "<inbound@mail.gmail.com>",
         outbound_rfc_message_id="<CACold@mail.gmail.com>",
     )
-    assert kw["in_reply_to"] == "<inbound@mail.gmail.com>"
+    assert kw["in_reply_to"] == "<CACold@mail.gmail.com>"
     assert kw["references"] == "<CACold@mail.gmail.com> <inbound@mail.gmail.com>"
 
 
@@ -37,7 +37,7 @@ def test_threading_send_kwargs_with_parent_references():
         outbound_rfc_message_id="<CAcold@mail.gmail.com>",
         parent_references="<CAcold@mail.gmail.com>",
     )
-    assert kw["in_reply_to"] == "<ja@mail.gmail.com>"
+    assert kw["in_reply_to"] == "<CAcold@mail.gmail.com>"
     assert kw["references"] == "<CAcold@mail.gmail.com> <ja@mail.gmail.com>"
 
 
@@ -51,7 +51,7 @@ def test_threading_send_kwargs_for_dialog_chain():
         parent_references="<cold@mail.gmail.com> <seller1@mail.gmail.com> <preset@mail.gmail.com>",
         dialog_references="<cold@mail.gmail.com> <preset@mail.gmail.com>",
     )
-    assert kw["in_reply_to"] == "<seller2@mail.gmail.com>"
+    assert kw["in_reply_to"] == "<cold@mail.gmail.com>"
     assert kw["references"].startswith("<cold@mail.gmail.com>")
     assert "<preset@mail.gmail.com>" in kw["references"]
     assert kw["references"].endswith("<seller2@mail.gmail.com>")
@@ -86,7 +86,7 @@ def test_synthetic_gmail_smtp_id_never_used_as_in_reply_to():
         outbound_rfc_message_id="<1757781234567.1.1234567890123456789@gmail.com>",
         parent_references="<1757781234567.1.1234567890123456789@gmail.com> <CAOrig@mail.gmail.com>",
     )
-    assert kw["in_reply_to"] == "<jaajaja@mail.gmail.com>"
+    assert kw["in_reply_to"] == "<CAOrig@mail.gmail.com>"
     assert "<1757781234567.1.1234567890123456789@gmail.com>" not in kw["references"]
     assert kw["references"] == "<CAOrig@mail.gmail.com> <jaajaja@mail.gmail.com>"
 
@@ -107,6 +107,22 @@ def test_build_references_header_dedupes():
     )
 
 
+def test_format_gmail_style_reply_body_appends_mailing_root():
+    from services.email_threading import format_gmail_style_reply_body
+
+    out = format_gmail_style_reply_body(
+        "Prima",
+        parent_from_name="Dave",
+        parent_body="jaaa",
+        root_body="Hi, ich interessiere mich für 3 paar thermosokken.",
+        root_from_name="Gremlis Anna",
+        root_from_email="bot@gmail.com",
+    )
+    assert out.startswith("Prima\n\n")
+    assert "> jaaa" in out
+    assert "thermosokken" in out
+
+
 def test_format_gmail_style_reply_body_quotes_parent():
     from services.email_threading import format_gmail_style_reply_body
 
@@ -120,6 +136,8 @@ def test_format_gmail_style_reply_body_quotes_parent():
     assert out.startswith("Prima\n\n")
     assert "On Fri, 11 Sep 2026 Maria wrote:" in out
     assert "> ja" in out
+    assert "> On earlier wrote:" in out
+    assert "> old" in out
 
 
 def test_build_message_headers_before_body():

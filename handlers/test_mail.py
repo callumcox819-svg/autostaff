@@ -465,6 +465,7 @@ async def _run_mass_test(message: Message, tg_id: int) -> None:
                                 from_account_email=acc_email,
                                 service_label="test_mail",
                                 rfc_message_id=msgid or "",
+                                mail_body=body or "",
                             )
                             await session2.commit()
                         elif msgid:
@@ -480,6 +481,7 @@ async def _run_mass_test(message: Message, tg_id: int) -> None:
                                         from_account_email=acc_email,
                                         service_label="test_mail",
                                         rfc_message_id=msgid or "",
+                                        mail_body=body or "",
                                     )
                                     await session2.commit()
                             except Exception:

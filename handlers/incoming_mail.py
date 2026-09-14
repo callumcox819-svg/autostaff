@@ -2795,7 +2795,6 @@ async def cb_mail_reply_preset_send(callback: CallbackQuery, state: FSMContext):
             if not acc:
                 return False, "SMTP аккаунт не найден", None
             out_subject = _reply_subject(subject)
-            from services.email_threading import format_gmail_style_reply_body
             from services.html_reply import account_sender_display_name
             from services.incoming_mail_worker import FULL_BODIES
 
@@ -2814,18 +2813,24 @@ async def cb_mail_reply_preset_send(callback: CallbackQuery, state: FSMContext):
             if m_body:
                 parent_body = (m_body.body or "").strip()
                 out_subject = _reply_subject(
-                    (m_body.subject or "").strip()
-                    or (m_body.outgoing_mail_subject or "").strip()
+                    (m_body.outgoing_mail_subject or "").strip()
+                    or (m_body.subject or "").strip()
                     or subject
                 )
             if not parent_body:
                 parent_body = (FULL_BODIES.get((int(acc_id), str(mail_uid))) or "").strip()
-            body_copy = format_gmail_style_reply_body(
-                preset_body,
+            sender_name = account_sender_display_name(user)
+            body_copy = await compose_threaded_reply_body(
+                session,
+                user_id=int(user.id),
+                to_email=to_email,
+                inbox_email=getattr(acc, "email", None) or account_email or "",
+                reply_text=preset_body,
                 parent_from_name=meta_now.get("from_name"),
                 parent_from_email=to_email,
                 parent_date_str=meta_now.get("date_str"),
                 parent_body=parent_body,
+                sender_name=sender_name,
             )
             thread_kw = await _reply_thread_kwargs(
                 session,
@@ -2837,8 +2842,8 @@ async def cb_mail_reply_preset_send(callback: CallbackQuery, state: FSMContext):
                 user_id=int(user.id),
                 to_email=to_email,
                 account_email=getattr(acc, "email", None) or account_email,
+                smtp_password=getattr(acc, "password", None),
             )
-            sender_name = account_sender_display_name(user)
             uid_db = int(user.id)
             inbox_em = getattr(acc, "email", None) or account_email or ""
             try:
@@ -2899,6 +2904,45 @@ def _reply_subject(subject: str) -> str:
     return f"Re: {s}" if s else "Re:"
 
 
+async def compose_threaded_reply_body(
+    session,
+    *,
+    user_id: int,
+    to_email: str,
+    inbox_email: str,
+    reply_text: str,
+    parent_from_name: str | None = None,
+    parent_from_email: str | None = None,
+    parent_date_str: str | None = None,
+    parent_body: str | None = None,
+    sender_name: str | None = None,
+) -> str:
+    """Пресет + jaaa + тело /send, если его нет во входящем."""
+    from services.email_threading import format_gmail_style_reply_body
+    from services.mailing_send_log import load_last_mailing_quote
+
+    root: dict = {}
+    try:
+        root = await load_last_mailing_quote(
+            session,
+            user_id=int(user_id),
+            contact_email=to_email,
+            inbox_email=inbox_email,
+        )
+    except Exception:
+        root = {}
+    return format_gmail_style_reply_body(
+        reply_text,
+        parent_from_name=parent_from_name,
+        parent_from_email=parent_from_email,
+        parent_date_str=parent_date_str,
+        parent_body=parent_body,
+        root_body=(root.get("body") or "").strip() or None,
+        root_from_name=sender_name,
+        root_from_email=(root.get("from_account_email") or inbox_email or "").strip() or None,
+    )
+
+
 async def _reply_thread_kwargs(
     session,
     *,
@@ -2910,8 +2954,9 @@ async def _reply_thread_kwargs(
     user_id: int | None = None,
     to_email: str | None = None,
     account_email: str | None = None,
+    smtp_password: str | None = None,
 ) -> dict:
-    """In-Reply-To = входящее продавца; References = весь диалог (cold→наши→входящее)."""
+    """In-Reply-To = оригинал рассылки; References = cold → jaaa."""
     import logging
 
     from services.email_threading import (
@@ -2922,6 +2967,7 @@ async def _reply_thread_kwargs(
         resolve_inbound_rfc_message_id,
         resolve_outbound_rfc_message_id,
         threading_send_kwargs_for_dialog,
+        usable_thread_message_id,
     )
 
     log = logging.getLogger(__name__)
@@ -2995,17 +3041,46 @@ async def _reply_thread_kwargs(
                 inbox_email=inbox,
                 contact_email=contact,
             )
-        # Если в журнале нет MID (Gmail переписал / старый лог) — берём из диалога / In-Reply-To продавца.
-        if not cold_outbound and last_ours:
-            cold_outbound = last_ours
-        if not cold_outbound and dialog_refs:
-            first = normalize_rfc_message_id((dialog_refs or "").split()[0] if dialog_refs else None)
-            if first:
-                cold_outbound = first
-        if not cold_outbound and parent_refs:
-            first = normalize_rfc_message_id((parent_refs or "").split()[0] if parent_refs else None)
-            if first:
-                cold_outbound = first
+        # Корень треда — id оригинала, который назвал продавец (In-Reply-To / References).
+        seller_root = None
+        if parent_refs:
+            seller_root = usable_thread_message_id(
+                (parent_refs or "").split()[0] if parent_refs else None
+            )
+        if seller_root:
+            cold_outbound = seller_root
+        elif not usable_thread_message_id(cold_outbound):
+            cold_outbound = None
+            if last_ours:
+                cold_outbound = usable_thread_message_id(last_ours)
+            if not cold_outbound and dialog_refs:
+                first = usable_thread_message_id(
+                    (dialog_refs or "").split()[0] if dialog_refs else None
+                )
+                if first:
+                    cold_outbound = first
+        if not usable_thread_message_id(cold_outbound) and (smtp_password or "").strip() and inbox:
+            try:
+                from services.email_threading import refresh_cold_message_id_from_sent
+
+                got = await refresh_cold_message_id_from_sent(
+                    session,
+                    user_id=uid_user,
+                    account_email=inbox,
+                    account_password=smtp_password,
+                    contact_email=contact,
+                    subject=(
+                        (getattr(mail_row, "outgoing_mail_subject", None) or "")
+                        if mail_row is not None
+                        else ""
+                    )
+                    or ((meta or {}).get("subject") if meta else "")
+                    or "",
+                )
+                if got:
+                    cold_outbound = got
+            except Exception:
+                log.exception("refresh cold Message-ID from Sent failed to=%s", (contact or "")[:80])
 
     kw = threading_send_kwargs_for_dialog(
         inbound_rfc_message_id=inbound,
@@ -3273,6 +3348,7 @@ async def cb_mail_reply_html_send(callback: CallbackQuery, state: FSMContext):
                 user_id=int(user.id),
                 to_email=to_email,
                 account_email=account_email or getattr(acc, "email", None),
+                smtp_password=getattr(acc, "password", None),
             )
             uid_db = int(user.id)
             inbox_em = account_email or getattr(acc, "email", None) or ""
@@ -3364,25 +3440,42 @@ async def mail_reply_text(message: Message, state: FSMContext):
     out_subject = _reply_subject(subject)
 
     try:
-        from services.email_threading import format_gmail_style_reply_body
         from services.incoming_mail_worker import FULL_BODIES, FULL_META as _FM
+        from services.users import get_or_create_user
 
         meta_q = dict(_FM.get((acc_id, uid)) or {})
         parent_body = (FULL_BODIES.get((acc_id, uid)) or "").strip()
-        if not parent_body and data.get("mail_id"):
-            async with Session() as s_b:
+        sender_nm = None
+        uid_db_q = 0
+        inbox_q = ""
+        async with Session() as s_b:
+            u_q = await get_or_create_user(s_b, tg_id)
+            uid_db_q = int(u_q.id)
+            sender_nm = getattr(u_q, "sender_name", None)
+            if not parent_body and data.get("mail_id"):
                 m_b = await _load_incoming_mail_by_id(s_b, int(data["mail_id"]))
                 if m_b:
                     parent_body = (m_b.body or "").strip()
                     meta_q.setdefault("from_name", m_b.from_name)
                     meta_q.setdefault("date_str", m_b.date_str)
-        text = format_gmail_style_reply_body(
-            text,
-            parent_from_name=meta_q.get("from_name"),
-            parent_from_email=to_email,
-            parent_date_str=meta_q.get("date_str"),
-            parent_body=parent_body,
-        )
+                    inbox_q = (getattr(m_b, "account_email", None) or "").strip()
+            if not inbox_q:
+                acc_q = (
+                    await s_b.execute(sa_select(EmailAccount).where(EmailAccount.id == acc_id))
+                ).scalars().first()
+                inbox_q = (getattr(acc_q, "email", None) or "").strip() if acc_q else ""
+            text = await compose_threaded_reply_body(
+                s_b,
+                user_id=uid_db_q,
+                to_email=to_email,
+                inbox_email=inbox_q or _acc_em or "",
+                reply_text=text,
+                parent_from_name=meta_q.get("from_name"),
+                parent_from_email=to_email,
+                parent_date_str=meta_q.get("date_str"),
+                parent_body=parent_body,
+                sender_name=sender_nm,
+            )
     except Exception:
         pass
 
@@ -3408,6 +3501,7 @@ async def mail_reply_text(message: Message, state: FSMContext):
                 user_id=int(user.id),
                 to_email=to_email,
                 account_email=getattr(acc, "email", None),
+                smtp_password=getattr(acc, "password", None),
             )
             sender_name = account_sender_display_name(user)
             uid_db = int(user.id)
@@ -3579,6 +3673,7 @@ async def mail_reply_custom_html(message: Message, state: FSMContext):
                 user_id=int(user.id),
                 to_email=to_email,
                 account_email=account_email or getattr(acc, "email", None),
+                smtp_password=getattr(acc, "password", None),
             )
             uid_db = int(user.id)
             inbox_em = account_email or getattr(acc, "email", None) or ""

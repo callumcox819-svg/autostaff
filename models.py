@@ -254,6 +254,8 @@ class MailingSendLog(Base):
     service_label = Column(String(80), nullable=True)
     # Message-ID исходящего — для References при ответе продавцу (тот же тред Gmail).
     rfc_message_id = Column(String(512), nullable=True)
+    # Текст /send — чтобы пресет цитировал оригинал рассылки, а не только «jaaa».
+    mail_body = Column(Text, nullable=True)
     sent_at = Column(DateTime, default=datetime.utcnow, index=True)
 
     user = relationship("User")

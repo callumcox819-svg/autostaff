@@ -378,6 +378,9 @@ async def _ensure_mailing_send_log_table() -> None:
             )
         )
         await conn.execute(
+            text("ALTER TABLE mailing_send_log ADD COLUMN IF NOT EXISTS mail_body TEXT")
+        )
+        await conn.execute(
             text(
                 "CREATE INDEX IF NOT EXISTS ix_mailing_send_log_user_rcpt "
                 "ON mailing_send_log (user_id, recipient_email, sent_at DESC)"

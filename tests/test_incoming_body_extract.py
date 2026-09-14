@@ -27,7 +27,7 @@ class IncomingBodyExtractTests(unittest.TestCase):
         self.assertIn("Hallo, ik heb interesse", body)
         self.assertNotIn("<p>", body)
 
-    def test_gmail_quote_stops_at_dutch_schreef(self):
+    def test_gmail_quote_keeps_original_mailing(self):
         out = format_gmail_style_reply_body(
             "Prima",
             parent_from_name="Caroline",
@@ -41,7 +41,7 @@ class IncomingBodyExtractTests(unittest.TestCase):
         )
         self.assertTrue(out.startswith("Prima\n\n"))
         self.assertIn("> Yes!", out)
-        self.assertNotIn("Hallo mailing", out)
+        self.assertIn("Hallo mailing", out)
 
     def test_thread_aliases_keeps_mailed_and_reply_from(self):
         got = thread_contact_aliases("kaatje@x.com", "caroline@gmail.com")

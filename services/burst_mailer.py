@@ -212,7 +212,7 @@ async def _send_pair(
                 lock = hour_lock or asyncio.Lock()
                 async with lock:
                     hour_counts[em] = int(hour_counts.get(em, 0)) + 1
-            await on_success(tgt, subject, (account.email or "").strip(), msgid or "")
+            await on_success(tgt, subject, (account.email or "").strip(), msgid or "", body)
             return 1, 0
         await on_failure(tgt, err, account)
         return 0, 1

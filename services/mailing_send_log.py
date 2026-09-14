@@ -199,6 +199,7 @@ async def record_mailing_send(
     offer_email_id: int | None = None,
     service_label: str = "",
     rfc_message_id: str = "",
+    mail_body: str = "",
 ) -> None:
     """Записать: этому email ушло письмо по конкретному offer_id (+ сервис площадки)."""
     from services.email_threading import (
@@ -213,6 +214,9 @@ async def record_mailing_send(
     mid = normalize_rfc_message_id(rfc_message_id)
     if mid and is_synthetic_local_message_id(mid):
         mid = None
+    body_store = (mail_body or "").replace("\r\n", "\n").strip()
+    if len(body_store) > 4000:
+        body_store = body_store[:4000].rstrip() + "…"
     row = MailingSendLog(
         user_id=int(user_id),
         offer_id=int(offer_id),
@@ -222,6 +226,7 @@ async def record_mailing_send(
         offer_email_id=int(offer_email_id) if offer_email_id else None,
         service_label=(service_label or "").strip()[:80] or None,
         rfc_message_id=(mid[:512] if mid else None),
+        mail_body=body_store or None,
     )
     session.add(row)
     try:
@@ -244,6 +249,56 @@ async def record_mailing_send(
             )
         except Exception:
             pass
+
+
+async def load_last_mailing_quote(
+    session,
+    *,
+    user_id: int,
+    contact_email: str,
+    inbox_email: str | None = None,
+) -> dict[str, str]:
+    """Тема и тело последнего /send|тест на этого продавца — для цитаты в пресете."""
+    from sqlalchemy import func, or_, select
+
+    from models import MailingSendLog
+    from services.offer_storage import normalize_incoming_seller_email
+
+    contact = normalize_incoming_seller_email(contact_email) or (contact_email or "").strip().lower()
+    if not contact or not user_id:
+        return {}
+    inbox = (inbox_email or "").strip().lower()
+    raw = (contact_email or "").strip().lower()
+    conds = [func.lower(MailingSendLog.recipient_email) == contact]
+    if raw and raw != contact:
+        conds.append(func.lower(MailingSendLog.recipient_email) == raw)
+    rows = (
+        await session.execute(
+            select(MailingSendLog)
+            .where(MailingSendLog.user_id == int(user_id))
+            .where(or_(*conds))
+            .order_by(MailingSendLog.sent_at.desc(), MailingSendLog.id.desc())
+            .limit(20)
+        )
+    ).scalars().all()
+    if not rows:
+        return {}
+    picked = None
+    if inbox:
+        for row in rows:
+            if (row.from_account_email or "").strip().lower() == inbox:
+                picked = row
+                break
+    picked = picked or rows[0]
+    body = (getattr(picked, "mail_body", None) or "").strip()
+    subj = (picked.mail_subject or "").strip()
+    if not body and not subj:
+        return {}
+    return {
+        "body": body,
+        "subject": subj,
+        "from_account_email": (picked.from_account_email or "").strip(),
+    }
 
 
 async def _mailing_log_rows_for_recipient(

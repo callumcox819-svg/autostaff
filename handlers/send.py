@@ -155,6 +155,7 @@ async def _record_successful_send(
     subject: str,
     from_account_email: str,
     rfc_message_id: str = "",
+    mail_body: str = "",
 ) -> bool:
     from services.mailing_send_log import record_mailing_send
     from services.offer_storage import (
@@ -192,6 +193,7 @@ async def _record_successful_send(
             offer_email_id=int(tgt.id),
             service_label=service_label,
             rfc_message_id=rfc_message_id or "",
+            mail_body=mail_body or "",
         )
         await append_contact_email_to_offer_raw(
             session,
@@ -562,7 +564,7 @@ async def _burst_sending_loop(*, bot: Bot, chat_id: int, tg_user_id: int) -> Non
         return await _build_message_for_target(session, tg_user_id, tgt)
 
     async def on_success(
-        tgt: OfferEmail, subject: str, from_email: str, rfc_message_id: str = ""
+        tgt: OfferEmail, subject: str, from_email: str, rfc_message_id: str = "", body: str = ""
     ) -> None:
         state.sent_count += 1
         set_sending_state(tg_user_id, state=state)
@@ -574,6 +576,7 @@ async def _burst_sending_loop(*, bot: Bot, chat_id: int, tg_user_id: int) -> Non
                 subject=subject,
                 from_account_email=from_email,
                 rfc_message_id=rfc_message_id or "",
+                mail_body=body or "",
             )
             if logged:
                 await _purge_target(ws, db_user_id, int(tgt.id))

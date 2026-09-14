@@ -288,38 +288,9 @@ async def mail_tmpl_send(callback: CallbackQuery, state: FSMContext):
     subject = _reply_subject(subject_orig)
     tg_id = callback.from_user.id
     body_copy = body
-    try:
-        from services.email_threading import format_gmail_style_reply_body
-        from services.incoming_mail_worker import FULL_BODIES
-
-        parent_body = ""
-        if mail_id or meta.get("_mail_id"):
-            try:
-                mid_load = int(mail_id or meta.get("_mail_id"))
-            except Exception:
-                mid_load = None
-            if mid_load:
-                async with Session() as s_body:
-                    m_body = (
-                        await s_body.execute(
-                            select(IncomingMail).where(IncomingMail.id == mid_load).limit(1)
-                        )
-                    ).scalars().first()
-                    if m_body:
-                        parent_body = (m_body.body or "").strip()
-        if not parent_body and acc_id and uid:
-            parent_body = (FULL_BODIES.get((int(acc_id), str(uid))) or "").strip()
-        body_copy = format_gmail_style_reply_body(
-            body,
-            parent_from_name=meta.get("from_name"),
-            parent_from_email=to_email,
-            parent_date_str=meta.get("date_str"),
-            parent_body=parent_body,
-        )
-    except Exception:
-        logger.exception("gmail-style quote for preset failed")
 
     async def _send() -> tuple[bool, str | None, str | None]:
+        nonlocal body_copy
         async with Session() as session:
             acc = (await session.execute(select(EmailAccount).where(EmailAccount.id == acc_id))).scalars().first()
             if not acc:
@@ -335,8 +306,10 @@ async def mail_tmpl_send(callback: CallbackQuery, state: FSMContext):
                 _load_incoming_mail_by_id,
                 _load_incoming_mail_for_uid,
                 _reply_thread_kwargs,
+                compose_threaded_reply_body,
             )
             from services.html_reply import account_sender_display_name
+            from services.incoming_mail_worker import FULL_BODIES
 
             mid = mail_id or meta.get("_mail_id")
             try:
@@ -348,11 +321,28 @@ async def mail_tmpl_send(callback: CallbackQuery, state: FSMContext):
                 mail_row = await _load_incoming_mail_for_uid(session, int(acc_id), str(uid))
             if mail_row:
                 subj_src = (
-                    (mail_row.subject or "").strip()
-                    or (mail_row.outgoing_mail_subject or "").strip()
+                    (mail_row.outgoing_mail_subject or "").strip()
+                    or (mail_row.subject or "").strip()
                     or subject_orig
                 )
                 out_subject = _reply_subject(subj_src)
+            parent_body = (getattr(mail_row, "body", None) or "").strip() if mail_row else ""
+            if not parent_body and acc_id and uid:
+                parent_body = (FULL_BODIES.get((int(acc_id), str(uid))) or "").strip()
+            sender_name = account_sender_display_name(user)
+            inbox_em = getattr(acc, "email", None) or meta.get("account_email") or ""
+            body_copy = await compose_threaded_reply_body(
+                session,
+                user_id=int(user.id),
+                to_email=to_email,
+                inbox_email=inbox_em,
+                reply_text=body,
+                parent_from_name=meta.get("from_name"),
+                parent_from_email=to_email,
+                parent_date_str=meta.get("date_str"),
+                parent_body=parent_body,
+                sender_name=sender_name,
+            )
             thread_kw = await _reply_thread_kwargs(
                 session,
                 acc_id=int(acc_id),
@@ -363,6 +353,7 @@ async def mail_tmpl_send(callback: CallbackQuery, state: FSMContext):
                 user_id=int(user.id),
                 to_email=to_email,
                 account_email=(meta.get("account_email") or getattr(acc, "email", None) or ""),
+                smtp_password=getattr(acc, "password", None),
             )
             if not thread_kw.get("in_reply_to"):
                 logger.error(

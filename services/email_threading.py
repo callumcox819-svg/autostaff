@@ -79,11 +79,11 @@ def threading_send_kwargs(
 ) -> dict[str, str]:
     """
     Kwargs for SMTP reply (как кнопка Reply в Gmail):
-    - In-Reply-To = Message-ID письма продавца (то, что есть у него в ящике).
-    - Никогда не ставим наш локальный SMTP id — Gmail его переписывает,
-      получатель не знает этот id и открывает новый диалог.
-    - References = цепочка из письма продавца (его References + In-Reply-To)
-      + его Message-ID. Чужие/синтетические id не подмешиваем.
+    - In-Reply-To = Message-ID ПЕРВОГО письма рассылки (то, что лежит
+      у продавца в ящике). Если указать id его «jaaa», Gmail клеит
+      пресет к этому ответу и держит рассылку отдельным диалогом.
+    - Никогда не ставим наш локальный SMTP id — Gmail его переписывает.
+    - References = оригинал → цепочка продавца → его «jaaa».
     """
     inbound = usable_thread_message_id(inbound_rfc_message_id)
     outbound = usable_thread_message_id(outbound_rfc_message_id)
@@ -94,11 +94,12 @@ def threading_send_kwargs(
     parent_ids = [p for p in parent_ids if p]
     if not inbound and not outbound and not parent_ids:
         return {}
-    in_reply_to = inbound
+    # Корень треда = оригинал рассылки (oldest), не последнее входящее.
+    in_reply_to = outbound
     if not in_reply_to and parent_ids:
-        in_reply_to = parent_ids[-1]
+        in_reply_to = parent_ids[0]
     if not in_reply_to:
-        in_reply_to = outbound
+        in_reply_to = inbound
     refs = build_references_header(outbound, *parent_parts, inbound)
     kw: dict[str, str] = {}
     if in_reply_to:
@@ -250,12 +251,12 @@ async def resolve_outbound_rfc_message_id(
         for mid, sent_from in rows:
             sf = (sent_from or "").strip().lower()
             if sf and sf == inbox:
-                hit = normalize_rfc_message_id(mid)
+                hit = usable_thread_message_id(mid)
                 if hit:
                     return hit
 
     for mid, _sf in rows:
-        hit = normalize_rfc_message_id(mid)
+        hit = usable_thread_message_id(mid)
         if hit:
             return hit
     return None
@@ -345,6 +346,86 @@ async def remember_dialog_outbound(
         if chain:
             row.thread_rfc_references = chain[:8000]
     await session.flush()
+
+
+async def refresh_cold_message_id_from_sent(
+    session,
+    *,
+    user_id: int,
+    account_email: str,
+    account_password: str,
+    contact_email: str,
+    subject: str | None = None,
+) -> str | None:
+    """После /send Gmail переписывает MID — один раз читаем Sent и якорим тред."""
+    current = await resolve_outbound_rfc_message_id(
+        session,
+        user_id=int(user_id),
+        contact_email=contact_email,
+        inbox_email=account_email,
+    )
+    if usable_thread_message_id(current):
+        return current
+    subj = (subject or "").strip()
+    if not subj:
+        from services.mailing_send_log import load_last_mailing_quote
+
+        q = await load_last_mailing_quote(
+            session,
+            user_id=int(user_id),
+            contact_email=contact_email,
+            inbox_email=account_email,
+        )
+        subj = (q.get("subject") or "").strip()
+    if not (account_email or "").strip() or not (account_password or "").strip() or not subj:
+        return None
+    try:
+        from services.smtp_delivery_verify import fetch_real_sent_message_id
+
+        real = await fetch_real_sent_message_id(
+            account_email,
+            account_password,
+            subject=subj,
+            to_email=contact_email,
+            wait_sec=0.4,
+        )
+    except Exception:
+        return None
+    mid = usable_thread_message_id(real)
+    if not mid:
+        return None
+    from sqlalchemy import func, or_, select
+
+    from models import MailingSendLog
+    from services.offer_storage import normalize_incoming_seller_email
+
+    contact = normalize_incoming_seller_email(contact_email) or (contact_email or "").strip().lower()
+    inbox = (account_email or "").strip().lower()
+    conds = [func.lower(MailingSendLog.recipient_email) == contact]
+    logs = (
+        await session.execute(
+            select(MailingSendLog)
+            .where(MailingSendLog.user_id == int(user_id))
+            .where(or_(*conds))
+            .order_by(MailingSendLog.sent_at.desc(), MailingSendLog.id.desc())
+            .limit(15)
+        )
+    ).scalars().all()
+    for log in logs:
+        sf = (log.from_account_email or "").strip().lower()
+        if inbox and sf and sf != inbox:
+            continue
+        log.rfc_message_id = mid[:512]
+        break
+    await seed_dialog_after_cold_send(
+        session,
+        user_id=int(user_id),
+        inbox_email=account_email,
+        contact_email=contact_email,
+        outbound_message_id=mid,
+    )
+    await session.flush()
+    return mid
 
 
 async def seed_dialog_after_cold_send(
@@ -592,7 +673,7 @@ def threading_send_kwargs_for_dialog(
     """
     Полная цепочка диалога:
     cold → наши прошлые ответы → References входящего → входящее.
-    In-Reply-To = последнее входящее от продавца.
+    In-Reply-To = оригинал рассылки (cold / первый id цепочки).
     """
     parent_parts: list[str | None] = []
     if dialog_references:
@@ -603,8 +684,8 @@ def threading_send_kwargs_for_dialog(
         inbound_rfc_message_id,
         outbound_rfc_message_id=cold_outbound_rfc_message_id,
         parent_references=build_references_header(
-            last_our_outbound_rfc_message_id,
             *parent_parts,
+            last_our_outbound_rfc_message_id,
         ),
     )
 
@@ -616,44 +697,63 @@ def format_gmail_style_reply_body(
     parent_from_email: str | None = None,
     parent_date_str: str | None = None,
     parent_body: str | None = None,
+    root_body: str | None = None,
+    root_from_name: str | None = None,
+    root_from_email: str | None = None,
+    root_date_str: str | None = None,
 ) -> str:
     """
-    Тело как у кнопки Reply в Gmail: наш текст + цитата родителя.
-    Так у получателя видно «диалог» (как на скрине cold сверху / ответ снизу).
+    Пресет + цитата ответа продавца + цитата исходной рассылки (/send),
+    если её нет во входящем письме.
     """
     text = (reply_text or "").rstrip()
-    parent = (parent_body or "").replace("\r\n", "\n").replace("\r", "\n").strip()
-    if not parent:
-        return text
 
-    # Убрать глубокие цитаты — только ближайший ответ продавца.
-    lines = []
-    for ln in parent.split("\n"):
-        if ln.startswith(">"):
-            continue
-        if re.match(
-            r"^(On .+ wrote:|Am .+ schrieb .+|Op .+ schreef .+|Le .+ a écrit|"
-            r"[-_]{2,}\s*Original Message)",
-            ln.strip(),
-            re.I,
-        ):
-            break
-        if re.match(r"^(пн|вт|ср|чт|пт|сб|вс|mon|tue|wed|thu|fri|sat|sun).{0,40}пиш", ln, re.I):
-            break
-        lines.append(ln.rstrip())
-    parent_clean = "\n".join(lines).strip()
-    if not parent_clean:
-        parent_clean = parent[:800].strip()
-    if len(parent_clean) > 1200:
-        parent_clean = parent_clean[:1200].rstrip() + "…"
-
-    who = (parent_from_name or "").strip() or (parent_from_email or "").strip() or "seller"
-    when = (parent_date_str or "").strip()
-    if when:
-        attr = f"On {when} {who} wrote:"
-    else:
-        attr = f"On {who} wrote:"
-    quoted = "\n".join(f"> {ln}" if ln else ">" for ln in parent_clean.split("\n"))
-    if not text:
+    def _quote_block(
+        body: str,
+        *,
+        from_name: str | None,
+        from_email: str | None,
+        date_str: str | None,
+        fallback_who: str,
+        limit: int,
+    ) -> str:
+        clean = (body or "").replace("\r\n", "\n").replace("\r", "\n").strip()
+        if not clean:
+            return ""
+        if len(clean) > limit:
+            clean = clean[:limit].rstrip() + "…"
+        who = (from_name or "").strip() or (from_email or "").strip() or fallback_who
+        when = (date_str or "").strip()
+        attr = f"On {when} {who} wrote:" if when else f"On {who} wrote:"
+        quoted = "\n".join(f"> {ln}" if ln else ">" for ln in clean.split("\n"))
         return f"{attr}\n{quoted}"
-    return f"{text}\n\n{attr}\n{quoted}"
+
+    parent_block = _quote_block(
+        parent_body or "",
+        from_name=parent_from_name,
+        from_email=parent_from_email,
+        date_str=parent_date_str,
+        fallback_who="seller",
+        limit=2500,
+    )
+    parts = [p for p in (text, parent_block) if p]
+    out = "\n\n".join(parts)
+
+    root = (root_body or "").replace("\r\n", "\n").replace("\r", "\n").strip()
+    if root:
+        marker = next((ln.strip() for ln in root.split("\n") if ln.strip()), "")[:48]
+        if marker and marker not in (out or ""):
+            root_block = _quote_block(
+                root,
+                from_name=root_from_name,
+                from_email=root_from_email,
+                date_str=root_date_str,
+                fallback_who="me",
+                limit=1800,
+            )
+            if root_block:
+                nested = "\n".join(
+                    f"> {ln}" if ln else ">" for ln in root_block.split("\n")
+                )
+                out = f"{out}\n>\n{nested}" if out else root_block
+    return out

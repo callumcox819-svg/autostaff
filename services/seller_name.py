@@ -245,7 +245,32 @@ _COMMON_FIRST_NAME_LOCALS = frozenset(
         "franz",
         "fred",
         "frederick",
+        "frederik",
+        "frederih",
+        "friedrich",
+        "fritz",
         "gabriel",
+        "gerhard",
+        "gertrud",
+        "gisela",
+        "heinrich",
+        "heinz",
+        "helga",
+        "herbert",
+        "hildegard",
+        "horst",
+        "ingeborg",
+        "johann",
+        "josef",
+        "klaus",
+        "manfred",
+        "matthias",
+        "norbert",
+        "renate",
+        "sabine",
+        "ursula",
+        "werner",
+        "wolfgang",
         "gary",
         "george",
         "gerald",
@@ -637,8 +662,82 @@ _LATIN_FOLD = str.maketrans(
         "Œ": "OE",
         "ß": "ss",
         "ẞ": "SS",
+        # RO / AT / DE: ș ţ ă → ascii (на случай если NFD не сработал)
+        "ș": "s",
+        "Ș": "S",
+        "ş": "s",
+        "Ş": "S",
+        "ț": "t",
+        "Ț": "T",
+        "ţ": "t",
+        "Ţ": "T",
+        "ă": "a",
+        "Ă": "A",
     }
 )
+
+# Dr. / Prof. / Mag. — не first token для email (иначе Dr. Michael X → dr.x)
+_NAME_HONORIFIC_TOKENS = frozenset(
+    {
+        "dr",
+        "drs",
+        "prof",
+        "professor",
+        "mag",
+        "magister",
+        "ing",
+        "ingenieur",
+        "dipl",
+        "dipling",
+        "phd",
+        "mba",
+        "ba",
+        "ma",
+        "msc",
+        "bsc",
+        "mr",
+        "mrs",
+        "ms",
+        "miss",
+        "mister",
+        "herr",
+        "frau",
+        "fr",
+        "sr",
+        "jr",
+        "med",
+        "dent",
+        "vet",
+        "hc",
+        "rer",
+        "nat",
+        "phil",
+        "llc",
+        "gmbh",
+        "og",
+        "kg",
+    }
+)
+
+
+def is_name_honorific_token(token: str) -> bool:
+    s = re.sub(r"[^a-z]", "", (token or "").lower())
+    return bool(s) and s in _NAME_HONORIFIC_TOKENS
+
+
+def strip_name_honorifics(raw: str) -> str:
+    """Убрать Dr./Prof./Mag. из начала (и одиночные титулы в середине)."""
+    s = " ".join(str(raw or "").strip().split())
+    if not s:
+        return ""
+    parts = re.split(r"[\s]+", s)
+    kept: list[str] = []
+    for p in parts:
+        core = re.sub(r"[^A-Za-zÀ-ÿ]", "", p)
+        if is_name_honorific_token(core):
+            continue
+        kept.append(p)
+    return " ".join(kept).strip() or s
 
 
 def normalize_seller_name(raw: str) -> str:
@@ -647,6 +746,9 @@ def normalize_seller_name(raw: str) -> str:
     s = " ".join(str(raw).strip().split())
     s = s.translate(_LATIN_FOLD)
     s = _strip_accents(s)
+    # Остаточные не-ascii буквы → ближайшая латиница (NFKD + drop marks)
+    s = unicodedata.normalize("NFKD", s)
+    s = "".join(ch for ch in s if unicodedata.category(ch) != "Mn")
     return s.replace("'", "'").replace("`", "'")
 
 
@@ -668,7 +770,7 @@ def pick_name_tokens_for_email(name: str) -> list[str]:
 
 def pick_name_tokens(name: str, *, min_len: int = MIN_NAME_TOKEN_LEN) -> list[str]:
     """Буквенные части имени (каждая >= min_len символов, только буквы)."""
-    s = normalize_seller_name(name)
+    s = normalize_seller_name(strip_name_honorifics(name))
     if not s:
         return []
 
@@ -679,6 +781,8 @@ def pick_name_tokens(name: str, *, min_len: int = MIN_NAME_TOKEN_LEN) -> list[st
     seen: set[str] = set()
     for p in parts:
         p = p.strip(".")
+        if is_name_honorific_token(p):
+            continue
         if len(p) >= min_len and p.isalpha():
             pl = p.lower()
             if pl not in seen:

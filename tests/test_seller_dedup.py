@@ -43,7 +43,29 @@ class SellerDedupTests(unittest.TestCase):
         self.assertFalse(seller_name_eligible_for_validation("Auto"))
         self.assertFalse(seller_name_eligible_for_validation("Amersfoort"))
         self.assertFalse(seller_name_eligible_for_validation("KINDERSPEELGOED SPECIALIST"))
+        # Одиночные имена с AT/DE JSON — в БД сохраняем, на валидацию не гоняем.
+        self.assertFalse(seller_name_eligible_for_validation("Irene"))
+        self.assertFalse(seller_name_eligible_for_validation("Claude"))
+        self.assertFalse(seller_name_eligible_for_validation("Frederih"))
+        self.assertFalse(seller_name_eligible_for_validation("Friedrich"))
+        # Ник площадки / никнейм — можно.
+        self.assertTrue(seller_name_eligible_for_validation("Bregenznet"))
         self.assertTrue(seller_name_eligible_for_validation("mariasto"))
+        self.assertTrue(seller_name_eligible_for_validation("Hans Mueller"))
+
+        vs_dr = _make_local_part_variants(
+            "Dr. Michael Raufeisen", require_first_and_last=False
+        )
+        self.assertIn("michael.raufeisen", vs_dr)
+        self.assertIn("michaelraufeisen", vs_dr)
+        self.assertNotIn("dr.raufeisen", vs_dr)
+        self.assertNotIn("dr", vs_dr)
+
+        vs_ro = _make_local_part_variants(
+            "Mi\u0219u \u0218tefan", require_first_and_last=False
+        )
+        self.assertIn("misu.stefan", vs_ro)
+        self.assertIn("misustefan", vs_ro)
 
         self.assertEqual(
             _make_local_part_variants("Jan", require_first_and_last=False),

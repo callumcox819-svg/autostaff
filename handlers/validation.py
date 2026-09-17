@@ -300,15 +300,25 @@ _WORD_RE = re.compile(r"[A-Za-zÀ-ÿ0-9]+")
 
 def _normalize_person_name(raw_name: str) -> str:
     """Нормализовать имя продавца; ники с _ или без пробелов — как в JSON."""
+    from services.seller_name import (
+        is_name_honorific_token,
+        normalize_seller_name,
+        strip_name_honorifics,
+    )
+
     s = (raw_name or "").strip()
     if not s:
         return ""
     compact = re.sub(r"\s+", "", s)
     if " " not in s and re.fullmatch(r"[A-Za-z0-9_]+", compact):
         return s.strip()
-    words = _WORD_RE.findall(s)
+    # Dr. Michael Raufeisen → Michael Raufeisen (не Dr + фамилия)
+    cleaned = strip_name_honorifics(s)
+    folded = normalize_seller_name(cleaned)
+    words = _WORD_RE.findall(folded)
+    words = [w for w in words if not is_name_honorific_token(w)]
     if not words:
-        return s
+        return cleaned or s
     if len(words) == 1:
         return words[0]
     return f"{words[0]} {words[-1]}"
@@ -339,6 +349,9 @@ def _normalize_items(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         if norm:
             y["name"] = norm
             y["person_name"] = norm
+            # Оригинал из JSON не теряем (Irene / Bregenznet / Имя Фамилия).
+            if not str(y.get("item_person_name") or "").strip():
+                y["item_person_name"] = raw_name or norm
 
         # подстрахуем поля под наш pipeline (VOID: item_title / title / вложенный void)
         from services.offer_storage import _title_from_item_dict

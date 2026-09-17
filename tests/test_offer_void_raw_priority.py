@@ -36,6 +36,12 @@ def test_marketplace_label_from_stored_service_and_marktplaats_short_link():
     assert label == "marktplaats.nl"
     assert code == "marktplaats_nl"
 
+    label_at, code_at = marketplace_service_from_link(
+        "https://www.laendleanzeiger.at/anzeigen/12345"
+    )
+    assert label_at == "Laendleanzeiger"
+    assert code_at == "laendleanzeiger_at"
+
     payload = stamp_marketplace_service_on_payload(
         {"item_link": "https://link.marktplaats.nl/m2440712344", "item_title": "X"}
     )

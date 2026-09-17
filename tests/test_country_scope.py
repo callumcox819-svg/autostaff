@@ -5,6 +5,9 @@ from dataclasses import replace
 from services.api_teams import ApiTeamConfig
 from services.country_scope import (
     GERMANY_VALIDATION_DOMAINS,
+    austria_html_service,
+    austria_html_service_for_code,
+    force_austria_html_service,
     force_germany_ebay_service,
     germany_generate_service,
     scoped_blob_key,
@@ -33,6 +36,22 @@ class CountryScopeTests(unittest.TestCase):
         self.assertEqual(force_germany_ebay_service("evoleum", "marktplaats_nl"), "ebay_de")
         self.assertEqual(force_germany_ebay_service("csm", "depop_verify_all"), "depop_verify_all")
         self.assertEqual(force_germany_ebay_service("hustle", "kleinanzeigenverif_de"), "kleinanzeigenverif_de")
+
+    def test_austria_html_service(self):
+        self.assertEqual(austria_html_service("csm"), "willhaben_at")
+        self.assertEqual(force_austria_html_service("csm", "willhaben_at"), "willhaben_at")
+        self.assertEqual(force_austria_html_service("csm", "willhaben"), "willhaben_at")
+        self.assertEqual(
+            force_austria_html_service("csm", "laendleanzeiger_at"),
+            "laendleanzeiger_at",
+        )
+        self.assertEqual(
+            force_austria_html_service("csm", "laendleanzeiger"),
+            "laendleanzeiger_at",
+        )
+        self.assertEqual(force_austria_html_service("csm", "ebay_de"), "willhaben_at")
+        self.assertEqual(force_austria_html_service("csm", "marktplaats_nl"), "willhaben_at")
+        self.assertEqual(force_austria_html_service("csm", "depop_verify_all"), "depop_verify_all")
 
     def test_legacy_nl_still_all_countries_if_unset(self):
         self.assertIn("de", parse_enabled_ids(None))

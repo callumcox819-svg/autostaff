@@ -121,8 +121,8 @@ async def get_user_aqua_service(session, user: User) -> str:
 
 
 async def resolve_html_service(session, user: User) -> str:
-    """HTML-папка: рабочая страна + площадка команды (ebay_de / marktplaats_nl)."""
-    from services.country_scope import force_germany_ebay_service
+    """HTML-папка: рабочая страна + площадка команды (ebay_de / willhaben_at / marktplaats_nl)."""
+    from services.country_scope import force_austria_html_service, force_germany_ebay_service
     from services.enabled_countries import get_active_country
 
     cc = "nl"
@@ -139,12 +139,23 @@ async def resolve_html_service(session, user: User) -> str:
         sc = (cfg.service_code or "").strip().lower()
         if cc == "de" and sc and not is_verify_service(sc):
             sc = force_germany_ebay_service(cfg.team_id, sc)
+        elif cc == "at" and sc and not is_verify_service(sc):
+            sc = force_austria_html_service(cfg.team_id, sc)
         svc = sc
     except Exception:
         pass
 
     candidates: list[str] = []
-    for raw in (svc, f"marktplaats_{cc}", cc, "marktplaats_nl"):
+    if cc == "at" and not svc:
+        candidates.append("willhaben_at")
+    for raw in (
+        svc,
+        f"willhaben_{cc}",
+        f"laendleanzeiger_{cc}",
+        f"marktplaats_{cc}",
+        cc,
+        "marktplaats_nl",
+    ):
         code = (raw or "").strip().lower()
         if code and code not in candidates:
             candidates.append(code)
@@ -164,9 +175,14 @@ async def sync_html_service_from_code(session, user: User, service_code: str | N
         return None
     try:
         from services.csm_catalog import is_verify_service
+        from services.country_scope import austria_html_service_for_code
+        from services.enabled_countries import get_active_country
 
         if is_verify_service(sc):
             return None
+        cc = await get_active_country(session, user)
+        if cc == "at":
+            sc = austria_html_service_for_code(sc)
     except Exception:
         pass
     n = normalize_aqua_service(sc)

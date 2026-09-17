@@ -35,6 +35,28 @@ def germany_generate_service(team_id: str) -> str:
     return "ebay_de"
 
 
+def austria_html_service(team_id: str = "") -> str:
+    """Дефолт Австрии, если площадка без своей HTML-папки."""
+    return "willhaben_at"
+
+
+def austria_html_service_for_code(service_code: str) -> str:
+    """Willhaben → willhaben_at, Laendleanzeiger → laendleanzeiger_at."""
+    from services.csm_catalog import parse_service_key
+
+    code = (service_code or "").strip().lower()
+    if not code:
+        return austria_html_service()
+    if code in {"willhaben_at", "laendleanzeiger_at"}:
+        return code
+    platform, _cc = parse_service_key(code)
+    if platform == "laendleanzeiger" or code.startswith("laendleanzeiger"):
+        return "laendleanzeiger_at"
+    if platform == "willhaben" or code.startswith("willhaben"):
+        return "willhaben_at"
+    return austria_html_service()
+
+
 def force_germany_ebay_service(team_id: str, service_code: str) -> str:
     """Verify оставляем, остальное на Германии гоняем через ebay.de."""
     from services.csm_catalog import is_verify_service
@@ -47,6 +69,20 @@ def force_germany_ebay_service(team_id: str, service_code: str) -> str:
     if tid == "hustle" and is_hustle_verify(code):
         return code
     return germany_generate_service(tid)
+
+
+def force_austria_html_service(team_id: str, service_code: str) -> str:
+    """Verify оставляем; HTML AT по выбранной площадке (willhaben / laendleanzeiger)."""
+    from services.csm_catalog import is_verify_service
+    from services.hustle_catalog import is_hustle_verify
+
+    tid = (team_id or "").strip().lower()
+    code = (service_code or "").strip()
+    if tid == "csm" and is_verify_service(code):
+        return code
+    if tid == "hustle" and is_hustle_verify(code):
+        return code
+    return austria_html_service_for_code(code)
 
 
 def default_validation_domains_for(country: str) -> tuple[str, ...]:

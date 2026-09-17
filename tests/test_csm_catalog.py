@@ -26,7 +26,12 @@ class CsmCatalogTests(unittest.TestCase):
         self.assertIn("2dehands", nl)
         de = [p for p, _, _ in platforms_for_country("de")]
         self.assertIn("kleinanzeigen", de)
+        at = [p for p, _, _ in platforms_for_country("at")]
+        self.assertIn("willhaben", at)
+        self.assertIn("laendleanzeiger", at)
         self.assertTrue(service_key_label("marktplaats_nl").startswith("Нидерланды"))
+        self.assertTrue(service_key_label("laendleanzeiger_at").startswith("Австрия"))
+        self.assertEqual(make_service_key("laendleanzeiger", "at"), "laendleanzeiger_at")
 
 
 if __name__ == "__main__":

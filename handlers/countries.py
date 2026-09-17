@@ -64,6 +64,11 @@ def _countries_text(active: str) -> str:
             "\nГермания: ссылки на <b>eBay.de</b> через выбранную команду API, "
             "валидация с упором на GMX/WEB.DE."
         )
+    elif active == "at":
+        extra = (
+            "\nАвстрия: HTML по площадке — "
+            "<code>willhaben_at</code> / <code>laendleanzeiger_at</code>."
+        )
     return (
         f"{html_emoji('compass')} <b>Страны</b>\n\n"
         f"Рабочая: <b>{html.escape(active_name)}</b>\n"

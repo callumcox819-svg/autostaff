@@ -14,6 +14,14 @@ class MailingForwardEmailTests(unittest.TestCase):
             seller_emails_equivalent("a@yahoo.com", "b@yahoo.de")
         )
 
+    def test_gmail_dots_equivalent(self):
+        self.assertTrue(
+            seller_emails_equivalent(
+                "michaela.lipburger@gmail.com",
+                "michaelalipburger@gmail.com",
+            )
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

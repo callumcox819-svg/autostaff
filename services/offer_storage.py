@@ -583,9 +583,7 @@ async def strip_validated_email_from_other_offers(
     email: str,
 ) -> None:
     """Один validated email на одного user — только один offer_id (без полного скана БД)."""
-    from sqlalchemy import func
-
-    from services.offer_matching import canon_seller_email
+    from services.offer_matching import canon_seller_email, seller_email_match_sql_conds
 
     want = canon_seller_email(email)
     if not want or not int(keep_offer_id or 0):
@@ -599,7 +597,7 @@ async def strip_validated_email_from_other_offers(
             .join(Offer, Offer.id == OfferEmail.offer_id)
             .where(Offer.user_id == uid)
             .where(OfferEmail.offer_id != keep)
-            .where(func.lower(OfferEmail.email) == want)
+            .where(or_(*seller_email_match_sql_conds(OfferEmail.email, email)))
         )
     ).scalars().all()
     touched_ids: set[int] = set()
@@ -651,7 +649,7 @@ async def list_offers_for_validated_contact_email(
 ) -> list[Offer]:
     """Лоты по OfferEmail (прямой поиск), validated_emails в raw_json, журнал рассылки."""
     from services.mailing_send_log import list_offers_from_mailing_log
-    from services.offer_matching import canon_seller_email
+    from services.offer_matching import canon_seller_email, seller_email_match_sql_conds
 
     want = normalize_incoming_seller_email(contact_email)
     if not want:
@@ -660,16 +658,9 @@ async def list_offers_for_validated_contact_email(
     seen: set[int] = set()
     out: list[Offer] = []
 
-    raw_in = (contact_email or "").strip().lower()
-    email_conds = [func.lower(OfferEmail.email) == want]
-    if raw_in and raw_in != want:
-        email_conds.append(func.lower(OfferEmail.email) == raw_in)
-    local_want = want.split("@", 1)[0] if "@" in want else ""
-    domain_want = want.split("@", 1)[1] if "@" in want else ""
-    if domain_want in ("gmail.com", "googlemail.com") and local_want:
-        email_conds.append(
-            func.replace(func.lower(OfferEmail.email), ".", "") == want.replace(".", "")
-        )
+    email_conds = seller_email_match_sql_conds(OfferEmail.email, contact_email)
+    if not email_conds:
+        return []
 
     direct_rows = (
         await session.execute(
@@ -694,13 +685,21 @@ async def list_offers_for_validated_contact_email(
         from database import engine
 
         if engine.dialect.name == "postgresql":
-            pat = f"%{want}%"
+            # Gmail: michaela.lipburger в JSON ↔ michaelalipburger во From
+            nodot = want.replace(".", "")
             id_rows = (
                 await session.execute(
                     sa_select(Offer.id)
                     .where(Offer.user_id == int(user_id))
                     .where(Offer.raw_json.isnot(None))
-                    .where(Offer.raw_json.ilike(pat))
+                    .where(
+                        or_(
+                            Offer.raw_json.ilike(f"%{want}%"),
+                            func.replace(func.lower(Offer.raw_json), ".", "").like(
+                                f"%{nodot}%"
+                            ),
+                        )
+                    )
                     .order_by(Offer.id.desc())
                     .limit(max(int(limit) * 3, 60))
                 )
@@ -823,19 +822,14 @@ async def _offers_from_offer_email_rows(
     contact_email: str,
 ) -> list[Offer]:
     """Лоты с строкой OfferEmail (как после валидации) — без скана 25k."""
+    from services.offer_matching import seller_email_match_sql_conds
+
     want = normalize_incoming_seller_email(contact_email)
     if not want:
         return []
-    raw_in = (contact_email or "").strip().lower()
-    email_conds = [func.lower(OfferEmail.email) == want]
-    if raw_in and raw_in != want:
-        email_conds.append(func.lower(OfferEmail.email) == raw_in)
-    local_want = want.split("@", 1)[0] if "@" in want else ""
-    domain_want = want.split("@", 1)[1] if "@" in want else ""
-    if domain_want in ("gmail.com", "googlemail.com") and local_want:
-        email_conds.append(
-            func.replace(func.lower(OfferEmail.email), ".", "") == want.replace(".", "")
-        )
+    email_conds = seller_email_match_sql_conds(OfferEmail.email, contact_email)
+    if not email_conds:
+        return []
 
     rows = (
         await session.execute(
@@ -1513,7 +1507,7 @@ async def save_all_offers_from_import(
             canon = normalize_incoming_seller_email(em) or str(em or "").strip().lower()
             if not canon or canon in reserved_emails:
                 continue
-            session.add(OfferEmail(offer_id=int(off.id), email=em))
+            session.add(OfferEmail(offer_id=int(off.id), email=canon))
             reserved_emails.add(canon)
             by_email.setdefault(canon, off)
             email_rows_saved += 1
@@ -1666,7 +1660,7 @@ async def save_all_offers_from_import(
                 keep_offer_id=int(offer.id),
                 email=em,
             )
-            session.add(OfferEmail(offer_id=int(offer.id), email=em))
+            session.add(OfferEmail(offer_id=int(offer.id), email=canon))
             reserved_emails.add(canon)
             email_rows_saved += 1
             try:

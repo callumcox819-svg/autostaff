@@ -341,6 +341,26 @@ def canon_seller_email(email: str) -> str:
     return _canon_email(email)
 
 
+def seller_email_match_sql_conds(email_column, contact_email: str) -> list:
+    """SQL: exact / raw / Gmail без точек (michaela.lipburger ↔ michaelalipburger)."""
+    from sqlalchemy import func
+
+    want = canon_seller_email(contact_email) or (contact_email or "").strip().lower()
+    if not want:
+        return []
+    raw = (contact_email or "").strip().lower()
+    conds = [func.lower(email_column) == want]
+    if raw and raw != want:
+        conds.append(func.lower(email_column) == raw)
+    domain = want.split("@", 1)[1] if "@" in want else ""
+    local = want.split("@", 1)[0] if "@" in want else ""
+    if domain in ("gmail.com", "googlemail.com") and local:
+        conds.append(
+            func.replace(func.lower(email_column), ".", "") == want.replace(".", "")
+        )
+    return conds
+
+
 _SUBJECT_STOP = frozenset(
     {
         "re",

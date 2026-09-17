@@ -27,11 +27,18 @@ def _canon_recipient(email: str) -> str:
     return canon_seller_email((email or "").strip())
 
 
+def _recipient_email_conds(contact_email: str) -> list:
+    """Условия по recipient_email: канон + Gmail без точек в старых строках журнала."""
+    from services.offer_matching import seller_email_match_sql_conds
+
+    return seller_email_match_sql_conds(MailingSendLog.recipient_email, contact_email)
+
+
 _YAHOO_DOMAINS = frozenset({"yahoo.com", "yahoo.de", "ymail.com", "rocketmail.com"})
 
 
 def seller_emails_equivalent(a: str, b: str) -> bool:
-    """Один продавец: переадресация yahoo.de → yahoo.com и т.п."""
+    """Один продавец: Gmail-точки и переадресация yahoo.de → yahoo.com."""
     ca = _canon_recipient(a)
     cb = _canon_recipient(b)
     if not ca or not cb:
@@ -268,10 +275,9 @@ async def load_last_mailing_quote(
     if not contact or not user_id:
         return {}
     inbox = (inbox_email or "").strip().lower()
-    raw = (contact_email or "").strip().lower()
-    conds = [func.lower(MailingSendLog.recipient_email) == contact]
-    if raw and raw != contact:
-        conds.append(func.lower(MailingSendLog.recipient_email) == raw)
+    conds = _recipient_email_conds(contact_email)
+    if not conds:
+        return {}
     rows = (
         await session.execute(
             select(MailingSendLog)
@@ -315,10 +321,9 @@ async def _mailing_log_rows_for_recipient(
     if not email:
         return []
 
-    raw = (contact_email or "").strip().lower()
-    conds = [func.lower(MailingSendLog.recipient_email) == email]
-    if raw and raw != email:
-        conds.append(func.lower(MailingSendLog.recipient_email) == raw)
+    conds = _recipient_email_conds(contact_email)
+    if not conds:
+        return []
 
     async def _pair_logs(logs: list[MailingSendLog]) -> list[tuple[MailingSendLog, Offer]]:
         out: list[tuple[MailingSendLog, Offer]] = []
@@ -505,10 +510,9 @@ async def has_mailing_send_for_contact(
     email = _canon_recipient(contact_email)
     if not email:
         return False
-    raw = (contact_email or "").strip().lower()
-    conds = [func.lower(MailingSendLog.recipient_email) == email]
-    if raw and raw != email:
-        conds.append(func.lower(MailingSendLog.recipient_email) == raw)
+    conds = _recipient_email_conds(contact_email)
+    if not conds:
+        return False
     hit = (
         await session.execute(
             select(MailingSendLog.id)
@@ -524,7 +528,7 @@ async def has_mailing_send_for_contact(
             select(MailingSendLog.recipient_email)
             .where(MailingSendLog.user_id == int(user_id))
             .order_by(MailingSendLog.sent_at.desc())
-            .limit(200)
+            .limit(800)
         )
     ).scalars().all()
     return any(
@@ -790,10 +794,9 @@ async def _recover_mailing_log_rows(
     email = _canon_recipient(contact_email)
     if not email:
         return []
-    raw = (contact_email or "").strip().lower()
-    conds = [func.lower(MailingSendLog.recipient_email) == email]
-    if raw and raw != email:
-        conds.append(func.lower(MailingSendLog.recipient_email) == raw)
+    conds = _recipient_email_conds(contact_email)
+    if not conds:
+        return []
     logs = (
         await session.execute(
             select(MailingSendLog)

@@ -112,7 +112,7 @@ async def _service_label_from_send_log(
     offer_id: int,
 ) -> str:
     """Сервис с той отправки /send, к которой привязан входящий ответ."""
-    from sqlalchemy import select
+    from sqlalchemy import or_, select
 
     from models import MailingSendLog
     from services.offer_storage import normalize_incoming_seller_email
@@ -120,30 +120,45 @@ async def _service_label_from_send_log(
     contact = normalize_incoming_seller_email(contact_email) or (contact_email or "").strip().lower()
     if not contact or not offer_id:
         return ""
-    row = (
-        await session.execute(
-            select(MailingSendLog.service_label, MailingSendLog.mail_subject)
-            .where(MailingSendLog.user_id == int(user_id))
-            .where(MailingSendLog.offer_id == int(offer_id))
-            .where(MailingSendLog.recipient_email == contact)
-            .order_by(MailingSendLog.sent_at.desc(), MailingSendLog.id.desc())
-            .limit(1)
-        )
-    ).first()
+    from services.mailing_send_log import seller_emails_equivalent
+    from services.offer_matching import seller_email_match_sql_conds
+
+    email_conds = seller_email_match_sql_conds(MailingSendLog.recipient_email, contact_email)
+    row = None
+    if email_conds:
+        row = (
+            await session.execute(
+                select(MailingSendLog.service_label, MailingSendLog.mail_subject)
+                .where(MailingSendLog.user_id == int(user_id))
+                .where(MailingSendLog.offer_id == int(offer_id))
+                .where(or_(*email_conds))
+                .order_by(MailingSendLog.sent_at.desc(), MailingSendLog.id.desc())
+                .limit(1)
+            )
+        ).first()
     if row and (row[0] or "").strip():
         return str(row[0]).strip()
-    # fallback: любой лог по offer_id (переадресация yahoo и т.п.)
-    row2 = (
+    # fallback: любой лог по offer_id (Gmail-точки / yahoo-переадресация)
+    rows_oid = (
         await session.execute(
-            select(MailingSendLog.service_label)
+            select(
+                MailingSendLog.service_label,
+                MailingSendLog.recipient_email,
+            )
             .where(MailingSendLog.user_id == int(user_id))
             .where(MailingSendLog.offer_id == int(offer_id))
             .where(MailingSendLog.service_label.isnot(None))
             .order_by(MailingSendLog.sent_at.desc(), MailingSendLog.id.desc())
-            .limit(1)
+            .limit(12)
         )
-    ).scalar_one_or_none()
-    return str(row2 or "").strip()
+    ).all()
+    for svc, rcpt in rows_oid:
+        if seller_emails_equivalent(rcpt or "", contact_email) or not contact_email:
+            if (svc or "").strip():
+                return str(svc).strip()
+    if rows_oid and (rows_oid[0][0] or "").strip():
+        return str(rows_oid[0][0]).strip()
+    return ""
 
 
 async def is_incoming_seller_lead(
@@ -196,17 +211,21 @@ async def prior_resolved_offer_id_for_seller(
     exclude_mail_id: int | None = None,
 ) -> int | None:
     """Повторное письмо: тот же validated email уже был привязан к лоту."""
-    from sqlalchemy import func, select as sa_select
+    from sqlalchemy import func, or_, select as sa_select
 
     from models import IncomingMail
+    from services.offer_matching import seller_email_match_sql_conds
 
     contact = normalize_incoming_seller_email(contact_email)
     if not contact:
         return None
+    email_conds = seller_email_match_sql_conds(IncomingMail.from_email, contact_email)
+    if not email_conds:
+        return None
     q = (
         sa_select(IncomingMail.resolved_offer_id)
         .where(IncomingMail.user_id == int(user_id))
-        .where(func.lower(IncomingMail.from_email) == contact)
+        .where(or_(*email_conds))
         .where(IncomingMail.resolved_offer_id.isnot(None))
         .order_by(IncomingMail.id.desc())
         .limit(1)

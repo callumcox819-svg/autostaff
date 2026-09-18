@@ -50,3 +50,10 @@ def merge_smart_presets(existing: list[str], imported: list[str]) -> tuple[list[
         base.append(row)
         added += 1
     return base, added, skipped
+
+
+def replace_smart_presets(imported: list[str]) -> tuple[list[str], int]:
+    """Новый TXT — полный набор пресетов; старые строки не подмешиваются."""
+    rows = list(imported or [])
+    selected = rows[:MAX_SMART_PRESETS_TOTAL]
+    return selected, max(0, len(rows) - len(selected))

@@ -133,7 +133,7 @@ def text_presets_manage_kb(
     ]
     if add_txt_cb:
         rows[0].append(
-            inline_button("add", "Добавить .txt", callback_data=add_txt_cb),
+            inline_button("add", "Заменить из .txt", callback_data=add_txt_cb),
         )
     rows.append(
         [

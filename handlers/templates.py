@@ -593,7 +593,7 @@ async def _finish_smart_txt_import(
     if skipped_cap > 0:
         extra = f"\n{html_emoji('warn')} Не загружено (лимит {MAX_SMART_PRESETS_TOTAL}): <b>{skipped_cap}</b>"
     await message.answer(
-        f"{html_emoji('ok')} Из .txt добавлено пресетов: <b>{added}</b>{extra}",
+        f"{html_emoji('ok')} Список заменён из .txt. Загружено пресетов: <b>{added}</b>{extra}",
         parse_mode="HTML",
     )
     await _send_smart_menu_message(message, tg_id)
@@ -902,6 +902,7 @@ async def stmpl_add_txt_start(call: CallbackQuery, state: FSMContext) -> None:
     prompt = await call.message.answer(
         f"{html_emoji('add')} Отправь файл <b>.txt</b>.\n"
         "Каждая <b>строка</b> = один умный пресет (Пресет #1, #2, …).\n"
+        "<b>Текущий список будет полностью заменён содержимым файла.</b>\n"
         "В файле можно <code>OFFER</code> или <code>[[ITEM_TITLE]]</code> — подставится название товара.",
         parse_mode="HTML",
     )
@@ -916,7 +917,11 @@ async def stmpl_add_txt_file(message: Message, state: FSMContext) -> None:
             f"{html_emoji('fail')} Нужен файл <code>.txt</code> (text/plain).",
             parse_mode="HTML",
         )
-    from services.smart_preset_txt import MAX_SMART_PRESETS_TOTAL, merge_smart_presets, parse_smart_presets_txt
+    from services.smart_preset_txt import (
+        MAX_SMART_PRESETS_TOTAL,
+        parse_smart_presets_txt,
+        replace_smart_presets,
+    )
 
     try:
         raw = await _load_txt_from_telegram_doc(message)
@@ -934,10 +939,15 @@ async def stmpl_add_txt_file(message: Message, state: FSMContext) -> None:
 
     async with Session() as session:
         tg_id = await _user_tg_id(session, message.from_user.id)
-    items = await load_smart_texts(tg_id)
-    merged, added, skipped = merge_smart_presets(items, parsed)
-    await save_smart_texts(tg_id, merged)
-    await _finish_smart_txt_import(message, data, tg_id, added=added, skipped_cap=skipped)
+    replacement, skipped = replace_smart_presets(parsed)
+    await save_smart_texts(tg_id, replacement)
+    await _finish_smart_txt_import(
+        message,
+        data,
+        tg_id,
+        added=len(replacement),
+        skipped_cap=skipped,
+    )
 
 
 @router.message(SmartTmplAdd.txt_file)

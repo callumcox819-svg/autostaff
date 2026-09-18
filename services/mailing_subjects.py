@@ -122,12 +122,16 @@ async def resolve_user_subject_template(session, user) -> str | None:
 
 
 async def mailing_subject_for_user(session, user, offer_title: str) -> str:
-    from services.subject_offer import pick_mailing_subject, render_subject_with_offer
+    from services.mailing_deliverability import pick_country_subject
+    from services.subject_offer import render_subject_with_offer
 
     tpl = await resolve_user_subject_template(session, user)
     if tpl:
         return render_subject_with_offer(tpl, offer_title or "")
-    return pick_mailing_subject(offer_title or "")
+    from services.enabled_countries import get_active_country
+
+    cc = await get_active_country(session, user)
+    return pick_country_subject(offer_title or "", country=cc)
 
 
 def mode_label(mode: SubjectMode) -> str:

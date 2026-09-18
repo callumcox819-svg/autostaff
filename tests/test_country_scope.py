@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
 import unittest
 from dataclasses import replace
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, patch
 
 from services.api_teams import ApiTeamConfig
 from services.country_scope import (
@@ -111,6 +113,47 @@ class GermanyGenerateOverrideTests(unittest.IsolatedAsyncioTestCase):
         )
         new = replace(cfg, service_code=force_germany_ebay_service(cfg.team_id, cfg.service_code))
         self.assertEqual(new.service_code, "kleinanzeigen_de")
+
+
+class CountryScopedApiSettingsTests(unittest.IsolatedAsyncioTestCase):
+    async def test_selected_team_uses_country_scoped_setting(self):
+        from services.api_teams import get_selected_team_id, set_selected_team_id
+
+        session = AsyncMock()
+        user = SimpleNamespace(id=1)
+        get_scoped = AsyncMock(return_value="gag")
+        set_scoped = AsyncMock()
+        with (
+            patch("services.country_scope.get_scoped_setting", new=get_scoped),
+            patch("services.country_scope.set_scoped_setting", new=set_scoped),
+        ):
+            self.assertEqual(await get_selected_team_id(session, user), "gag")
+            self.assertEqual(await set_selected_team_id(session, user, "hustle"), "hustle")
+        get_scoped.assert_awaited_once_with(session, user, "api_team_selected")
+        set_scoped.assert_awaited_once_with(session, user, "api_team_selected", "hustle")
+
+    async def test_team_service_and_profile_are_country_scoped(self):
+        from services.api_teams import get_team_field, set_team_field
+
+        session = AsyncMock()
+        user = SimpleNamespace(id=1)
+        get_scoped = AsyncMock(return_value="ricardo_ch")
+        set_scoped = AsyncMock()
+        with (
+            patch("services.country_scope.get_scoped_setting", new=get_scoped),
+            patch("services.country_scope.set_scoped_setting", new=set_scoped),
+        ):
+            self.assertEqual(
+                await get_team_field(session, user, "gag", "service_code"),
+                "ricardo_ch",
+            )
+            await set_team_field(session, user, "gag", "buyer_name", "Anna")
+        get_scoped.assert_awaited_once_with(
+            session, user, "api_team_gag_service_code"
+        )
+        set_scoped.assert_awaited_once_with(
+            session, user, "api_team_gag_buyer_name", "Anna"
+        )
 
 
 if __name__ == "__main__":

@@ -23,7 +23,6 @@ from models import EmailAccount, OfferEmail, Offer, User, Proxy
 from services.burst_mailer import run_burst_mailing
 from services.mailing_send import MAIL_VERIFY_SENT
 from services.users import get_or_create_user
-from services.user_settings import get_user_setting
 from services.placeholders import apply_placeholders
 
 from handlers.status import tg_answer_safe
@@ -38,8 +37,6 @@ from services.sending_state import set_state as _set_sending_state
 
 router = Router(name="send")
 logger = logging.getLogger(__name__)
-
-from services.aqua_keys import AQUA_PROFILE_ADDRESS_KEY, AQUA_PROFILE_NAME_KEY
 
 
 async def _edit_status_text(status_msg: Message, text: str, **kwargs) -> None:
@@ -222,27 +219,19 @@ async def _build_message_for_target(
     image_url = (getattr(offer, "photo", "") or "").strip() if offer else ""
 
     user = await get_or_create_user(session, tg_user_id)
-    buyer_name = ((await get_user_setting(session, user, AQUA_PROFILE_NAME_KEY)) or "").strip()
-    address = ((await get_user_setting(session, user, AQUA_PROFILE_ADDRESS_KEY)) or "").strip()
+    from services.aqua_keys import get_user_profile_address, get_user_profile_buyer_name
+    from services.enabled_countries import get_active_country
+
+    buyer_name = await get_user_profile_buyer_name(session, user)
+    address = await get_user_profile_address(session, user)
+    sender_name = (getattr(user, "sender_name", None) or "").strip()
+    country = await get_active_country(session, user)
 
     from services.mailing_deliverability import (
-        build_inbox_mailing_copy,
         finalize_inbox_mail,
-        mailing_inbox_success_profile,
         pick_inbox_success_body,
     )
-    from services.mailing_subjects import get_subject_lines
     from services.subject_offer import mailing_subject_for_user
-
-    # Короткий inbox-профиль (глобально вкл.) — лучше для Inbox.
-    # Пользовательские «Темы писем» сохраняем; тело берём короткое.
-    if mailing_inbox_success_profile():
-        custom = await get_subject_lines(session, user)
-        if custom:
-            subject = await mailing_subject_for_user(session, user, item_title or "")
-            body = pick_inbox_success_body()
-            return finalize_inbox_mail(subject, body, offer_title=item_title or "")
-        return build_inbox_mailing_copy(item_title or "")
 
     subject = await mailing_subject_for_user(session, user, item_title or "")
 
@@ -251,6 +240,7 @@ async def _build_message_for_target(
         "OFFER": item_title,
         "PRICE": price,
         "BUYER_NAME": buyer_name,
+        "SENDER_NAME": sender_name,
         "ADDRESS": address,
         "IMAGE_URL": image_url,
     }
@@ -262,20 +252,24 @@ async def _build_message_for_target(
         base_text = await pick_random_smart_preset(tg_user_id, item_title)
     except Exception:
         base_text = ""
-    if not (base_text or "").strip():
-        import random
-
-        from services.mailing_defaults import MAILING_FALLBACK_BODIES
-        from services.spintax import expand_spintax
-
-        base_text = expand_spintax(random.choice(MAILING_FALLBACK_BODIES))
+    has_user_preset = bool((base_text or "").strip())
+    if not has_user_preset:
+        base_text = pick_inbox_success_body(country)
 
     body = apply_placeholders(base_text, link=link, ctx=ctx)
     from services.offer_text import finalize_mailing_body
 
     body = finalize_mailing_body(body, item_title)
 
-    subject, body = finalize_inbox_mail(subject, body, offer_title=item_title)
+    subject, body = finalize_inbox_mail(
+        subject,
+        body,
+        offer_title=item_title,
+        country=country,
+        sender_name=sender_name,
+        # Пользовательский пресет применяем как задано, без чужой NL/EN подписи.
+        vary_body=not has_user_preset,
+    )
     return subject, body
 
 

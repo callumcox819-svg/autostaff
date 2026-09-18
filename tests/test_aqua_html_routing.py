@@ -5,7 +5,8 @@ from __future__ import annotations
 import os
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, patch
 
 
 class AquaHtmlRoutingTests(unittest.TestCase):
@@ -66,6 +67,31 @@ class AquaHtmlRoutingTests(unittest.TestCase):
             self.assertEqual(ht.html_subdir_for_service("demo_mkt"), "demo_mkt")
             self.assertTrue(str(ht.HTML_ROOT).endswith("HTML") or "HTML" in str(ht.HTML_ROOT))
             self.assertFalse((Path("data") / "HTMLch").exists())
+
+
+class AquaHtmlCountrySyncTests(unittest.IsolatedAsyncioTestCase):
+    async def test_sync_maps_foreign_service_to_ch_platform(self):
+        from services.aqua_keys import sync_html_service_from_code
+
+        session = AsyncMock()
+        user = SimpleNamespace(id=1)
+        write = AsyncMock()
+        with (
+            patch(
+                "services.enabled_countries.get_active_country",
+                new=AsyncMock(return_value="ch"),
+            ),
+            patch(
+                "services.api_teams.get_selected_team_id",
+                new=AsyncMock(return_value="gag"),
+            ),
+            patch("services.country_scope.set_scoped_setting", new=write),
+        ):
+            result = await sync_html_service_from_code(
+                session, user, "marktplaats_nl"
+            )
+        self.assertEqual(result, "ricardo_ch")
+        write.assert_awaited_once_with(session, user, "aqua_service", "ricardo_ch")
 
 
 if __name__ == "__main__":

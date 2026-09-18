@@ -18,13 +18,12 @@ from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMar
 from database import async_session, db_session
 from handlers.templates import pick_random_smart_preset
 from models import EmailAccount, Offer, OfferEmail, User
-from services.aqua_keys import AQUA_PROFILE_ADDRESS_KEY, AQUA_PROFILE_NAME_KEY
 from services.offer_storage import offer_effective_title
 from services.placeholders import apply_placeholders
 from services.smtp_block_control import is_smtp_account_block_error, mark_account_smtp_blocked
 from services.smtp_delivery_verify import verify_message_in_sent
 from services.smtp_proxy_send import send_email_via_account_with_proxy
-from services.user_settings import get_user_setting, set_user_setting
+from services.country_scope import get_scoped_setting, set_scoped_setting
 from services.users import get_or_create_user
 from sqlalchemy import func, select
 from keyboards.main_menu import is_test_mail_trigger
@@ -37,9 +36,6 @@ EMAIL_RE = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
 TEST_MAIL_RECIPIENTS_KEY = "test_mail_recipients"
 MAX_TEST_RECIPIENTS = 4
 TEST_SEND_DELAY_SEC = 2.0
-
-from services.mailing_defaults import MAILING_FALLBACK_BODIES
-from services.spintax import expand_spintax
 
 class TestMailStates(StatesGroup):
     waiting_recipients = State()
@@ -61,7 +57,7 @@ def _parse_emails(text: str, *, max_n: int = MAX_TEST_RECIPIENTS) -> list[str]:
 
 
 async def _load_saved_recipients(session, user: User) -> list[str]:
-    raw = (await get_user_setting(session, user, TEST_MAIL_RECIPIENTS_KEY) or "").strip()
+    raw = (await get_scoped_setting(session, user, TEST_MAIL_RECIPIENTS_KEY) or "").strip()
     if not raw:
         return []
     try:
@@ -79,7 +75,7 @@ async def _load_saved_recipients(session, user: User) -> list[str]:
 
 async def _save_recipients(session, user: User, emails: list[str]) -> None:
     clean = _parse_emails(" ".join(emails), max_n=MAX_TEST_RECIPIENTS)
-    await set_user_setting(
+    await set_scoped_setting(
         session,
         user,
         TEST_MAIL_RECIPIENTS_KEY,
@@ -266,23 +262,10 @@ async def _build_test_message(
         item_title = (row[0] if row else "") or "OFFER"
 
     from services.mailing_deliverability import (
-        build_inbox_mailing_copy,
         finalize_inbox_mail,
-        mailing_inbox_success_profile,
         pick_inbox_success_body,
     )
-    from services.mailing_subjects import get_subject_lines
     from services.subject_offer import mailing_subject_for_user
-
-    if mailing_inbox_success_profile():
-        custom = await get_subject_lines(session, user)
-        if custom:
-            subject = await mailing_subject_for_user(session, user, item_title or "")
-            body = pick_inbox_success_body()
-            subject, body = finalize_inbox_mail(subject, body, offer_title=item_title or "")
-            return subject, body, item_title
-        subject, body = build_inbox_mailing_copy(item_title or "")
-        return subject, body, item_title
 
     subject = await mailing_subject_for_user(session, user, item_title or "")
 
@@ -290,27 +273,41 @@ async def _build_test_message(
     link = (getattr(offer, "link", "") or "").strip() if offer else ""
     image_url = (getattr(offer, "photo", "") or "").strip() if offer else ""
 
-    buyer_name = ((await get_user_setting(session, user, AQUA_PROFILE_NAME_KEY)) or "").strip()
-    address = ((await get_user_setting(session, user, AQUA_PROFILE_ADDRESS_KEY)) or "").strip()
+    from services.aqua_keys import get_user_profile_address, get_user_profile_buyer_name
+    from services.enabled_countries import get_active_country
+
+    buyer_name = await get_user_profile_buyer_name(session, user)
+    address = await get_user_profile_address(session, user)
+    sender_name = (getattr(user, "sender_name", None) or "").strip()
+    country = await get_active_country(session, user)
 
     ctx = {
         "ITEM_TITLE": item_title,
         "OFFER": item_title,
         "PRICE": price,
         "BUYER_NAME": buyer_name,
+        "SENDER_NAME": sender_name,
         "ADDRESS": address,
         "IMAGE_URL": image_url,
     }
 
     base_text = await pick_random_smart_preset(tg_id, item_title)
-    if not (base_text or "").strip():
-        base_text = expand_spintax(random.choice(MAILING_FALLBACK_BODIES))
+    has_user_preset = bool((base_text or "").strip())
+    if not has_user_preset:
+        base_text = pick_inbox_success_body(country)
 
     body = apply_placeholders(base_text, link=link, ctx=ctx)
     from services.offer_text import finalize_mailing_body
 
     body = finalize_mailing_body(body, item_title)
-    subject, body = finalize_inbox_mail(subject, body, offer_title=item_title)
+    subject, body = finalize_inbox_mail(
+        subject,
+        body,
+        offer_title=item_title,
+        country=country,
+        sender_name=sender_name,
+        vary_body=not has_user_preset,
+    )
     return subject, body, item_title
 
 

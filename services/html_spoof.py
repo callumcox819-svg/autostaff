@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 
 from models import User
-from services.user_settings import get_user_setting
+from services.country_scope import get_scoped_setting
 
 SPOOFING_KEY = "spoofing"
 AQUA_SERVICE_KEY = "aqua_service"
@@ -23,7 +23,7 @@ def _setting_on(val: object) -> bool:
 
 
 async def is_spoofing_enabled(session, user: User) -> bool:
-    return _setting_on(await get_user_setting(session, user, SPOOFING_KEY))
+    return _setting_on(await get_scoped_setting(session, user, SPOOFING_KEY))
 
 
 async def get_spoof_display_name(session, user: User) -> str | None:
@@ -58,7 +58,7 @@ async def get_spoof_display_name(session, user: User) -> str | None:
     _add("html_nick")
 
     for key in keys:
-        nick = (await get_user_setting(session, user, key) or "").strip()
+        nick = (await get_scoped_setting(session, user, key) or "").strip()
         if nick:
             return nick
     return None

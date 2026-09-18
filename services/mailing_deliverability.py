@@ -50,6 +50,22 @@ INBOX_SUBJECT_PRESETS: tuple[str, ...] = (
 # Legacy alias (старые импорты)
 CH_INBOX_SUBJECT_PRESETS = INBOX_SUBJECT_PRESETS
 
+GERMAN_SUBJECT_PRESETS: tuple[str, ...] = (
+    "OFFER",
+    "Frage zu OFFER",
+    "Ist OFFER noch verfügbar?",
+    "Ist OFFER noch zu haben?",
+    "Interesse an OFFER",
+    "OFFER – noch zu haben?",
+)
+
+ENGLISH_SUBJECT_PRESETS: tuple[str, ...] = (
+    "OFFER",
+    "Question about OFFER",
+    "Is OFFER still available?",
+    "Interested in OFFER",
+)
+
 _INBOX_OPENERS: tuple[str, ...] = (
     "",
     "Beste,\n\n",
@@ -101,8 +117,31 @@ def mailing_inbox_success_profile() -> bool:
     return _env_on("MAILING_INBOX_SUCCESS_PROFILE", default="1")
 
 
-def pick_inbox_success_body() -> str:
-    return random.choice(INBOX_SUCCESS_BODIES)
+_GERMAN_SUCCESS_BODIES: tuple[str, ...] = (
+    "Guten Tag, ist Ihre Anzeige noch verfügbar?",
+    "Hallo, ist der Artikel noch zu haben?",
+    "Grüezi, ist das Angebot noch aktuell?",
+    "Guten Tag, wurde der Artikel bereits verkauft?",
+)
+
+_ENGLISH_SUCCESS_BODIES: tuple[str, ...] = (
+    "Hello, is your listing still available?",
+    "Hi, is the item still for sale?",
+    "Hello, has this already been sold?",
+)
+
+
+def _mail_country(country: str | None) -> str:
+    return (country or "nl").strip().lower()
+
+
+def pick_inbox_success_body(country: str | None = None) -> str:
+    cc = _mail_country(country)
+    if cc in {"de", "at", "ch"}:
+        return random.choice(_GERMAN_SUCCESS_BODIES)
+    if cc == "nl":
+        return random.choice(INBOX_SUCCESS_BODIES)
+    return random.choice(_ENGLISH_SUCCESS_BODIES)
 
 
 def mailing_subject_display_title(offer_title: str) -> str:
@@ -114,12 +153,23 @@ def mailing_subject_display_title(offer_title: str) -> str:
     return t
 
 
-def build_inbox_mailing_copy(offer_title: str) -> tuple[str, str]:
+def build_inbox_mailing_copy(
+    offer_title: str,
+    *,
+    country: str | None = None,
+    sender_name: str = "",
+) -> tuple[str, str]:
     """Subject + body: короткий plain cold mail без Re: и без ссылок."""
     label = mailing_subject_display_title(offer_title)
-    subj = pick_rotating_subject(label, presets_only=True)
-    body = pick_inbox_success_body()
-    return finalize_inbox_mail(subj, body, offer_title=label)
+    subj = pick_country_subject(label, country=country)
+    body = pick_inbox_success_body(country)
+    return finalize_inbox_mail(
+        subj,
+        body,
+        offer_title=label,
+        country=country,
+        sender_name=sender_name,
+    )
 
 
 def mailing_plain_only() -> bool:
@@ -241,16 +291,31 @@ def _body_already_has_greeting(body: str) -> bool:
     return bool(_GREETING_LINE_RE.match(first))
 
 
-def add_inbox_body_variation(body: str) -> str:
+def add_inbox_body_variation(
+    body: str,
+    *,
+    country: str | None = None,
+    sender_name: str = "",
+) -> str:
     """Микро-уникализация. Не клеим второе приветствие поверх уже существующего."""
     if not mailing_body_variation():
         return (body or "").strip()
     b = (body or "").strip()
+    cc = _mail_country(country)
+    if cc in {"de", "at", "ch"}:
+        openers = ("", "Guten Tag,\n\n", "Hallo,\n\n", "Grüezi,\n\n")
+        closings = ("Freundliche Grüße", "Viele Grüße", "Beste Grüße")
+    elif cc == "nl":
+        openers = _INBOX_OPENERS
+        closings = _INBOX_CLOSINGS
+    else:
+        openers = ("", "Hello,\n\n", "Hi,\n\n")
+        closings = ("Kind regards", "Best regards", "Thank you")
     if not _body_already_has_greeting(b):
-        opener = random.choice(_INBOX_OPENERS)
+        opener = random.choice(openers)
         if opener and opener.strip():
             b = f"{opener.strip()}\n\n{b}"
-    closing = random.choice(_INBOX_CLOSINGS)
+    closing = random.choice(closings)
     if not closing:
         return b.strip()
     if closing.lower() in b.lower()[-50:]:
@@ -259,20 +324,47 @@ def add_inbox_body_variation(body: str) -> str:
     tail = b.lower()[-60:]
     if any(x in tail for x in ("dank", "bedankt", "thanks", "groet")):
         return b.strip()
-    return f"{b}\n\n{closing}".strip()
+    signature = closing
+    if (sender_name or "").strip():
+        signature = f"{signature}\n{sender_name.strip()}"
+    return f"{b}\n\n{signature}".strip()
 
 
-def apply_mailing_body_policy(body: str) -> str:
+def apply_mailing_body_policy(
+    body: str,
+    *,
+    country: str | None = None,
+    sender_name: str = "",
+    vary_body: bool = True,
+) -> str:
     out = sanitize_body_for_inbox(body)
     if mailing_strip_link():
         out = strip_links_from_body(out)
-    out = add_inbox_body_variation(out)
+    if vary_body:
+        out = add_inbox_body_variation(
+            out,
+            country=country,
+            sender_name=sender_name,
+        )
     return out.strip()
 
 
-def finalize_inbox_mail(subject: str, body: str, *, offer_title: str = "") -> tuple[str, str]:
+def finalize_inbox_mail(
+    subject: str,
+    body: str,
+    *,
+    offer_title: str = "",
+    country: str | None = None,
+    sender_name: str = "",
+    vary_body: bool = True,
+) -> tuple[str, str]:
     subj = sanitize_subject_for_inbox(subject)
-    b = apply_mailing_body_policy(body)
+    b = apply_mailing_body_policy(
+        body,
+        country=country,
+        sender_name=sender_name,
+        vary_body=vary_body,
+    )
     subj, b = _scrub_offer_leaks(subj, b, offer_title)
     return subj, b
 
@@ -314,6 +406,20 @@ def pick_rotating_subject(
             pool.append(gt)
     tpl = random.choice(pool)
     return render_subject_with_offer(tpl, offer_title)
+
+
+def pick_country_subject(offer_title: str, *, country: str | None = None) -> str:
+    """Fallback-тема строго на языке активной страны."""
+    from services.subject_offer import render_subject_with_offer
+
+    cc = _mail_country(country)
+    if cc in {"de", "at", "ch"}:
+        pool = GERMAN_SUBJECT_PRESETS
+    elif cc == "nl":
+        pool = INBOX_SUBJECT_PRESETS
+    else:
+        pool = ENGLISH_SUBJECT_PRESETS
+    return render_subject_with_offer(random.choice(pool), offer_title)
 
 
 def log_deliverability_profile(logger) -> None:

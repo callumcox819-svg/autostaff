@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from models import EmailAccount, User
 from services.sender import normalize_send_error
-from services.user_settings import get_user_setting
+from services.country_scope import get_scoped_setting
 
 
 def _truthy(v: str | None) -> bool:
@@ -144,7 +144,7 @@ async def block_control_enabled(session: AsyncSession, db_user_id: int) -> bool:
     ).scalars().first()
     if not user:
         return False
-    return _truthy(await get_user_setting(session, user, "block_control"))
+    return _truthy(await get_scoped_setting(session, user, "block_control"))
 
 
 async def notify_smtp_stream_stopped_for_imap(

@@ -3272,20 +3272,23 @@ async def cb_mail_reply_html_send(callback: CallbackQuery, state: FSMContext):
             from services.html_reply import (
                 build_offer_html_ctx,
                 get_html_sender_name,
+                get_html_reply_subject,
                 prepare_html_body,
                 resolve_aqua_link_for_reply,
             )
 
-            subject = _reply_subject(subject_raw)
+            subject = await get_html_reply_subject(
+                session,
+                user,
+                fallback=_reply_subject(subject_raw),
+            )
             sender_name = await get_html_sender_name(session, user)
 
-            html_signature = (
-                await session.execute(
-                    sa_select(UserSetting.value)
-                    .where(UserSetting.user_id == int(user.id))
-                    .where(UserSetting.key == HTML_SIGNATURE_KEY)
-                )
-            ).scalar_one_or_none()
+            from services.country_scope import get_scoped_setting
+
+            html_signature = await get_scoped_setting(
+                session, user, HTML_SIGNATURE_KEY
+            )
 
             raw_html, tpl_err = await _load_html_template_for_user(session, user, filename)
             if tpl_err or not raw_html:
@@ -3601,20 +3604,23 @@ async def mail_reply_custom_html(message: Message, state: FSMContext):
             from services.html_reply import (
                 build_offer_html_ctx,
                 get_html_sender_name,
+                get_html_reply_subject,
                 prepare_html_body,
                 resolve_aqua_link_for_reply,
             )
 
-            subject = _reply_subject(subject_raw)
+            subject = await get_html_reply_subject(
+                session,
+                user,
+                fallback=_reply_subject(subject_raw),
+            )
             sender_name = await get_html_sender_name(session, user)
 
-            html_signature = (
-                await session.execute(
-                    sa_select(UserSetting.value)
-                    .where(UserSetting.user_id == int(user.id))
-                    .where(UserSetting.key == HTML_SIGNATURE_KEY)
-                )
-            ).scalar_one_or_none()
+            from services.country_scope import get_scoped_setting
+
+            html_signature = await get_scoped_setting(
+                session, user, HTML_SIGNATURE_KEY
+            )
 
             from services.placeholders import apply_placeholders
 

@@ -31,6 +31,28 @@ class HtmlSpoofNickTests(unittest.TestCase):
         self.assertNotIn("{{NICK}}", out)
 
 
+class HtmlCountrySubjectTests(unittest.IsolatedAsyncioTestCase):
+    async def test_html_reply_uses_scoped_theme_when_spoofing_enabled(self):
+        from services.html_reply import get_html_reply_subject
+
+        session = AsyncMock()
+        user = SimpleNamespace(id=1)
+        with (
+            patch(
+                "services.html_spoof.is_spoofing_enabled",
+                new=AsyncMock(return_value=True),
+            ),
+            patch(
+                "services.html_reply.get_scoped_setting",
+                new=AsyncMock(return_value="Ihre Ricardo-Zahlung"),
+            ),
+        ):
+            subject = await get_html_reply_subject(
+                session, user, fallback="Re: Alte NL-Thema"
+            )
+        self.assertEqual(subject, "Ihre Ricardo-Zahlung")
+
+
 class HtmlCtxBuyerTests(unittest.IsolatedAsyncioTestCase):
     async def test_uses_local_html_profile_fields(self):
         session = AsyncMock()
@@ -74,7 +96,7 @@ class HtmlCtxBuyerTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("EUR 0", ctx["PRICE"])
         self.assertIn("img.test", ctx["IMAGE_URL"])
 
-    async def test_bound_mismatch_clears_stale(self):
+    async def test_country_scoped_profile_ignores_stale_global_binding(self):
         from services.aqua_keys import resolve_html_buyer_profile
 
         session = AsyncMock()
@@ -95,8 +117,8 @@ class HtmlCtxBuyerTests(unittest.IsolatedAsyncioTestCase):
             ),
         ):
             name, addr = await resolve_html_buyer_profile(session, user)
-        self.assertEqual(name, "")
-        self.assertEqual(addr, "")
+        self.assertEqual(name, "Anna Kerginer")
+        self.assertEqual(addr, "Panoramastrasse 11")
 
     async def test_hustle_html_uses_team_name_address(self):
         from services.aqua_keys import resolve_html_buyer_profile

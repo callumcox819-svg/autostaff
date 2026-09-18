@@ -14,7 +14,6 @@ from aiogram.exceptions import TelegramBadRequest
 
 from database import Session, db_session
 from services.users import get_or_create_user
-from services.user_settings import get_user_setting, set_user_setting
 from services.country_scope import (
     country_display_name,
     get_scoped_setting,
@@ -151,13 +150,13 @@ TEAM_KEY = "team"
 
 async def load_html_nick(session: Session, tg_user_id: int) -> str | None:
     user = await get_or_create_user(session, tg_user_id)
-    val = await get_user_setting(session, user, HTMLNICK_KEY)
+    val = await get_scoped_setting(session, user, HTMLNICK_KEY)
     return (val or "").strip() or None
 
 async def save_html_nick(session: Session, tg_user_id: int, value: str | None) -> None:
     user = await get_or_create_user(session, tg_user_id)
     v = (value or "").strip() or None
-    await set_user_setting(session, user, HTMLNICK_KEY, v)
+    await set_scoped_setting(session, user, HTMLNICK_KEY, v)
 
 
 # =========================
@@ -218,13 +217,6 @@ async def _settings_menu_kb_for_user(tg_user_id: int) -> InlineKeyboardMarkup:
     async with db_session() as session:
         user = await get_or_create_user(session, tg_user_id)
 
-        async def _b(key: str, default: bool = False) -> bool:
-            v = await get_user_setting(session, user, key)
-            if v is None:
-                return default
-            s = str(v).strip().lower()
-            return s in {"1", "true", "yes", "on", "y"}
-
         async def _b_scoped(key: str, default: bool = False) -> bool:
             v = await get_scoped_setting(session, user, key)
             if v is None:
@@ -234,8 +226,8 @@ async def _settings_menu_kb_for_user(tg_user_id: int) -> InlineKeyboardMarkup:
 
         flags = {
             "smart_mode": await _b_scoped("smart_mode", False),
-            "spoofing": await _b("spoofing", False),
-            "block_control": await _b("block_control", False),
+            "spoofing": await _b_scoped("spoofing", False),
+            "block_control": await _b_scoped("block_control", False),
         }
 
     return settings_menu_kb(flags)
@@ -254,11 +246,13 @@ async def _spoof_name_menu_payload(tg_user_id: int) -> tuple[str, InlineKeyboard
     """Текст и клавиатура меню HTML-имени. None — сервис не выбран."""
     async with db_session() as session:
         user = await get_or_create_user(session, tg_user_id)
-        service = await get_user_aqua_service(session, user)
+        from services.aqua_keys import resolve_html_service
+
+        service = await resolve_html_service(session, user)
         if not is_valid_aqua_service(service):
             return None
         key = _html_nick_key_for_service(service)
-        cur = (await get_user_setting(session, user, key) or "").strip()
+        cur = (await get_scoped_setting(session, user, key) or "").strip()
         html_subj = (await get_scoped_setting(session, user, HTML_THEME_KEY) or "").strip() or "— не задано —"
 
     label = _service_label(service)
@@ -271,7 +265,7 @@ async def _spoof_name_menu_payload(tg_user_id: int) -> tuple[str, InlineKeyboard
         f"{html_emoji('user')} <b>Имя (From):</b> <code>{cur_disp}</code>\n"
         f"{html_emoji('pin')} <b>Тема письма:</b> <code>{subj_disp}</code>\n\n"
         f"Текстом / пресет / рассылка — имя из «{html_emoji('email')} E-mail», "
-        f"тема рассылки — глобальный <code>OFFER</code>."
+        f"тема рассылки — из настроек текущей страны; <code>OFFER</code> = товар."
     )
     kb = InlineKeyboardMarkup(
         inline_keyboard=[
@@ -323,7 +317,9 @@ async def spoof_name_menu(callback: CallbackQuery, state: FSMContext) -> None:
 async def spoof_name_set(callback: CallbackQuery, state: FSMContext) -> None:
     async with Session() as session:
         user = await get_or_create_user(session, callback.from_user.id)
-        service = await get_user_aqua_service(session, user)
+        from services.aqua_keys import resolve_html_service
+
+        service = await resolve_html_service(session, user)
         if not is_valid_aqua_service(service):
             return await callback.answer("Сначала выберите сервис в профиле", show_alert=True)
     await state.set_state(SpoofNameState.waiting_name)
@@ -352,7 +348,7 @@ async def spoof_name_save(message: Message, state: FSMContext) -> None:
     async with db_session() as session:
         user = await get_or_create_user(session, message.from_user.id)
         key = _html_nick_key_for_service(service)
-        await set_user_setting(session, user, key, name)
+        await set_scoped_setting(session, user, key, name)
 
     prompt_chat_id = data.get("spoof_prompt_chat_id")
     prompt_msg_id = data.get("spoof_prompt_msg_id")
@@ -528,18 +524,11 @@ async def ref_toggle(callback: CallbackQuery):
 
     async with db_session() as session:
         user = await get_or_create_user(session, callback.from_user.id)
-        if db_key == "smart_mode":
-            cur = await get_scoped_setting(session, user, db_key)
-            cur_s = str(cur or "").strip().lower()
-            cur_b = cur_s in {"1", "true", "yes", "on", "y"}
-            new_b = not cur_b
-            await set_scoped_setting(session, user, db_key, "1" if new_b else "0")
-        else:
-            cur = await get_user_setting(session, user, db_key)
-            cur_s = str(cur or "").strip().lower()
-            cur_b = cur_s in {"1", "true", "yes", "on", "y"}
-            new_b = not cur_b
-            await set_user_setting(session, user, db_key, "1" if new_b else "0")
+        cur = await get_scoped_setting(session, user, db_key)
+        cur_s = str(cur or "").strip().lower()
+        cur_b = cur_s in {"1", "true", "yes", "on", "y"}
+        new_b = not cur_b
+        await set_scoped_setting(session, user, db_key, "1" if new_b else "0")
 
     kb = await _settings_menu_kb_for_user(callback.from_user.id)
     await _cq_edit_text(
@@ -702,7 +691,7 @@ async def html_theme_menu(callback: CallbackQuery, state: FSMContext):
     txt = (
         f"{html_emoji('pin')} <b>Тема для HTML</b>\n\n"
         "Только при 🟢 <b>Спуфинг</b> и отправке <b>HTML</b> (не для текста/пресета и не для рассылки).\n"
-        "Рассылка — глобальный <code>OFFER</code> → название товара.\n\n"
+        "Рассылка — тема текущей страны; <code>OFFER</code> → название товара.\n\n"
         f"Текущее значение:\n<code>{cur_show}</code>"
     )
     await _safe_send(callback.message.edit_text(txt, reply_markup=kb, parse_mode="HTML"))

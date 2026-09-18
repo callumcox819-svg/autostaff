@@ -5,7 +5,7 @@ from __future__ import annotations
 from urllib.parse import urlparse
 
 from models import User
-from services.user_settings import get_user_setting, set_user_setting
+from services.country_scope import get_scoped_setting, set_scoped_setting
 
 AQUA_GENERATE_DOMAIN_KEY = "aqua_generate_domain"
 
@@ -16,7 +16,7 @@ _BAD_HOSTS = frozenset({"undefined", "null", "none", ""})
 
 
 async def get_user_gag_domain_mode(session, user: User, *, default: str = DOMAIN_MODE_TEAM) -> str:
-    raw = (await get_user_setting(session, user, AQUA_GENERATE_DOMAIN_KEY) or "").strip().lower()
+    raw = (await get_scoped_setting(session, user, AQUA_GENERATE_DOMAIN_KEY) or "").strip().lower()
     if raw in (DOMAIN_MODE_TEAM, "command", "team_domain", "0"):
         return DOMAIN_MODE_TEAM
     if raw in DOMAIN_MODES_NUMBERED:
@@ -33,10 +33,10 @@ async def get_user_gag_domain_mode(session, user: User, *, default: str = DOMAIN
 async def set_user_gag_domain_mode(session, user: User, mode: str) -> None:
     m = (mode or "").strip().lower()
     if m == DOMAIN_MODE_TEAM:
-        await set_user_setting(session, user, AQUA_GENERATE_DOMAIN_KEY, DOMAIN_MODE_TEAM)
+        await set_scoped_setting(session, user, AQUA_GENERATE_DOMAIN_KEY, DOMAIN_MODE_TEAM)
         return
     if m in DOMAIN_MODES_NUMBERED:
-        await set_user_setting(session, user, AQUA_GENERATE_DOMAIN_KEY, m)
+        await set_scoped_setting(session, user, AQUA_GENERATE_DOMAIN_KEY, m)
         return
     raise ValueError(f"Unknown domain mode: {mode!r}")
 

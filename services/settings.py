@@ -7,7 +7,7 @@ from database import Session
 from models import AppSetting
 
 from services.users import get_or_create_user
-from services.user_settings import get_user_setting, set_user_setting
+from services.country_scope import get_scoped_setting, set_scoped_setting
 
 
 VALIDEMAIL_KEY_SETTING = "validemail_api_key"
@@ -81,7 +81,7 @@ async def load_timing(session: Session, tg_user_id: int) -> dict:
       from services.settings import load_timing
     """
     user = await get_or_create_user(session, tg_user_id)
-    raw = await get_user_setting(session, user, TIMING_KEY)
+    raw = await get_scoped_setting(session, user, TIMING_KEY)
     if raw:
         try:
             d = json.loads(raw)
@@ -115,4 +115,4 @@ async def save_timing(session: Session, tg_user_id: int, timing: dict) -> None:
         "max_delay": float(timing.get("max_delay", timing.get("max", 5))),
         "batch_size": 1,
     }
-    await set_user_setting(session, user, TIMING_KEY, json.dumps(payload, ensure_ascii=False))
+    await set_scoped_setting(session, user, TIMING_KEY, json.dumps(payload, ensure_ascii=False))

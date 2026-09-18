@@ -17,7 +17,7 @@ HTML_THEME_KEY = "html_theme"
 async def get_html_reply_subject(session, user: User, *, fallback: str = "") -> str:
     """
     Тема для HTML при 🟢 Спуфинг: «Тема для HTML».
-    Иначе — как у обычного ответа (Re: …). Рассылка — отдельно, global OFFER.
+    Иначе — как у обычного ответа (Re: …). Рассылка использует тему активной страны.
     """
     from services.html_spoof import is_spoofing_enabled
 

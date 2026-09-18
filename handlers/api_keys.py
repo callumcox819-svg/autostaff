@@ -38,7 +38,7 @@ from services.gag_domains import (
     set_user_gag_domain_mode,
 )
 from services.aqua_network import AquaError, generate_api_base, generate_api_configured, verify_gag_auth
-from services.user_settings import get_user_setting, set_user_setting
+from services.country_scope import get_scoped_setting, set_scoped_setting
 from utils.secrets import clean_secret
 from utils.ui_emoji import html_emoji, inline_button, back_inline, back_kb, menu_path, toast, msg_fail, msg_ok, msg_wait, msg_warn, unicode_fallback
 
@@ -130,10 +130,10 @@ def _field_line(label: str, value: str) -> str:
 async def _render_profile_screen(callback: CallbackQuery) -> None:
     async with Session() as session:
         user = await get_or_create_user(session, callback.from_user.id)
-        raw_svc = (await get_user_setting(session, user, AQUA_SERVICE_KEY) or "").strip()
+        raw_svc = (await get_scoped_setting(session, user, AQUA_SERVICE_KEY) or "").strip()
         if not normalize_aqua_service(raw_svc):
             default_svc = normalize_aqua_service(AQUA_DEFAULT_SERVICE) or AQUA_DEFAULT_SERVICE
-            await set_user_setting(session, user, AQUA_SERVICE_KEY, default_svc)
+            await set_scoped_setting(session, user, AQUA_SERVICE_KEY, default_svc)
         title = await get_user_profile_title(session, user)
         buyer = await get_user_profile_buyer_name(session, user)
         addr = await get_user_profile_address(session, user)
@@ -289,7 +289,7 @@ async def aqua_service_set(callback: CallbackQuery, state: FSMContext) -> None:
 
     async with Session() as session:
         user = await get_or_create_user(session, callback.from_user.id)
-        await set_user_setting(session, user, AQUA_SERVICE_KEY, code)
+        await set_scoped_setting(session, user, AQUA_SERVICE_KEY, code)
         await session.commit()
 
     await state.clear()
@@ -365,9 +365,9 @@ async def profile_address_step(message: Message, state: FSMContext) -> None:
 
     async with Session() as session:
         user = await get_or_create_user(session, message.from_user.id)
-        await set_user_setting(session, user, AQUA_PROFILE_TITLE_KEY, title)
-        await set_user_setting(session, user, AQUA_PROFILE_NAME_KEY, buyer)
-        await set_user_setting(session, user, AQUA_PROFILE_ADDRESS_KEY, addr)
+        await set_scoped_setting(session, user, AQUA_PROFILE_TITLE_KEY, title)
+        await set_scoped_setting(session, user, AQUA_PROFILE_NAME_KEY, buyer)
+        await set_scoped_setting(session, user, AQUA_PROFILE_ADDRESS_KEY, addr)
         await session.commit()
 
     await state.clear()
@@ -431,8 +431,7 @@ async def keys_set_finish(message: Message, state: FSMContext) -> None:
     async with Session() as session:
         user = await get_or_create_user(session, message.from_user.id)
         value = normalize_aqua_api_key(value)
-        user.goo_user_api_key_aqua = value
-        await set_user_setting(session, user, AQUA_USER_API_KEY_SETTING, value)
+        await set_scoped_setting(session, user, AQUA_USER_API_KEY_SETTING, value)
         await session.commit()
 
     await state.clear()

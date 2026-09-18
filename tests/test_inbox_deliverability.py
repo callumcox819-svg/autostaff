@@ -62,6 +62,34 @@ class InboxDeliverabilityTests(unittest.TestCase):
         first_block = out.split("\n\n", 1)[0].lower()
         self.assertTrue(first_block.startswith("goedendag"))
 
+    def test_ch_fallback_is_german_and_uses_sender_name(self):
+        with patch.dict(os.environ, {"MAILING_BODY_VARIATION": "1"}, clear=False):
+            subject, body = build_inbox_mailing_copy(
+                "Thule Dachträger",
+                country="ch",
+                sender_name="Anna",
+            )
+        self.assertNotIn("vraag", subject.lower())
+        self.assertNotIn("beschikbaar", body.lower())
+        self.assertTrue(
+            any(word in body.lower() for word in ("verfügbar", "artikel", "angebot", "verkauft"))
+        )
+        self.assertIn("Anna", body)
+
+    def test_user_preset_is_not_replaced_or_given_foreign_signature(self):
+        subject, body = finalize_inbox_mail(
+            "Frage zu OFFER",
+            "Guten Tag, ist OFFER noch verfügbar?\n\nFreundliche Grüße\nAnna",
+            offer_title="Fahrrad",
+            country="ch",
+            sender_name="Anna",
+            vary_body=False,
+        )
+        self.assertEqual(subject, "Frage zu OFFER")
+        self.assertIn("Fahrrad noch verfügbar", body)
+        self.assertNotIn("Met vriendelijke groet", body)
+        self.assertEqual(body.count("Anna"), 1)
+
 
 if __name__ == "__main__":
     unittest.main()

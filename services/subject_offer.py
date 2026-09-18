@@ -105,11 +105,21 @@ async def mailing_subject_for_user(session, user, offer_title: str) -> str:
 
 def _mailing_subject_templates() -> tuple[str, ...]:
     """Все шаблоны темы /send — OFFER = полное item_title из БД."""
-    from services.mailing_deliverability import INBOX_SUBJECT_PRESETS
+    from services.mailing_deliverability import (
+        ENGLISH_SUBJECT_PRESETS,
+        GERMAN_SUBJECT_PRESETS,
+        INBOX_SUBJECT_PRESETS,
+    )
 
     seen: set[str] = set()
     out: list[str] = []
-    for tpl in (*INBOX_SUBJECT_PRESETS, global_subject_template(), "OFFER"):
+    for tpl in (
+        *INBOX_SUBJECT_PRESETS,
+        *GERMAN_SUBJECT_PRESETS,
+        *ENGLISH_SUBJECT_PRESETS,
+        global_subject_template(),
+        "OFFER",
+    ):
         t = sanitize_email_subject((tpl or "").strip())
         if not t or t in seen:
             continue

@@ -6,7 +6,6 @@ from dataclasses import dataclass
 
 from models import User
 from services.aqua_keys import get_global_aqua_team_key
-from services.user_settings import get_user_setting, set_user_setting
 from utils.secrets import clean_secret
 
 SELECTED_TEAM_KEY = "api_team_selected"
@@ -97,7 +96,9 @@ def default_type_for_team(team_id: str) -> str:
 
 
 async def get_selected_team_id(session, user: User) -> str:
-    raw = await get_user_setting(session, user, SELECTED_TEAM_KEY)
+    from services.country_scope import get_scoped_setting
+
+    raw = await get_scoped_setting(session, user, SELECTED_TEAM_KEY)
     tid = normalize_team_id(raw)
     if tid:
         return tid
@@ -108,25 +109,19 @@ async def set_selected_team_id(session, user: User, team_id: str) -> str:
     tid = normalize_team_id(team_id)
     if not tid:
         raise ValueError(f"Unknown team: {team_id!r}")
-    await set_user_setting(session, user, SELECTED_TEAM_KEY, tid)
+    from services.country_scope import set_scoped_setting
+
+    await set_scoped_setting(session, user, SELECTED_TEAM_KEY, tid)
     return tid
-
-
-_COUNTRY_PROFILE_FIELDS = frozenset({"buyer_name", "address"})
 
 
 async def get_team_field(session, user: User, team_id: str, field: str) -> str:
     tid = normalize_team_id(team_id) or ""
     if not tid:
         return ""
-    if field in _COUNTRY_PROFILE_FIELDS:
-        from services.country_scope import get_scoped_setting
+    from services.country_scope import get_scoped_setting
 
-        val = (await get_scoped_setting(session, user, _sk(tid, field)) or "").strip()
-        if val:
-            return val
-        return (await get_user_setting(session, user, _sk(tid, field)) or "").strip()
-    val = (await get_user_setting(session, user, _sk(tid, field)) or "").strip()
+    val = (await get_scoped_setting(session, user, _sk(tid, field)) or "").strip()
     if val:
         return val
     if field == "service_code":
@@ -153,12 +148,9 @@ async def set_team_field(session, user: User, team_id: str, field: str, value: s
         value = clean_secret(value)
     else:
         value = (value or "").strip()
-    if field in _COUNTRY_PROFILE_FIELDS:
-        from services.country_scope import set_scoped_setting
+    from services.country_scope import set_scoped_setting
 
-        await set_scoped_setting(session, user, _sk(tid, field), value)
-        return
-    await set_user_setting(session, user, _sk(tid, field), value)
+    await set_scoped_setting(session, user, _sk(tid, field), value)
     if tid == "evoleum" and field == "profile_id":
         from services.aqua_keys import bind_evoleum_profile_id
 

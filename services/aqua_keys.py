@@ -10,7 +10,6 @@ from pathlib import Path
 from config import config
 from models import User
 from region import AQUA_DEFAULT_SERVICE, HTML_DATA_DIR, TEAM_NAME
-from services.user_settings import get_user_setting, set_user_setting
 from utils.secrets import clean_secret
 
 logger = logging.getLogger(__name__)
@@ -105,7 +104,9 @@ def aqua_service_label(code: str | None) -> str:
 
 
 async def get_user_aqua_service(session, user: User) -> str:
-    raw = (await get_user_setting(session, user, AQUA_SERVICE_KEY) or "").strip()
+    from services.country_scope import get_scoped_setting
+
+    raw = (await get_scoped_setting(session, user, AQUA_SERVICE_KEY) or "").strip()
     normalized = normalize_aqua_service(raw)
     if normalized:
         return normalized
@@ -163,7 +164,7 @@ async def resolve_html_service(session, user: User) -> str:
         f"laendleanzeiger_{cc}",
         f"marktplaats_{cc}",
         cc,
-        "marktplaats_nl",
+        "marktplaats_nl" if cc == "nl" else "",
     ):
         code = (raw or "").strip().lower()
         if code and code not in candidates:
@@ -174,7 +175,19 @@ async def resolve_html_service(session, user: User) -> str:
         n = normalize_aqua_service(code)
         if n and _html_confirmation_exists(n):
             return n
-    return await get_user_aqua_service(session, user)
+    # Не подставляем HTML другой страны. Если папки нет, вызывающий код покажет
+    # ошибку для текущей country/platform вместо отправки NL-шаблона.
+    if svc:
+        return svc
+    if cc == "ch":
+        return "ricardo_ch"
+    if cc == "at":
+        return "willhaben_at"
+    if cc == "de":
+        return "ebay_de"
+    if cc == "nl":
+        return "marktplaats_nl"
+    return cc
 
 
 async def sync_html_service_from_code(session, user: User, service_code: str | None) -> str | None:
@@ -184,20 +197,36 @@ async def sync_html_service_from_code(session, user: User, service_code: str | N
         return None
     try:
         from services.csm_catalog import is_verify_service
-        from services.country_scope import austria_html_service_for_code
+        from services.country_scope import (
+            austria_html_service_for_code,
+            force_germany_ebay_service,
+            force_switzerland_html_service,
+        )
         from services.enabled_countries import get_active_country
 
         if is_verify_service(sc):
             return None
         cc = await get_active_country(session, user)
+        try:
+            from services.api_teams import get_selected_team_id
+
+            team_id = await get_selected_team_id(session, user)
+        except Exception:
+            team_id = ""
         if cc == "at":
             sc = austria_html_service_for_code(sc)
+        elif cc == "de":
+            sc = force_germany_ebay_service(team_id, sc)
+        elif cc == "ch":
+            sc = force_switzerland_html_service(team_id, sc)
     except Exception:
         pass
     n = normalize_aqua_service(sc)
     if not n:
         return None
-    await set_user_setting(session, user, AQUA_SERVICE_KEY, n)
+    from services.country_scope import set_scoped_setting
+
+    await set_scoped_setting(session, user, AQUA_SERVICE_KEY, n)
     return n
 
 
@@ -246,17 +275,17 @@ def get_user_aqua_user_key(user: User) -> str:
 
 
 async def get_user_aqua_user_key_async(session, user: User) -> str:
-    user_key = get_user_aqua_user_key(user)
-    if user_key:
-        return user_key
-    raw = (await get_user_setting(session, user, AQUA_USER_API_KEY_SETTING) or "").strip()
+    from services.country_scope import get_scoped_setting
+
+    raw = (await get_scoped_setting(session, user, AQUA_USER_API_KEY_SETTING) or "").strip()
     return normalize_aqua_api_key(raw)
 
 
 async def set_user_aqua_user_key(session, user: User, value: str) -> None:
+    from services.country_scope import set_scoped_setting
+
     key = normalize_aqua_api_key(value)
-    user.goo_user_api_key_aqua = key or None
-    await set_user_setting(session, user, AQUA_USER_API_KEY_SETTING, key)
+    await set_scoped_setting(session, user, AQUA_USER_API_KEY_SETTING, key)
 
 
 async def get_user_aqua_api_keys_async(session, user: User) -> tuple[str, str]:
@@ -273,25 +302,21 @@ def get_user_goo_profile_id(user: User) -> str:
 
 
 async def get_user_profile_title(session, user: User) -> str:
-    return (await get_user_setting(session, user, AQUA_PROFILE_TITLE_KEY) or "").strip()
+    from services.country_scope import get_scoped_setting
+
+    return (await get_scoped_setting(session, user, AQUA_PROFILE_TITLE_KEY) or "").strip()
 
 
 async def get_user_profile_buyer_name(session, user: User) -> str:
     from services.country_scope import get_scoped_setting
 
-    val = (await get_scoped_setting(session, user, AQUA_PROFILE_NAME_KEY) or "").strip()
-    if val:
-        return val
-    return (await get_user_setting(session, user, AQUA_PROFILE_NAME_KEY) or "").strip()
+    return (await get_scoped_setting(session, user, AQUA_PROFILE_NAME_KEY) or "").strip()
 
 
 async def get_user_profile_address(session, user: User) -> str:
     from services.country_scope import get_scoped_setting
 
-    val = (await get_scoped_setting(session, user, AQUA_PROFILE_ADDRESS_KEY) or "").strip()
-    if val:
-        return val
-    return (await get_user_setting(session, user, AQUA_PROFILE_ADDRESS_KEY) or "").strip()
+    return (await get_scoped_setting(session, user, AQUA_PROFILE_ADDRESS_KEY) or "").strip()
 
 
 async def user_profile_fields_complete(session, user: User) -> bool:
@@ -320,8 +345,7 @@ async def get_user_aqua_profile_display(session, user: User) -> str:
                 return label
             title = await get_user_profile_title(session, user)
             name = await get_user_profile_buyer_name(session, user)
-            bound = get_user_goo_profile_id(user)
-            if pid and bound and bound == pid and (title or name):
+            if title or name:
                 if title and name:
                     return f"{title} · {name}"
                 return title or name
@@ -355,32 +379,27 @@ async def resolve_html_buyer_profile(session, user: User) -> tuple[str, str]:
 
     name = await get_user_profile_buyer_name(session, user)
     address = await get_user_profile_address(session, user)
-    if cfg and cfg.team_id == "evoleum":
-        pid = (cfg.profile_id or "").strip()
-        bound = get_user_goo_profile_id(user)
-        if pid and bound and bound != pid:
-            return "", ""
     return (name or "").strip(), (address or "").strip()
 
 
 async def bind_evoleum_profile_id(session, user: User, profile_id: str) -> None:
     """Сохранить Profile ID Evoleum и сбросить устаревшее локальное ФИО для HTML."""
+    from services.country_scope import set_scoped_setting
+
     pid = (profile_id or "").strip()
-    prev = get_user_goo_profile_id(user)
-    user.goo_profile_id = pid or None
-    if pid and pid != prev:
-        await set_user_setting(session, user, AQUA_PROFILE_TITLE_KEY, "")
-        await set_user_setting(session, user, AQUA_PROFILE_NAME_KEY, "")
-        await set_user_setting(session, user, AQUA_PROFILE_ADDRESS_KEY, "")
-        await set_user_setting(session, user, "api_team_evoleum_profile_label", "")
+    if pid:
+        await set_scoped_setting(session, user, AQUA_PROFILE_TITLE_KEY, "")
+        await set_scoped_setting(session, user, AQUA_PROFILE_NAME_KEY, "")
+        await set_scoped_setting(session, user, AQUA_PROFILE_ADDRESS_KEY, "")
+        await set_scoped_setting(session, user, "api_team_evoleum_profile_label", "")
 
 
 async def apply_aqua_profile_to_user(session, user: User, profile) -> None:
+    from services.country_scope import set_scoped_setting
     from services.aqua_profiles import AquaProfile
 
     if not isinstance(profile, AquaProfile):
         raise TypeError("profile must be AquaProfile")
-    user.goo_profile_id = profile.profile_id
-    await set_user_setting(session, user, AQUA_PROFILE_TITLE_KEY, profile.title)
-    await set_user_setting(session, user, AQUA_PROFILE_NAME_KEY, profile.full_name)
-    await set_user_setting(session, user, AQUA_PROFILE_ADDRESS_KEY, profile.address)
+    await set_scoped_setting(session, user, AQUA_PROFILE_TITLE_KEY, profile.title)
+    await set_scoped_setting(session, user, AQUA_PROFILE_NAME_KEY, profile.full_name)
+    await set_scoped_setting(session, user, AQUA_PROFILE_ADDRESS_KEY, profile.address)

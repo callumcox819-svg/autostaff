@@ -43,7 +43,7 @@ class SellerDedupTests(unittest.TestCase):
         self.assertFalse(seller_name_eligible_for_validation("Auto"))
         self.assertFalse(seller_name_eligible_for_validation("Amersfoort"))
         self.assertFalse(seller_name_eligible_for_validation("KINDERSPEELGOED SPECIALIST"))
-        # Одиночные имена с AT/DE JSON — в БД сохраняем, на валидацию не гоняем.
+        # Одиночные имена с AT/DE/NL JSON — в БД сохраняем, на валидацию не гоняем.
         self.assertFalse(seller_name_eligible_for_validation("Irene"))
         self.assertFalse(seller_name_eligible_for_validation("Claude"))
         self.assertFalse(seller_name_eligible_for_validation("Frederih"))
@@ -92,6 +92,46 @@ class SellerDedupTests(unittest.TestCase):
         self.assertIn("janvries", vs)
         self.assertNotIn("jan", vs)
         self.assertNotIn("vries", vs)
+
+    def test_ch_allows_single_first_names_min_4(self):
+        """Ricardo/CH: всё с ≥4 буквами; ник целиком (jul_2f57, Jessica13)."""
+        from services.seller_name import (
+            ch_local_part_variants,
+            seller_name_eligible_for_validation,
+        )
+
+        self.assertTrue(seller_name_eligible_for_validation("Irene", country="ch"))
+        self.assertTrue(seller_name_eligible_for_validation("Hans", country="ch"))
+        self.assertTrue(seller_name_eligible_for_validation("jul_2f57", country="ch"))
+        self.assertTrue(seller_name_eligible_for_validation("Jessica13", country="ch"))
+        self.assertTrue(seller_name_eligible_for_validation("Auto", country="ch"))
+        self.assertFalse(seller_name_eligible_for_validation("Jan", country="ch"))
+        self.assertFalse(seller_name_eligible_for_validation("PMU_90", country="ch"))
+
+        self.assertIn("jul_2f57", ch_local_part_variants("jul_2f57"))
+        self.assertIn("jessica13", ch_local_part_variants("Jessica13"))
+        self.assertIn(
+            "jul_2f57",
+            _make_local_part_variants(
+                "jul_2f57", require_first_and_last=False, country="ch"
+            ),
+        )
+        self.assertIn(
+            "jessica13",
+            _make_local_part_variants(
+                "Jessica13", require_first_and_last=False, country="ch"
+            ),
+        )
+        self.assertIn(
+            "flohmarkt77",
+            _make_local_part_variants(
+                "Flohmarkt-77", require_first_and_last=False, country="ch"
+            ),
+        )
+        self.assertEqual(
+            _make_local_part_variants("Jan", require_first_and_last=False, country="ch"),
+            [],
+        )
 
     def test_skip_already_in_db_is_not_blacklist(self):
         from services.validemail_validator import classify_json_seller_skip

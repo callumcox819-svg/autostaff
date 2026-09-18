@@ -29,9 +29,9 @@ from services.validemail_validator import (
 )
 from services.offer_storage import save_all_offers_from_import, format_validated_export_document
 from services.seller_name import (
-    MIN_SELLER_LETTERS,
     seller_name_eligible_for_validation,
     seller_name_from_item,
+    seller_name_min_letters,
 )
 from services.sending_state import get_sending_state, set_sending_state
 from services.mailing_active_db import is_user_mailing_active
@@ -655,7 +655,8 @@ async def _run_validation_pipeline_inner(
         max_emails_per_seller=MAX_EMAILS_PER_SELLER,
         require_first_and_last=REQUIRE_FIRST_AND_LAST,
         max_len=40,
-        min_len=MIN_SELLER_LETTERS,
+        min_len=seller_name_min_letters(cc),
+        country=cc,
         seller_name_keys=chs_keys,
         already_validated_names=already_keys,
     )

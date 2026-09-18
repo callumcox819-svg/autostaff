@@ -28,7 +28,10 @@ from utils.ui_emoji import html_emoji
 from services.seller_name import (
     MIN_NAME_TOKEN_LEN,
     MIN_SELLER_LETTERS,
+    allow_single_first_name,
+    ch_local_part_variants,
     is_business_token,
+    is_ch_name_policy,
     is_usable_single_local,
     normalize_seller_name,
     person_tokens_for_email,
@@ -37,6 +40,7 @@ from services.seller_name import (
     pick_name_tokens_for_email,
     seller_name_eligible_for_validation,
     seller_name_from_item,
+    seller_name_min_letters,
     seller_name_too_short,
 )
 
@@ -59,6 +63,8 @@ class ValidationConfig:
     min_len: int = MIN_NAME_TOKEN_LEN
     max_len: int = 40
     require_first_and_last: bool = False
+    # ch → одиночные имена ≥4 букв; иначе strict NL/DE
+    country: str | None = None
 
     user_blacklist: list[str] | None = None
     use_ssl_verify: bool = True
@@ -107,12 +113,22 @@ def _pick_first_last_alpha_tokens(name: str) -> tuple[str, str]:
     return tokens[0], tokens[-1]
 
 
-def _name_is_usable(name: str, *, require_first_and_last: bool) -> bool:
-    if seller_name_too_short(name):
+def _name_is_usable(
+    name: str, *, require_first_and_last: bool, country: str | None = None
+) -> bool:
+    if is_ch_name_policy(country):
+        # CH: только отсев <4 букв; first+last не требуем
+        if require_first_and_last:
+            return len(_pick_alpha_tokens(name)) >= 2
+        return seller_name_eligible_for_validation(name, country=country)
+
+    min_letters = seller_name_min_letters(country)
+    allow_cf = allow_single_first_name(country)
+    if seller_name_too_short(name, min_letters=min_letters):
         return False
-    if pick_handle_locals(name):
+    if pick_handle_locals(name, min_letters=min_letters, allow_common_first=allow_cf):
         return not require_first_and_last
-    if not seller_name_eligible_for_validation(name):
+    if not seller_name_eligible_for_validation(name, country=country):
         return False
     tokens = _pick_alpha_tokens(name)
     if require_first_and_last:
@@ -124,21 +140,32 @@ def _name_has_first_last(name: str) -> bool:
     return _name_is_usable(name, require_first_and_last=True)
 
 
-def _make_local_part_from_name(name: str, *, require_first_and_last: bool) -> str:
+def _make_local_part_from_name(
+    name: str, *, require_first_and_last: bool, country: str | None = None
+) -> str:
     """Один основной local-part (first.last или одно слово)."""
-    variants = _make_local_part_variants(name, require_first_and_last=require_first_and_last)
+    variants = _make_local_part_variants(
+        name, require_first_and_last=require_first_and_last, country=country
+    )
     return variants[0] if variants else ""
 
 
-def _make_local_part_variants(name: str, *, require_first_and_last: bool) -> list[str]:
+def _make_local_part_variants(
+    name: str, *, require_first_and_last: bool, country: str | None = None
+) -> list[str]:
     """
     Логины: Maria Johansen → maria.johansen / mariajohansen; ник mariasto2 → mariasto2.
-    Без голых maria@/henk@ и без shop-слов (specialist@, juweliers@).
+    CH: ник целиком (jul_2f57, jessica13) — без бренд/имя-фильтров.
     """
+    if is_ch_name_policy(country) and not require_first_and_last:
+        return ch_local_part_variants(name)
+
     out: list[str] = []
     seen: set[str] = set()
     norm = _normalize_name(name)
     parts = [p for p in re.split(r"[\s\-']+", norm) if p.strip()]
+    min_letters = seller_name_min_letters(country)
+    allow_cf = allow_single_first_name(country)
 
     def _add(local: str) -> None:
         local = re.sub(r"[^a-z0-9._+\-_]", "", (local or "").lower())
@@ -146,7 +173,9 @@ def _make_local_part_variants(name: str, *, require_first_and_last: bool) -> lis
         if not local or local in seen:
             return
         if "." not in local and "_" not in local and "+" not in local:
-            if not is_usable_single_local(local):
+            if not is_usable_single_local(
+                local, min_letters=min_letters, allow_common_first=allow_cf
+            ):
                 return
         else:
             # составной: обе стороны не должны быть чисто business
@@ -156,7 +185,9 @@ def _make_local_part_variants(name: str, *, require_first_and_last: bool) -> lis
         seen.add(local)
         out.append(local)
 
-    handles = pick_handle_locals(name)
+    handles = pick_handle_locals(
+        name, min_letters=min_letters, allow_common_first=allow_cf
+    )
     if handles and len(parts) <= 1:
         for h in handles:
             _add(h)
@@ -541,6 +572,8 @@ async def _validate_offers_old(
 
     user_blacklist = cfg.user_blacklist or []
     require_fl = bool(cfg.require_first_and_last)
+    country = (cfg.country or "").strip().lower() or None
+    name_min = seller_name_min_letters(country)
 
     if stats is not None:
         _preserve = {
@@ -636,15 +669,19 @@ async def _validate_offers_old(
                 stats["blacklisted"] = int(stats.get("blacklisted") or 0) + 1
             continue
 
-        if not _name_is_usable(raw_name, require_first_and_last=require_fl):
+        if not _name_is_usable(
+            raw_name, require_first_and_last=require_fl, country=country
+        ):
             if stats is not None:
                 stats["short_nicks"] = int(stats.get("short_nicks") or 0) + 1
             continue
 
         locals_list: list[str] = []
-        for local in _make_local_part_variants(raw_name, require_first_and_last=require_fl):
+        for local in _make_local_part_variants(
+            raw_name, require_first_and_last=require_fl, country=country
+        ):
             ln = _len_for_limits(local)
-            min_local = MIN_SELLER_LETTERS if pick_handle_locals(raw_name) else int(cfg.min_len)
+            min_local = name_min
             if min_local <= ln <= int(cfg.max_len):
                 locals_list.append(local)
 

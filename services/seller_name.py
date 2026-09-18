@@ -7,10 +7,74 @@ import unicodedata
 from typing import Any
 
 # Слова короче 4 букв не участвуют в first.last.
-# Ник с цифрой ≥5 букв; одно слово без цифр ≥8 (mariasto), частые имена — нет.
+# NL/DE: ник с цифрой ≥5 букв; одно слово без цифр ≥8 (mariasto), частые имена — нет.
+# CH (Ricardo): ≥4 буквы, одиночное имя (Irene/Hans) — валидируем.
 MIN_NAME_TOKEN_LEN = 4
 MIN_SELLER_LETTERS = 5
+MIN_SELLER_LETTERS_CH = 4
 MIN_SINGLE_LOCAL_NO_DIGIT = 8
+
+
+def seller_name_min_letters(country: str | None = None) -> int:
+    if (country or "").strip().lower() == "ch":
+        return MIN_SELLER_LETTERS_CH
+    return MIN_SELLER_LETTERS
+
+
+def allow_single_first_name(country: str | None = None) -> bool:
+    """CH/Ricardo: одно имя ≥4 букв — ок; NL/DE — нет (SMTP шум)."""
+    return (country or "").strip().lower() == "ch"
+
+
+def is_ch_name_policy(country: str | None = None) -> bool:
+    return (country or "").strip().lower() == "ch"
+
+
+def ch_local_part_variants(name: str) -> list[str]:
+    """
+    CH/Ricardo: ник/имя → local как есть (jul_2f57, jessica13).
+    Единственный отсев — меньше 4 букв во всём имени.
+    """
+    if seller_name_too_short(name, min_letters=MIN_SELLER_LETTERS_CH):
+        return []
+    raw = normalize_seller_name(strip_name_honorifics(name))
+    if not raw:
+        return []
+
+    out: list[str] = []
+    seen: set[str] = set()
+
+    def _add(local: str) -> None:
+        local = re.sub(r"[^a-z0-9._+\-_]", "", (local or "").lower())
+        local = re.sub(r"\.+", ".", local).strip("._")
+        if not local or local in seen:
+            return
+        if sum(1 for c in local if c.isalpha()) < MIN_SELLER_LETTERS_CH:
+            return
+        if len(local) > 64:
+            return
+        seen.add(local)
+        out.append(local)
+
+    # 1) ник целиком: jul_2f57, jessica13, flohmarkt77, y.flitz
+    compact = re.sub(r"[\s\-]+", "", raw)
+    _add(re.sub(r"[^A-Za-z0-9._]", "", compact))
+    # hyphen → underscore (mary-ana → mary_ana)
+    _add(re.sub(r"[^A-Za-z0-9._]", "", re.sub(r"[\s\-]+", "_", raw)))
+
+    parts = [p for p in re.split(r"[\s\-]+", raw) if p.strip()]
+    alpha_parts = []
+    for p in parts:
+        core = re.sub(r"[^A-Za-z0-9_]", "", p)
+        if core and sum(1 for c in core if c.isalpha()) >= 2:
+            alpha_parts.append(core.lower())
+    if len(alpha_parts) >= 2:
+        first, last = alpha_parts[0], alpha_parts[-1]
+        _add(f"{first}.{last}")
+        _add(f"{first}{last}")
+        _add(f"{first}_{last}")
+
+    return out
 
 # Однословные local-part: бренды, города NL, бизнес-слова — не пробиваем.
 _BLOCKED_SINGLE_LOCALS = frozenset(
@@ -570,10 +634,16 @@ def is_blocked_single_local(local: str) -> bool:
     return False
 
 
-def is_usable_single_local(local: str, *, min_letters: int = MIN_SELLER_LETTERS) -> bool:
+def is_usable_single_local(
+    local: str,
+    *,
+    min_letters: int = MIN_SELLER_LETTERS,
+    allow_common_first: bool = False,
+) -> bool:
     """
     Одно слово как email-local.
-    С цифрой (ник): ≥5 букв. Без цифр: ≥8 (mariasto), не бренд/город/частое имя.
+    С цифрой (ник): ≥ min_letters. Без цифр (strict): ≥8, не бренд/город/частое имя.
+    CH (allow_common_first): ≥ min_letters (обычно 4), частые имена ок, бренды/города — нет.
     """
     raw = (local or "").strip().lower()
     if not raw or "." in raw or "+" in raw:
@@ -587,10 +657,10 @@ def is_usable_single_local(local: str, *, min_letters: int = MIN_SELLER_LETTERS)
         return False
     if has_digit:
         return letters >= int(min_letters)
-    # Без цифр — только длинные уникальные ники/имена, не sanne/petra/alexander
-    if letters < MIN_SINGLE_LOCAL_NO_DIGIT:
+    floor = int(min_letters) if allow_common_first else MIN_SINGLE_LOCAL_NO_DIGIT
+    if letters < floor:
         return False
-    if is_common_first_name_local(s):
+    if not allow_common_first and is_common_first_name_local(s):
         return False
     return True
 
@@ -796,14 +866,14 @@ def seller_name_letter_count(name: str) -> int:
 
 
 def seller_name_too_short(name: str, *, min_letters: int = MIN_SELLER_LETTERS) -> bool:
-    """Меньше 5 букв в имени/нике — не валидируем."""
+    """Меньше min_letters букв в имени/нике — не валидируем."""
     if not (name or "").strip():
         return True
     return seller_name_letter_count(name) < int(min_letters)
 
 
 def _is_handle_token(h: str, *, min_letters: int = MIN_SELLER_LETTERS) -> bool:
-    """Ник: Bird19, mar_l5z6, sportstar3000 — буквы/цифры/_, ≥5 букв."""
+    """Ник: Bird19, mar_l5z6, sportstar3000 — буквы/цифры/_, ≥min_letters букв."""
     if len(h) < min_letters or len(h) > 64:
         return False
     if not re.fullmatch(r"[A-Za-z0-9_]+", h):
@@ -815,13 +885,18 @@ def _is_handle_token(h: str, *, min_letters: int = MIN_SELLER_LETTERS) -> bool:
     return any(c.isalpha() for c in h)
 
 
-def pick_handle_locals(name: str) -> list[str]:
+def pick_handle_locals(
+    name: str,
+    *,
+    min_letters: int = MIN_SELLER_LETTERS,
+    allow_common_first: bool = False,
+) -> list[str]:
     """
     Никнеймы как в JSON: Bird19, mar_l5z6, sportstar3000 — local-part как есть (lower).
-    Имя «Имя Фамилия» сюда не попадает (только first.last). Минимум 5 букв.
+    Имя «Имя Фамилия» сюда не попадает (только first.last).
     """
     s = normalize_seller_name(name)
-    if not s or seller_name_too_short(s):
+    if not s or seller_name_too_short(s, min_letters=min_letters):
         return []
 
     parts = [p for p in re.split(r"[\s\-']+", s) if p.strip()]
@@ -831,13 +906,15 @@ def pick_handle_locals(name: str) -> list[str]:
 
     for p in parts:
         h = re.sub(r"[^A-Za-z0-9_]", "", p)
-        if not _is_handle_token(h):
+        if not _is_handle_token(h, min_letters=min_letters):
             continue
         looks_like_nick = single_part or any(c.isdigit() for c in h) or "_" in h
         if not looks_like_nick:
             continue
         hl = h.lower()
-        if not is_usable_single_local(hl):
+        if not is_usable_single_local(
+            hl, min_letters=min_letters, allow_common_first=allow_common_first
+        ):
             continue
         if hl not in seen:
             seen.add(hl)
@@ -845,15 +922,27 @@ def pick_handle_locals(name: str) -> list[str]:
     return out
 
 
-def seller_name_eligible_for_validation(name: str, *, min_token_len: int = MIN_NAME_TOKEN_LEN) -> bool:
-    """Имя подходит: ник ≥5 (не бренд/город/частое имя), или пара person-токенов."""
-    if seller_name_too_short(name):
+def seller_name_eligible_for_validation(
+    name: str,
+    *,
+    min_token_len: int = MIN_NAME_TOKEN_LEN,
+    country: str | None = None,
+) -> bool:
+    """Имя подходит: CH — ≥4 букв; иначе ник/имя по strict-политике или пара person-токенов."""
+    if is_ch_name_policy(country):
+        return not seller_name_too_short(name, min_letters=MIN_SELLER_LETTERS_CH)
+
+    min_letters = seller_name_min_letters(country)
+    allow_cf = allow_single_first_name(country)
+    if seller_name_too_short(name, min_letters=min_letters):
         return False
-    if pick_handle_locals(name):
+    if pick_handle_locals(name, min_letters=min_letters, allow_common_first=allow_cf):
         return True
     person = person_tokens_for_email(name)
     if len(person) >= 2:
         return True
-    if len(person) == 1 and is_usable_single_local(person[0]):
+    if len(person) == 1 and is_usable_single_local(
+        person[0], min_letters=min_letters, allow_common_first=allow_cf
+    ):
         return True
     return False

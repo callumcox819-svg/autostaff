@@ -29,13 +29,22 @@ class CountryScopeTests(unittest.TestCase):
 
     def test_germany_ebay_service_per_team(self):
         self.assertEqual(germany_generate_service("csm"), "ebay_de")
-        self.assertEqual(germany_generate_service("hustle"), "ebay_de")
+        self.assertEqual(germany_generate_service("hustle"), "kleinanzeigen_de")
         self.assertEqual(germany_generate_service("evoleum"), "ebay_de")
         self.assertEqual(force_germany_ebay_service("csm", "kleinanzeigen_de"), "ebay_de")
-        self.assertEqual(force_germany_ebay_service("hustle", "vinted_de"), "ebay_de")
+        # Hustle: не перетираем выбранный FAST Kleinanzeigen на ebay custom
+        self.assertEqual(
+            force_germany_ebay_service("hustle", "kleinanzeigen_de"),
+            "kleinanzeigen_de",
+        )
+        self.assertEqual(force_germany_ebay_service("hustle", "vinted_de"), "vinted_de")
+        self.assertEqual(force_germany_ebay_service("hustle", ""), "kleinanzeigen_de")
         self.assertEqual(force_germany_ebay_service("evoleum", "marktplaats_nl"), "ebay_de")
         self.assertEqual(force_germany_ebay_service("csm", "depop_verify_all"), "depop_verify_all")
-        self.assertEqual(force_germany_ebay_service("hustle", "kleinanzeigenverif_de"), "kleinanzeigenverif_de")
+        self.assertEqual(
+            force_germany_ebay_service("hustle", "kleinanzeigenverif_de"),
+            "kleinanzeigenverif_de",
+        )
 
     def test_austria_html_service(self):
         self.assertEqual(austria_html_service("csm"), "willhaben_at")
@@ -69,9 +78,22 @@ class GermanyGenerateOverrideTests(unittest.IsolatedAsyncioTestCase):
             profile_id="p",
             link_type="lk",
         )
-        new = replace(cfg, service_code=germany_generate_service(cfg.team_id))
+        new = replace(cfg, service_code=force_germany_ebay_service(cfg.team_id, cfg.service_code))
         self.assertEqual(new.service_code, "ebay_de")
         self.assertEqual(cfg.service_code, "kleinanzeigen_de")
+
+    async def test_de_keeps_hustle_kleinanzeigen_fast(self):
+        cfg = ApiTeamConfig(
+            team_id="hustle",
+            label="Hustle Castle",
+            api_key="k",
+            team_key="t",
+            service_code="kleinanzeigen_de",
+            profile_id="p",
+            link_type="lk",
+        )
+        new = replace(cfg, service_code=force_germany_ebay_service(cfg.team_id, cfg.service_code))
+        self.assertEqual(new.service_code, "kleinanzeigen_de")
 
 
 if __name__ == "__main__":

@@ -31,7 +31,12 @@ def scoped_blob_key(base: str, country: str) -> str:
 
 
 def germany_generate_service(team_id: str) -> str:
-    """Германия → eBay.de в формате выбранной команды (CSM / Hustle / Evoleum)."""
+    """Дефолт генерации для Германии, если площадка в команде не задана."""
+    tid = (team_id or "").strip().lower()
+    if tid == "hustle":
+        from services.hustle_catalog import HUSTLE_DEFAULT_SERVICE
+
+        return HUSTLE_DEFAULT_SERVICE  # kleinanzeigen_de (FAST)
     return "ebay_de"
 
 
@@ -58,15 +63,18 @@ def austria_html_service_for_code(service_code: str) -> str:
 
 
 def force_germany_ebay_service(team_id: str, service_code: str) -> str:
-    """Verify оставляем, остальное на Германии гоняем через ebay.de."""
+    """CSM/Evoleum на DE → ebay.de; Hustle — площадка из Команды API (не ломаем FAST)."""
     from services.csm_catalog import is_verify_service
     from services.hustle_catalog import is_hustle_verify
 
     tid = (team_id or "").strip().lower()
     code = (service_code or "").strip()
+    if tid == "hustle":
+        # kleinanzeigen_de / vinted / … как выбрано; иначе дефолт FAST Kleinanzeigen
+        if is_hustle_verify(code):
+            return code
+        return code or germany_generate_service(tid)
     if tid == "csm" and is_verify_service(code):
-        return code
-    if tid == "hustle" and is_hustle_verify(code):
         return code
     return germany_generate_service(tid)
 

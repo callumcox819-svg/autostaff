@@ -185,6 +185,7 @@ async def generate_aqua_link_no_parse(
     balance_checker: bool = False,
     timeout_sec: float = 30.0,
     domain: int | None = None,
+    version: str | None = None,
 ) -> str:
     """POST {API_BASE}/generate — ссылка по названию/цене/фото."""
     _ = team_api_key
@@ -204,6 +205,7 @@ async def generate_aqua_link_no_parse(
         if default.lower().startswith(("http://", "https://")):
             img = default
 
+    ver = (version or "").strip() or _link_version()
     body: dict[str, Any] = {
         "apikey": normalize_aqua_api_key(user_api_key),
         "title": title,
@@ -212,7 +214,7 @@ async def generate_aqua_link_no_parse(
         "address": addr,
         "service": service,
         "balanceChecker": _balance_checker_flag(balance_checker),
-        "version": _link_version(),
+        "version": ver,
     }
     if domain is not None:
         body["domain"] = max(5, min(8, int(domain)))

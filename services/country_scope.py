@@ -37,6 +37,10 @@ def germany_generate_service(team_id: str) -> str:
         from services.hustle_catalog import HUSTLE_DEFAULT_SERVICE
 
         return HUSTLE_DEFAULT_SERVICE  # kleinanzeigen_de (FAST)
+    if tid == "gag":
+        from region import AQUA_DEFAULT_SERVICE
+
+        return (AQUA_DEFAULT_SERVICE or "kleinanzeigen_de").strip()
     return "ebay_de"
 
 
@@ -63,15 +67,14 @@ def austria_html_service_for_code(service_code: str) -> str:
 
 
 def force_germany_ebay_service(team_id: str, service_code: str) -> str:
-    """CSM/Evoleum на DE → ebay.de; Hustle — площадка из Команды API (не ломаем FAST)."""
+    """CSM/Evoleum на DE → ebay.de; Hustle/GAG — площадка из Команды API."""
     from services.csm_catalog import is_verify_service
     from services.hustle_catalog import is_hustle_verify
 
     tid = (team_id or "").strip().lower()
     code = (service_code or "").strip()
-    if tid == "hustle":
-        # kleinanzeigen_de / vinted / … как выбрано; иначе дефолт FAST Kleinanzeigen
-        if is_hustle_verify(code):
+    if tid in {"hustle", "gag"}:
+        if tid == "hustle" and is_hustle_verify(code):
             return code
         return code or germany_generate_service(tid)
     if tid == "csm" and is_verify_service(code):

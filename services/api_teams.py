@@ -16,6 +16,7 @@ API_TEAMS: tuple[tuple[str, str], ...] = (
     ("csm", "CSM"),
     ("evoleum", "Evoleum"),
     ("hustle", "Hustle Castle"),
+    ("gag", "GAG"),
 )
 
 _TEAM_IDS = {tid for tid, _ in API_TEAMS}
@@ -62,6 +63,8 @@ def normalize_team_id(raw: str | None) -> str | None:
         return "evoleum"
     if s in {"hustle_castle", "hustlecastle", "incore", "inc-core", "inc_core", "inccore"}:
         return "hustle"
+    if s in {"gag_bot", "aqua", "generate"}:
+        return "gag"
     return None
 
 
@@ -76,6 +79,16 @@ def default_service_for_team(team_id: str) -> str:
         return "marktplaats_nl"
     if team_id == "hustle":
         return "kleinanzeigen_de"
+    if team_id == "gag":
+        from region import AQUA_DEFAULT_SERVICE
+        from services.aqua_keys import AQUA_SERVICE_CHOICES, normalize_aqua_service
+
+        n = normalize_aqua_service(AQUA_DEFAULT_SERVICE)
+        if n:
+            return n
+        if AQUA_SERVICE_CHOICES:
+            return AQUA_SERVICE_CHOICES[0]
+        return (AQUA_DEFAULT_SERVICE or "marktplaats_nl").strip()
     return ""
 
 
@@ -157,18 +170,32 @@ def _team_key_for(team_id: str) -> str:
         from services.hustle_network import hustle_team_key
 
         return hustle_team_key()
+    if team_id == "gag":
+        # GAG: только личный apikey + GENERATE_API_BASE на сервере
+        return ""
     return get_global_aqua_team_key()
 
 
 async def get_team_config(session, user: User, team_id: str) -> ApiTeamConfig:
     tid = normalize_team_id(team_id) or (team_id or "").strip().lower()
+    api_key = await get_team_field(session, user, tid, "api_key")
+    service_code = await get_team_field(session, user, tid, "service_code")
+    profile_id = await get_team_field(session, user, tid, "profile_id")
+    if tid == "gag" and not (api_key or "").strip():
+        from services.aqua_keys import get_user_aqua_user_key_async
+
+        api_key = (await get_user_aqua_user_key_async(session, user) or "").strip()
+    if tid == "gag" and not (service_code or "").strip():
+        from services.aqua_keys import get_user_aqua_service
+
+        service_code = (await get_user_aqua_service(session, user) or "").strip()
     return ApiTeamConfig(
         team_id=tid,
         label=team_label(tid),
-        api_key=await get_team_field(session, user, tid, "api_key"),
+        api_key=api_key,
         team_key=_team_key_for(tid),
-        service_code=await get_team_field(session, user, tid, "service_code"),
-        profile_id=await get_team_field(session, user, tid, "profile_id"),
+        service_code=service_code,
+        profile_id=profile_id,
         link_type=await get_team_field(session, user, tid, "link_type") or "lk",
     )
 

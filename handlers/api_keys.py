@@ -78,7 +78,7 @@ def _domain_mode_kb(current: str) -> InlineKeyboardMarkup:
         rows.append([
             inline_button(icon, label, callback_data=f"aqua_domain_set:{code}"),
         ])
-    rows.append([back_inline("aqua_show:profile")])
+    rows.append([back_inline("api_team_open:gag")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 

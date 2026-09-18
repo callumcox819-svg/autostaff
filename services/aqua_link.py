@@ -1,4 +1,4 @@
-"""Генерация ссылок для оффера / входящих (CSM / Evoleum / Hustle Castle)."""
+"""Генерация ссылок для оффера / входящих (CSM / Evoleum / Hustle Castle / GAG)."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from sqlalchemy import func, select
 from config import config
 from models import Offer, User
 from services.api_teams import get_selected_team_config
-from services.aqua_network import AquaError
+from services.aqua_network import AquaError, generate_aqua_link_no_parse
 from services.csm_catalog import is_verify_service, service_key_label
 from services.csm_network import CsmError, csm_generate_manual, csm_generate_parse
 from services.goo_network import GooError, goo_generate_no_parse, goo_generate_parse
@@ -325,6 +325,84 @@ async def _generate_hustle(
         raise AquaError(str(e)) from e
 
 
+async def _generate_gag(
+    session,
+    user: User,
+    cfg,
+    offer: Offer | None,
+    *,
+    listing_url: str | None,
+    price: str | None,
+) -> str:
+    """GAG: POST {GENERATE_API_BASE}/generate — личный apikey, без team-ключа."""
+    from services.api_teams import get_team_field
+    from services.aqua_keys import get_user_profile_address, get_user_profile_buyer_name
+    from services.aqua_network import generate_api_configured
+    from services.gag_domains import finalize_gag_generated_url, get_user_gag_domain_mode
+    from services.gag_domains import gag_api_domain_for_mode
+
+    _ = listing_url
+    if not generate_api_configured():
+        raise AquaError(
+            "Домен генерации не задан на сервере "
+            "(<code>GENERATE_API_BASE</code> / <code>GAG_API_BASE</code>)."
+        )
+    if not (cfg.api_key or "").strip():
+        raise AquaError(
+            f"Не задан API-ключ для <b>{cfg.label}</b>. "
+            f"{menu_path(('settings', ''), ('key', 'Команды API'))} → {cfg.label}."
+        )
+    svc = (cfg.service_code or "").strip()
+    if not svc:
+        raise AquaError(
+            f"Не задан код сервиса GAG. "
+            f"{menu_path(('settings', ''), ('key', 'Команды API'))} → GAG → Код сервиса."
+        )
+
+    buyer = (await get_team_field(session, user, "gag", "buyer_name") or "").strip()
+    address = (await get_team_field(session, user, "gag", "address") or "").strip()
+    if not buyer:
+        buyer = (await get_user_profile_buyer_name(session, user) or "").strip()
+    if not address:
+        address = (await get_user_profile_address(session, user) or "").strip()
+    if not buyer or not address:
+        raise AquaError(
+            f"Для GAG нужны ФИО и адрес. "
+            f"{menu_path(('settings', ''), ('key', 'Команды API'))} → GAG."
+        )
+
+    title = offer_effective_title(offer) if offer is not None else ""
+    if not title:
+        raise AquaError("Нет названия объявления")
+    p = (price or "").strip()
+    if offer is not None:
+        p = p or offer_effective_price(offer)
+    if not p:
+        raise AquaError("Нет цены")
+    image = await resolve_aqua_image_url(session, user, offer)
+    mode = await get_user_gag_domain_mode(session, user)
+    domain = gag_api_domain_for_mode(mode)
+    version = (cfg.link_type or "lk").strip() or "lk"
+
+    try:
+        url = await generate_aqua_link_no_parse(
+            user_api_key=cfg.api_key,
+            service=svc,
+            name=title,
+            price=p,
+            buyer_name=buyer,
+            address=address,
+            image=image or None,
+            domain=domain,
+            version=version,
+        )
+        return finalize_gag_generated_url(url, mode=mode)
+    except ValueError as e:
+        raise AquaError(str(e)) from e
+    except AquaError:
+        raise
+
+
 async def aqua_generate_for_offer(
     session,
     user: User,
@@ -336,8 +414,9 @@ async def aqua_generate_for_offer(
 ) -> str:
     """
     Генерация через выбранную команду:
-    - CSM → meowsavings Internal API (serviceKey + Bearer)
+    - CSM → meowsavings Internal API
     - Hustle Castle → INC-CORE (fast / lonely / custom)
+    - GAG → POST /generate (GENERATE_API_BASE)
     - Evoleum → GOO parse / no-parse
     """
     cfg = await get_selected_team_config(session, user)
@@ -353,6 +432,8 @@ async def aqua_generate_for_offer(
         return await _generate_csm(session, user, cfg, offer, listing_url=listing_url, price=price)
     if cfg.team_id == "hustle":
         return await _generate_hustle(session, user, cfg, offer, listing_url=listing_url, price=price)
+    if cfg.team_id == "gag":
+        return await _generate_gag(session, user, cfg, offer, listing_url=listing_url, price=price)
     return await _generate_goo(
         session,
         user,

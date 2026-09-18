@@ -67,7 +67,9 @@ def _teams_list_kb(selected_id: str) -> InlineKeyboardMarkup:
         rows.append(
             [
                 inline_button(
-                    "key" if tid == "csm" else ("pin" if tid == "hustle" else "link"),
+                    "key"
+                    if tid == "csm"
+                    else ("pin" if tid == "hustle" else ("burst" if tid == "gag" else "link")),
                     label,
                     callback_data=f"api_team_open:{tid}",
                 ),
@@ -121,11 +123,10 @@ def _team_detail_kb(team_id: str) -> InlineKeyboardMarkup:
                 )
             ]
         )
-    rows.extend(
-        [
-            [inline_button("profile", "Profile ID", callback_data=f"api_team_edit:{team_id}:profile_id")],
-        ]
-    )
+    if team_id != "gag":
+        rows.append(
+            [inline_button("profile", "Profile ID", callback_data=f"api_team_edit:{team_id}:profile_id")]
+        )
     if team_id == "evoleum":
         rows.extend(
             [
@@ -145,7 +146,7 @@ def _team_detail_kb(team_id: str) -> InlineKeyboardMarkup:
                 ],
             ]
         )
-    if team_id == "hustle":
+    if team_id in {"hustle", "gag"}:
         rows.extend(
             [
                 [
@@ -163,6 +164,10 @@ def _team_detail_kb(team_id: str) -> InlineKeyboardMarkup:
                     )
                 ],
             ]
+        )
+    if team_id == "gag":
+        rows.append(
+            [inline_button("link", "Домен генерации", callback_data="aqua_domain_pick")]
         )
     rows.extend(
         [
@@ -199,7 +204,8 @@ def _team_detail_text(cfg, *, buyer_name: str = "", address: str = "", country_n
         )
     else:
         lines.append(f"<b>Код сервиса:</b> <code>{html.escape(cfg.service_code or '—')}</code>")
-    lines.append(f"<b>Profile ID:</b> <code>{html.escape(cfg.profile_id or '—')}</code>")
+    if cfg.team_id != "gag":
+        lines.append(f"<b>Profile ID:</b> <code>{html.escape(cfg.profile_id or '—')}</code>")
     if cfg.team_id == "evoleum":
         cc = f" ({html.escape(country_name)})" if country_name else ""
         lines.append(
@@ -215,6 +221,14 @@ def _team_detail_text(cfg, *, buyer_name: str = "", address: str = "", country_n
             f"<b>Адрес{cc}:</b> <code>{html.escape(address or '—')}</code>\n"
             "<i>Те же поля для генерации ссылки и для HTML этой страны. "
             "Team-ключ — только на сервере: <code>HUSTLE_TEAM_KEY</code>.</i>"
+        )
+    if cfg.team_id == "gag":
+        cc = f" ({html.escape(country_name)})" if country_name else ""
+        lines.append(
+            f"<b>ФИО{cc}:</b> <code>{html.escape(buyer_name or '—')}</code>\n"
+            f"<b>Адрес{cc}:</b> <code>{html.escape(address or '—')}</code>\n"
+            "<i>GAG: личный apikey + <code>GENERATE_API_BASE</code> на сервере. "
+            "Домен — «Домен команды» или Домен 1–4.</i>"
         )
     lines.append(
         f"<b>Тип ссылки:</b> <b>{html.escape(link_type_label(cfg.link_type or 'lk'))}</b>"
@@ -383,11 +397,16 @@ async def _team_detail_payload(session, user, tid: str) -> tuple[object, str]:
     cc_name = country_display_name(await get_active_country(session, user))
     if cfg.team_id == "evoleum":
         buyer, addr = await _evoleum_html_profile_fields(session, user)
-    elif cfg.team_id == "hustle":
+    elif cfg.team_id in {"hustle", "gag"}:
         from services.api_teams import get_team_field
 
-        buyer = await get_team_field(session, user, "hustle", "buyer_name")
-        addr = await get_team_field(session, user, "hustle", "address")
+        buyer = await get_team_field(session, user, cfg.team_id, "buyer_name")
+        addr = await get_team_field(session, user, cfg.team_id, "address")
+        if cfg.team_id == "gag" and (not buyer or not addr):
+            from services.aqua_keys import get_user_profile_address, get_user_profile_buyer_name
+
+            buyer = buyer or (await get_user_profile_buyer_name(session, user) or "")
+            addr = addr or (await get_user_profile_address(session, user) or "")
     return cfg, _team_detail_text(cfg, buyer_name=buyer, address=addr, country_name=cc_name)
 
 
@@ -717,6 +736,15 @@ async def api_team_edit(callback: CallbackQuery, state: FSMContext) -> None:
         hint = "\nФИО покупателя для генерации (lonely / eBay)."
     if field == "address" and tid == "hustle":
         hint = "\nАдрес в Германии, например: <code>Berliner Straße 115, 63272 Frankfurt</code>."
+    if field == "service_code" and tid == "gag":
+        hint = (
+            "\nКод сервиса GAG (как в API / папка HTML), "
+            "например: <code>marktplaats_nl</code>, <code>kleinanzeigen_de</code>."
+        )
+    if field == "buyer_name" and tid == "gag":
+        hint = "\nФИО получателя в теле /generate."
+    if field == "address" and tid == "gag":
+        hint = "\nАдрес доставки в теле /generate."
     await _edit(
         callback,
         f"{html_emoji('settings')} <b>{html.escape(_FIELD_TITLES[field])}</b>\n"

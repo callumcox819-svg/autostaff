@@ -128,6 +128,12 @@ class SellerDedupTests(unittest.TestCase):
                 "Flohmarkt-77", require_first_and_last=False, country="ch"
             ),
         )
+        self.assertIn(
+            "michi.gehrig",
+            _make_local_part_variants(
+                "Michi_gehrig", require_first_and_last=False, country="ch"
+            ),
+        )
         self.assertEqual(
             _make_local_part_variants("Jan", require_first_and_last=False, country="ch"),
             [],

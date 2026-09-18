@@ -58,14 +58,18 @@ def ch_local_part_variants(name: str) -> list[str]:
 
     # 1) ник целиком: jul_2f57, jessica13, flohmarkt77, y.flitz
     compact = re.sub(r"[\s\-]+", "", raw)
-    _add(re.sub(r"[^A-Za-z0-9._]", "", compact))
+    cleaned = re.sub(r"[^A-Za-z0-9._]", "", compact)
+    _add(cleaned)
     # hyphen → underscore (mary-ana → mary_ana)
     _add(re.sub(r"[^A-Za-z0-9._]", "", re.sub(r"[\s\-]+", "_", raw)))
+    # underscore → dot (Michi_gehrig → michi.gehrig)
+    if "_" in cleaned:
+        _add(cleaned.replace("_", "."))
 
-    parts = [p for p in re.split(r"[\s\-]+", raw) if p.strip()]
+    parts = [p for p in re.split(r"[\s\-_]+", raw) if p.strip()]
     alpha_parts = []
     for p in parts:
-        core = re.sub(r"[^A-Za-z0-9_]", "", p)
+        core = re.sub(r"[^A-Za-z0-9]", "", p)
         if core and sum(1 for c in core if c.isalpha()) >= 2:
             alpha_parts.append(core.lower())
     if len(alpha_parts) >= 2:

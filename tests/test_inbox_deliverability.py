@@ -96,6 +96,16 @@ class InboxDeliverabilityTests(unittest.TestCase):
         self.assertNotIn("Met vriendelijke groet", body)
         self.assertEqual(body.count("Anna"), 1)
 
+    def test_sender_signature_is_added_when_preset_omits_placeholder(self):
+        _, body = finalize_inbox_mail(
+            "OFFER",
+            "Guten Tag, ist der Artikel noch verfügbar?",
+            country="ch",
+            sender_name="Anna Gremlis",
+            vary_body=False,
+        )
+        self.assertTrue(body.endswith("Freundliche Grüße\nAnna Gremlis"))
+
 
 if __name__ == "__main__":
     unittest.main()

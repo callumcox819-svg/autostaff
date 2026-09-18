@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import re
 from dataclasses import dataclass
 from html import escape
@@ -21,6 +22,7 @@ from services.users import get_or_create_user
 from utils.ui_emoji import html_emoji, inline_button, icon_button, back_inline, menu_path, toast, msg_fail, msg_ok, msg_wait, msg_warn
 
 router = Router()
+log = logging.getLogger(__name__)
 
 
 from utils.preset_list_ui import (
@@ -148,11 +150,11 @@ def _regular_presets_kb(has_any: bool) -> InlineKeyboardMarkup:
     )
 
 
-async def load_templates(tg_id: int) -> List[TemplateItem]:
+async def load_templates(tg_id: int, *, country: str | None = None) -> List[TemplateItem]:
     from services.country_scope import LEGACY_COUNTRY, active_country_for_tg, scoped_blob_key
     from services.user_json_store import load_json_blob, peek_json_blob
 
-    cc = await active_country_for_tg(int(tg_id))
+    cc = country or await active_country_for_tg(int(tg_id))
     key = scoped_blob_key("templates", cc)
     data = await peek_json_blob(int(tg_id), key)
     if data is None and cc == LEGACY_COUNTRY:
@@ -169,11 +171,11 @@ async def save_templates(tg_id: int, items: List[TemplateItem]) -> None:
     await save_json_blob(int(tg_id), scoped_blob_key("templates", cc), data)
 
 
-async def load_smart_texts(tg_id: int) -> List[str]:
+async def load_smart_texts(tg_id: int, *, country: str | None = None) -> List[str]:
     from services.country_scope import LEGACY_COUNTRY, active_country_for_tg, scoped_blob_key
     from services.user_json_store import load_json_blob, peek_json_blob
 
-    cc = await active_country_for_tg(int(tg_id))
+    cc = country or await active_country_for_tg(int(tg_id))
     key = scoped_blob_key("smart_templates", cc)
     data = await peek_json_blob(int(tg_id), key)
     if data is None and cc == LEGACY_COUNTRY:
@@ -181,11 +183,16 @@ async def load_smart_texts(tg_id: int) -> List[str]:
     return _smart_texts_from_json(data if data is not None else [])
 
 
-async def save_smart_texts(tg_id: int, texts: List[str]) -> None:
+async def save_smart_texts(
+    tg_id: int,
+    texts: List[str],
+    *,
+    country: str | None = None,
+) -> None:
     from services.country_scope import active_country_for_tg, scoped_blob_key
     from services.user_json_store import save_json_blob
 
-    cc = await active_country_for_tg(int(tg_id))
+    cc = country or await active_country_for_tg(int(tg_id))
     clean = [t.strip()[:MAX_TEXT_LEN] for t in texts if (t or "").strip()]
     await save_json_blob(int(tg_id), scoped_blob_key("smart_templates", cc), clean)
 
@@ -204,13 +211,13 @@ def _smart_texts_from_json(data: object) -> List[str]:
     return out
 
 
-async def _mailing_text_pool(tg_id: int) -> List[str]:
+async def _mailing_text_pool(tg_id: int, *, country: str | None = None) -> List[str]:
     """Умные пресеты имеют приоритет; обычные — fallback, если умных нет."""
-    smart = list(await load_smart_texts(int(tg_id)))
+    smart = list(await load_smart_texts(int(tg_id), country=country))
     if smart:
         return smart
     pool: list[str] = []
-    for it in await load_templates(int(tg_id)):
+    for it in await load_templates(int(tg_id), country=country):
         body = (it.text or "").strip()
         if body:
             pool.append(body)
@@ -232,6 +239,7 @@ async def pick_random_smart_preset(
     offer_title: str,
     *,
     salt: int | None = None,
+    country: str | None = None,
 ) -> str:
     """
     Текст рассылки: умные пресеты по кругу (1→2→…→N→1), spintax, OFFER = название товара.
@@ -241,7 +249,7 @@ async def pick_random_smart_preset(
     from services.offer_text import apply_offer_to_text
     from services.spintax import expand_spintax
 
-    texts = await _mailing_text_pool(tg_id)
+    texts = await _mailing_text_pool(tg_id, country=country)
     if not texts:
         return ""
 
@@ -251,6 +259,13 @@ async def pick_random_smart_preset(
         idx = _mailing_preset_rr_index.get(uid, 0) % len(texts)
         _mailing_preset_rr_index[uid] = idx + 1
         base = texts[idx]
+    log.info(
+        "Smart preset selected: tg=%s country=%s index=%s total=%s",
+        uid,
+        country or "active",
+        idx + 1,
+        len(texts),
+    )
 
     txt = expand_spintax(base)
     return apply_offer_to_text(txt, offer_title)
@@ -894,9 +909,13 @@ async def stmpl_add_start(call: CallbackQuery, state: FSMContext) -> None:
 
 @router.callback_query(F.data == "stmpl_add_txt")
 async def stmpl_add_txt_start(call: CallbackQuery, state: FSMContext) -> None:
+    from services.country_scope import active_country_for_tg
+
+    country = await active_country_for_tg(int(call.from_user.id))
     await state.update_data(
         _menu_chat_id=call.message.chat.id,
         _menu_msg_id=call.message.message_id,
+        _preset_country=country,
     )
     await state.set_state(SmartTmplAdd.txt_file)
     prompt = await call.message.answer(
@@ -936,11 +955,12 @@ async def stmpl_add_txt_file(message: Message, state: FSMContext) -> None:
 
     data = await state.get_data()
     await state.clear()
+    country = str(data.get("_preset_country") or "").strip().lower() or None
 
     async with Session() as session:
         tg_id = await _user_tg_id(session, message.from_user.id)
     replacement, skipped = replace_smart_presets(parsed)
-    await save_smart_texts(tg_id, replacement)
+    await save_smart_texts(tg_id, replacement, country=country)
     await _finish_smart_txt_import(
         message,
         data,

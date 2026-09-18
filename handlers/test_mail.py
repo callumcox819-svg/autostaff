@@ -291,7 +291,11 @@ async def _build_test_message(
         "IMAGE_URL": image_url,
     }
 
-    base_text = await pick_random_smart_preset(tg_id, item_title)
+    base_text = await pick_random_smart_preset(
+        tg_id,
+        item_title,
+        country=country,
+    )
     has_user_preset = bool((base_text or "").strip())
     if not has_user_preset:
         base_text = pick_inbox_success_body(country)

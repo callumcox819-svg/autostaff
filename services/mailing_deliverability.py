@@ -347,6 +347,16 @@ def apply_mailing_body_policy(
             country=country,
             sender_name=sender_name,
         )
+    name = (sender_name or "").strip()
+    if name and name.casefold() not in out.casefold():
+        cc = _mail_country(country)
+        if cc in {"de", "at", "ch"}:
+            closing = "Freundliche Grüße"
+        elif cc == "nl":
+            closing = "Met vriendelijke groet"
+        else:
+            closing = "Kind regards"
+        out = f"{out.rstrip()}\n\n{closing}\n{name}"
     return out.strip()
 
 

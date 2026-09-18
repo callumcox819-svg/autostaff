@@ -249,7 +249,11 @@ async def _build_message_for_target(
     try:
         from handlers.templates import pick_random_smart_preset
 
-        base_text = await pick_random_smart_preset(tg_user_id, item_title)
+        base_text = await pick_random_smart_preset(
+            tg_user_id,
+            item_title,
+            country=country,
+        )
     except Exception:
         base_text = ""
     has_user_preset = bool((base_text or "").strip())

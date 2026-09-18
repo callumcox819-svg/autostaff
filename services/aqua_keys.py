@@ -70,9 +70,6 @@ def normalize_aqua_service(code: str | None) -> str | None:
     s = (code or "").strip().lower()
     if not s:
         return None
-    # Удалённые CH-сервисы GAG — не принимаем
-    if s in {"ricardo_ch", "tutti_ch", "ricardo", "tutti", "ricardo.ch", "tutti.ch"}:
-        return None
     if AQUA_SERVICE_CHOICES and s in AQUA_SERVICE_CHOICES:
         return s
     # Папка добавлена позже (без рестарта) — data/HTML/<service>/confirmation.html
@@ -121,8 +118,12 @@ async def get_user_aqua_service(session, user: User) -> str:
 
 
 async def resolve_html_service(session, user: User) -> str:
-    """HTML-папка: рабочая страна + площадка команды (ebay_de / willhaben_at / marktplaats_nl)."""
-    from services.country_scope import force_austria_html_service, force_germany_ebay_service
+    """HTML-папка: рабочая страна + площадка команды (ebay_de / willhaben_at / ricardo_ch / …)."""
+    from services.country_scope import (
+        force_austria_html_service,
+        force_germany_ebay_service,
+        force_switzerland_html_service,
+    )
     from services.enabled_countries import get_active_country
 
     cc = "nl"
@@ -141,6 +142,8 @@ async def resolve_html_service(session, user: User) -> str:
             sc = force_germany_ebay_service(cfg.team_id, sc)
         elif cc == "at" and sc and not is_verify_service(sc):
             sc = force_austria_html_service(cfg.team_id, sc)
+        elif cc == "ch" and sc and not is_verify_service(sc):
+            sc = force_switzerland_html_service(cfg.team_id, sc)
         svc = sc
     except Exception:
         pass
@@ -148,8 +151,14 @@ async def resolve_html_service(session, user: User) -> str:
     candidates: list[str] = []
     if cc == "at" and not svc:
         candidates.append("willhaben_at")
+    if cc == "ch" and not svc:
+        candidates.append("ricardo_ch")
     for raw in (
         svc,
+        f"ricardo_{cc}",
+        f"tutti_{cc}",
+        f"anibis_{cc}",
+        f"post_{cc}",
         f"willhaben_{cc}",
         f"laendleanzeiger_{cc}",
         f"marktplaats_{cc}",

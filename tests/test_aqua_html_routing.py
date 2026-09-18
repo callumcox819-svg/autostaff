@@ -9,14 +9,18 @@ from unittest.mock import patch
 
 
 class AquaHtmlRoutingTests(unittest.TestCase):
-    def test_no_swiss_services_by_default(self):
-        with patch.dict(os.environ, {"AQUA_SERVICES": ""}, clear=False):
+    def test_swiss_services_from_html_dirs(self):
+        with patch.dict(os.environ, {"AQUA_SERVICES": "", "HTML_DATA_DIR": "HTML"}, clear=False):
             import importlib
             import services.aqua_keys as ak
+            import region as region_mod
 
+            importlib.reload(region_mod)
             importlib.reload(ak)
-            self.assertIsNone(ak.normalize_aqua_service("ricardo_ch"))
-            self.assertIsNone(ak.normalize_aqua_service("tutti_ch"))
+            self.assertEqual(ak.normalize_aqua_service("ricardo_ch"), "ricardo_ch")
+            self.assertEqual(ak.normalize_aqua_service("tutti_ch"), "tutti_ch")
+            self.assertEqual(ak.normalize_aqua_service("anibis_ch"), "anibis_ch")
+            self.assertEqual(ak.normalize_aqua_service("post_ch"), "post_ch")
 
     def test_html_dir_auto_service(self):
         with patch.dict(os.environ, {"AQUA_SERVICES": "", "HTML_DATA_DIR": "HTML"}, clear=False):

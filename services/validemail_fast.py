@@ -79,7 +79,7 @@ def _gmx_env_float(name: str, default: float, *, lo: float, hi: float) -> float:
 
 def configure_gmx_pacing(emails: Iterable[str]) -> float:
     """
-    GMX/WEB.DE не пачкой: интервал так, чтобы весь прогон уложился в ~2 мин.
+    GMX/WEB.DE/GMX.ch не пачкой: интервал так, чтобы весь прогон уложился в дедлайн (~2–3 мин).
     Gmail и прочие домены не ждут это окно.
     """
     global _GMX_GAP_SEC
@@ -87,10 +87,10 @@ def configure_gmx_pacing(emails: Iterable[str]) -> float:
     try:
         from services.validemail_keys import validation_wall_sec
 
-        wall = validation_wall_sec() or 120.0
+        wall = validation_wall_sec() or 180.0
     except Exception:
-        wall = _gmx_env_float("VALIDEMAIL_GMX_WINDOW_SEC", 120.0, lo=0.0, hi=120.0)
-    wall = min(120.0, _gmx_env_float("VALIDEMAIL_GMX_WINDOW_SEC", wall, lo=0.0, hi=120.0) or wall)
+        wall = _gmx_env_float("VALIDEMAIL_GMX_WINDOW_SEC", 180.0, lo=0.0, hi=180.0)
+    wall = min(180.0, _gmx_env_float("VALIDEMAIL_GMX_WINDOW_SEC", wall, lo=0.0, hi=180.0) or wall)
     min_gap = _gmx_env_float("VALIDEMAIL_GMX_GAP_SEC", 0.35, lo=0.0, hi=3.0)
     if n <= 0 or wall <= 0:
         _GMX_GAP_SEC = min_gap

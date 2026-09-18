@@ -69,6 +69,12 @@ def _countries_text(active: str) -> str:
             "\nАвстрия: HTML по площадке — "
             "<code>willhaben_at</code> / <code>laendleanzeiger_at</code>."
         )
+    elif active == "ch":
+        extra = (
+            "\nШвейцария: свои пресеты/темы/домены; валидация "
+            "<code>gmx.ch</code>, <code>bluewin.ch</code> и др.; "
+            "HTML/GAG — <code>ricardo_ch</code> / <code>tutti_ch</code>."
+        )
     return (
         f"{html_emoji('compass')} <b>Страны</b>\n\n"
         f"Рабочая: <b>{html.escape(active_name)}</b>\n"

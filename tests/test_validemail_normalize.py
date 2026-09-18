@@ -312,9 +312,11 @@ class ValidEmailNormalizeTests(unittest.TestCase):
             },
             clear=False,
         ):
-            self.assertEqual(validation_wall_sec(1), 120.0)
+            self.assertEqual(validation_wall_sec(1), 180.0)
         with patch.dict(os.environ, {"VALIDEMAIL_DEADLINE_SEC": "300"}, clear=False):
-            self.assertEqual(validation_wall_sec(1), 120.0)
+            self.assertEqual(validation_wall_sec(1), 180.0)
+        with patch.dict(os.environ, {"VALIDEMAIL_DEADLINE_SEC": "90"}, clear=False):
+            self.assertEqual(validation_wall_sec(1), 90.0)
         with patch.dict(os.environ, {"VALIDEMAIL_MAX_DOMAINS_PROBE": "0"}, clear=False):
             self.assertEqual(max_domains_per_seller(), 0)
 
@@ -414,7 +416,7 @@ class ValidEmailNormalizeTests(unittest.TestCase):
         gap = configure_gmx_pacing([f"u{i}@gmx.de" for i in range(80)])
         self.assertGreaterEqual(gap, 0.35)
         self.assertLessEqual(gap, 0.8)
-        self.assertLessEqual(gap * 80, 120.0)
+        self.assertLessEqual(gap * 80, 180.0)
         small = configure_gmx_pacing(["a@gmx.de", "b@web.de"])
         self.assertLessEqual(small, 0.4)
         self.assertTrue(

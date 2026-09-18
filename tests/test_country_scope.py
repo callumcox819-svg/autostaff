@@ -5,13 +5,17 @@ from dataclasses import replace
 from services.api_teams import ApiTeamConfig
 from services.country_scope import (
     GERMANY_VALIDATION_DOMAINS,
+    SWITZERLAND_VALIDATION_DOMAINS,
     austria_html_service,
     austria_html_service_for_code,
+    default_validation_domains_for,
     force_austria_html_service,
     force_germany_ebay_service,
+    force_switzerland_html_service,
     germany_generate_service,
     scoped_blob_key,
     scoped_setting_key,
+    switzerland_html_service_for_code,
 )
 from services.enabled_countries import DEFAULT_ACTIVE_COUNTRY, normalize_country_id, parse_enabled_ids
 
@@ -61,6 +65,18 @@ class CountryScopeTests(unittest.TestCase):
         self.assertEqual(force_austria_html_service("csm", "ebay_de"), "willhaben_at")
         self.assertEqual(force_austria_html_service("csm", "marktplaats_nl"), "willhaben_at")
         self.assertEqual(force_austria_html_service("csm", "depop_verify_all"), "depop_verify_all")
+
+    def test_switzerland_html_and_domains(self):
+        self.assertEqual(switzerland_html_service_for_code("ricardo"), "ricardo_ch")
+        self.assertEqual(switzerland_html_service_for_code("tutti_ch"), "tutti_ch")
+        self.assertEqual(force_switzerland_html_service("csm", "anibis"), "anibis_ch")
+        self.assertEqual(force_switzerland_html_service("gag", "tutti"), "tutti_ch")
+        domains = default_validation_domains_for("ch")
+        self.assertEqual(domains, SWITZERLAND_VALIDATION_DOMAINS)
+        self.assertIn("gmx.ch", domains)
+        self.assertIn("bluewin.ch", domains)
+        self.assertEqual(domains[0], "gmx.ch")
+        self.assertNotEqual(domains, GERMANY_VALIDATION_DOMAINS)
 
     def test_legacy_nl_still_all_countries_if_unset(self):
         self.assertIn("de", parse_enabled_ids(None))

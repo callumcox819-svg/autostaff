@@ -20,6 +20,22 @@ GERMANY_VALIDATION_DOMAINS: tuple[str, ...] = (
     "hotmail.de",
 )
 
+# CH: локальные ISP первыми (gmx.ch / bluewin), потом международные — качественный прогон ~2–3 мин.
+SWITZERLAND_VALIDATION_DOMAINS: tuple[str, ...] = (
+    "gmx.ch",
+    "gmail.com",
+    "bluewin.ch",
+    "icloud.com",
+    "hotmail.com",
+    "outlook.com",
+    "sunrise.ch",
+    "gmx.net",
+    "hispeed.ch",
+    "yahoo.com",
+    "me.com",
+    "hotmail.ch",
+)
+
 
 def scoped_setting_key(base: str, country: str) -> str:
     cc = normalize_country_id(country) or LEGACY_COUNTRY
@@ -96,10 +112,54 @@ def force_austria_html_service(team_id: str, service_code: str) -> str:
     return austria_html_service_for_code(code)
 
 
+def switzerland_html_service(team_id: str = "") -> str:
+    """Дефолт Швейцарии для HTML / GAG."""
+    return "ricardo_ch"
+
+
+def switzerland_html_service_for_code(service_code: str) -> str:
+    """ricardo / tutti / anibis / post → *_ch."""
+    from services.csm_catalog import parse_service_key
+
+    code = (service_code or "").strip().lower()
+    if not code:
+        return switzerland_html_service()
+    if code in {"ricardo_ch", "tutti_ch", "anibis_ch", "post_ch", "posta_ch"}:
+        return "post_ch" if code == "posta_ch" else code
+    if code in {"ricardo", "tutti", "anibis"}:
+        return f"{code}_ch"
+    if code in {"post", "posta", "post.ch"}:
+        return "post_ch"
+    if "_" in code:
+        platform, _cc = parse_service_key(code)
+        plat = (platform or "").strip().lower()
+        if plat in {"ricardo", "tutti", "anibis"}:
+            return f"{plat}_ch"
+        if plat in {"post", "posta"}:
+            return "post_ch"
+    return switzerland_html_service()
+
+
+def force_switzerland_html_service(team_id: str, service_code: str) -> str:
+    """Verify оставляем; HTML/GAG CH по ricardo / tutti / anibis / post."""
+    from services.csm_catalog import is_verify_service
+    from services.hustle_catalog import is_hustle_verify
+
+    tid = (team_id or "").strip().lower()
+    code = (service_code or "").strip()
+    if tid == "csm" and is_verify_service(code):
+        return code
+    if tid == "hustle" and is_hustle_verify(code):
+        return code
+    return switzerland_html_service_for_code(code)
+
+
 def default_validation_domains_for(country: str) -> tuple[str, ...]:
     cc = normalize_country_id(country) or LEGACY_COUNTRY
     if cc == "de":
         return GERMANY_VALIDATION_DOMAINS
+    if cc == "ch":
+        return SWITZERLAND_VALIDATION_DOMAINS
     from region import DEFAULT_VALIDATION_DOMAINS
 
     return DEFAULT_VALIDATION_DOMAINS

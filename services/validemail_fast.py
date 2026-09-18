@@ -58,6 +58,17 @@ _GMX_DOMAINS = frozenset(
     }
 )
 
+# CH ISP: ошибки SMTP ≠ «ящика нет» — как GMX, идём дальше по приоритету.
+_SOFT_SMTP_DOMAINS = frozenset(
+    {
+        "bluewin.ch",
+        "bluemail.ch",
+        "sunrise.ch",
+        "hispeed.ch",
+        "swisscom.ch",
+    }
+)
+
 
 def _is_gmx_mailbox(email: str) -> bool:
     em = (email or "").strip().lower()
@@ -65,6 +76,18 @@ def _is_gmx_mailbox(email: str) -> bool:
         return False
     dom = em.rsplit("@", 1)[-1]
     return dom in _GMX_DOMAINS or dom.startswith("gmx.")
+
+
+def _is_soft_smtp_domain(domain_or_email: str) -> bool:
+    """GMX-семья или швейцарские ISP — unknown/policy не стопают продавца."""
+    s = (domain_or_email or "").strip().lower()
+    if "@" in s:
+        s = s.rsplit("@", 1)[-1]
+    if not s:
+        return False
+    if s in _GMX_DOMAINS or s.startswith("gmx.") or s in _SOFT_SMTP_DOMAINS:
+        return True
+    return False
 
 
 def _gmx_env_float(name: str, default: float, *, lo: float, hi: float) -> float:
@@ -145,16 +168,23 @@ async def _gmx_pace() -> None:
 
 
 def gmx_mx_dead() -> bool:
-    """GMX уже ответил 421 policy — остальные GMX/WEB.DE в этом прогоне не долбим."""
-    return bool(_GMX_MX_DEAD)
+    """GMX на паузе после 421/policy — только на cooldown, потом снова пробуем."""
+    global _GMX_MX_DEAD
+    if not _GMX_MX_DEAD:
+        return False
+    if time.monotonic() >= _GMX_PAUSE_UNTIL:
+        _GMX_MX_DEAD = False
+        return False
+    return True
 
 
 def _gmx_note_result(raw: object) -> None:
     global _GMX_PAUSE_UNTIL, _GMX_MX_DEAD
     if not _gmx_policy_blocked(raw):
         return
+    # Пауза, не «убить GMX до конца прогона».
+    cool = _gmx_env_float("VALIDEMAIL_GMX_POLICY_COOLDOWN_SEC", 20.0, lo=5.0, hi=120.0)
     _GMX_MX_DEAD = True
-    cool = _gmx_env_float("VALIDEMAIL_GMX_POLICY_COOLDOWN_SEC", 45.0, lo=0.0, hi=180.0)
     _GMX_PAUSE_UNTIL = max(_GMX_PAUSE_UNTIL, time.monotonic() + cool)
 
 

@@ -72,16 +72,16 @@ def api_retry_max_sellers() -> int:
 
 
 def validation_wall_sec(num_keys: int | None = None) -> float:
-    """Потолок всего прогона. Свой SMTP: до 180 с (2–3 мин). 0 = без обрыва (validemail.co)."""
+    """Потолок всего прогона. 0 = без обрыва. Дефолт mailcheck ~5 мин — успеть всех продавцов."""
     _ = num_keys
     raw = (os.getenv("VALIDEMAIL_DEADLINE_SEC") or "").strip()
     if raw:
         try:
-            return max(0.0, min(180.0, float(raw)))
+            return max(0.0, min(600.0, float(raw)))
         except (TypeError, ValueError):
             pass
     if is_mailcheck_style_url():
-        return 180.0
+        return 300.0
     return 0.0
 
 

@@ -18,6 +18,7 @@ from services.validemail_fast import (
     validate_emails_fast,
     _DEFINITIVE_BAD_REASONS,
     _is_gmx_mailbox,
+    _is_soft_smtp_domain,
     _is_transient_failure,
     _retry_delay_sec,
     gmx_mx_dead,
@@ -1126,8 +1127,7 @@ async def _validate_offers_old(
             return
 
         # Нашли — стоп. Нет ящика — следующий домен.
-        # GMX/web.de: unknown/policy ≠ «ящика нет» — скип семьи GMX и идём дальше по приоритету
-        # (не жжём unknown_cap и не обрываем gmail/icloud).
+        # GMX / bluewin / sunrise: ошибка ≠ «нет почты» — идём дальше по приоритету.
         unknown_streak = 0
         unknown_cap = max_unknown_domains_per_seller()
         skip_gmx_family = False
@@ -1135,6 +1135,7 @@ async def _validate_offers_old(
             if found_by_idx[i]:
                 break
             is_gmx_dom = _is_gmx_mailbox(f"x@{dom}")
+            is_soft = _is_soft_smtp_domain(dom)
             if skip_gmx_family and is_gmx_dom:
                 continue
             if gmx_mx_dead() and is_gmx_dom:
@@ -1144,8 +1145,8 @@ async def _validate_offers_old(
                 async with state_lock:
                     stats["current_domain"] = dom
             try:
-                if is_gmx_dom:
-                    # Не сидим на GMX до seller-timeout — иначе gmail из приоритета не успевает.
+                if is_gmx_dom or is_soft:
+                    # Не зависаем на капризном MX — иначе не дойдём до следующего в приоритете.
                     verdict = await asyncio.wait_for(
                         _probe_one_list(
                             i,
@@ -1163,8 +1164,9 @@ async def _validate_offers_old(
                         count_api_errors=count_api_errors,
                     )
             except asyncio.TimeoutError:
-                if is_gmx_dom:
-                    skip_gmx_family = True
+                if is_gmx_dom or is_soft:
+                    if is_gmx_dom:
+                        skip_gmx_family = True
                     if stats is not None:
                         async with state_lock:
                             stats["gmx_domain_timeout"] = int(
@@ -1179,9 +1181,10 @@ async def _validate_offers_old(
             if verdict == "no":
                 unknown_streak = 0
                 continue
-            # unknown / timeout / policy
-            if is_gmx_dom:
-                skip_gmx_family = True
+            # unknown / timeout / policy на GMX/ISP — следующий домен, не стоп продавца
+            if is_gmx_dom or is_soft:
+                if is_gmx_dom:
+                    skip_gmx_family = True
                 if stats is not None:
                     async with state_lock:
                         stats["gmx_unknown_skip"] = int(stats.get("gmx_unknown_skip") or 0) + 1

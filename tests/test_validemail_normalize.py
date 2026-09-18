@@ -312,9 +312,9 @@ class ValidEmailNormalizeTests(unittest.TestCase):
             },
             clear=False,
         ):
-            self.assertEqual(validation_wall_sec(1), 180.0)
+            self.assertEqual(validation_wall_sec(1), 300.0)
         with patch.dict(os.environ, {"VALIDEMAIL_DEADLINE_SEC": "300"}, clear=False):
-            self.assertEqual(validation_wall_sec(1), 180.0)
+            self.assertEqual(validation_wall_sec(1), 300.0)
         with patch.dict(os.environ, {"VALIDEMAIL_DEADLINE_SEC": "90"}, clear=False):
             self.assertEqual(validation_wall_sec(1), 90.0)
         with patch.dict(os.environ, {"VALIDEMAIL_MAX_DOMAINS_PROBE": "0"}, clear=False):
@@ -399,11 +399,35 @@ class ValidEmailNormalizeTests(unittest.TestCase):
             self.assertEqual(_validemail_api_timeout(), 8)
 
     def test_gmx_mailbox_helper(self):
-        from services.validemail_fast import _is_gmx_mailbox
+        from services.validemail_fast import _is_gmx_mailbox, _is_soft_smtp_domain
 
         self.assertTrue(_is_gmx_mailbox("max@gmx.de"))
         self.assertTrue(_is_gmx_mailbox("max@web.de"))
         self.assertFalse(_is_gmx_mailbox("max@gmail.com"))
+        self.assertTrue(_is_soft_smtp_domain("bluewin.ch"))
+        self.assertTrue(_is_soft_smtp_domain("a@sunrise.ch"))
+        self.assertTrue(_is_soft_smtp_domain("x@gmx.ch"))
+        self.assertFalse(_is_soft_smtp_domain("gmail.com"))
+
+    def test_gmx_policy_pause_not_permanent(self):
+        from services.validemail_fast import (
+            _GMX_MX_DEAD,
+            _GMX_PAUSE_UNTIL,
+            _gmx_note_result,
+            gmx_mx_dead,
+            reset_validemail_runtime,
+        )
+        import services.validemail_fast as vf
+
+        reset_validemail_runtime()
+        self.assertFalse(gmx_mx_dead())
+        _gmx_note_result(
+            {"reason": "connection_error", "detail": "421-gmx.net Reject due to policy restrictions."}
+        )
+        self.assertTrue(gmx_mx_dead())
+        vf._GMX_PAUSE_UNTIL = 0.0
+        self.assertFalse(gmx_mx_dead())
+        self.assertFalse(vf._GMX_MX_DEAD)
 
     def test_gmx_pacing_spreads_large_batch_over_two_minutes(self):
         from services.validemail_fast import (

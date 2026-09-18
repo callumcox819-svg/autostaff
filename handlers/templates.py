@@ -205,8 +205,11 @@ def _smart_texts_from_json(data: object) -> List[str]:
 
 
 async def _mailing_text_pool(tg_id: int) -> List[str]:
-    """Умные пресеты + тексты из пресетов с названием (как в подсказке UI)."""
-    pool = list(await load_smart_texts(int(tg_id)))
+    """Умные пресеты имеют приоритет; обычные — fallback, если умных нет."""
+    smart = list(await load_smart_texts(int(tg_id)))
+    if smart:
+        return smart
+    pool: list[str] = []
     for it in await load_templates(int(tg_id)):
         body = (it.text or "").strip()
         if body:

@@ -17,6 +17,14 @@ def test_void_raw_json_wins_over_stale_columns():
     assert "badehut" in offer_effective_photo(off).lower()
 
 
+def test_effective_title_decodes_parser_html_entities():
+    off = SimpleNamespace(
+        title="",
+        raw_json='{"item_title": "Rahmen Gr 40&#x2F;50"}',
+    )
+    assert offer_effective_title(off) == "Rahmen Gr 40/50"
+
+
 def test_marketplace_label_from_ricardo_link():
     off = SimpleNamespace(
         link="",

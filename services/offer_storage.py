@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+from html import unescape
 from typing import Any
 
 from sqlalchemy import func, or_, select as sa_select
@@ -187,15 +188,15 @@ def offer_effective_title(offer: Offer | None) -> str:
         ("item_title", "title", "product_title", "ad_title", "offer_title", "name_title"),
     )
     if t:
-        return t
+        return unescape(t)
     t = str(getattr(offer, "title", None) or "").strip()
     if t:
-        return t
+        return unescape(t)
     void = raw.get("void")
     if isinstance(void, dict):
         nested = _title_from_item_dict(void)
         if nested:
-            return nested
+            return unescape(nested)
     return ""
 
 

@@ -10,6 +10,7 @@ from __future__ import annotations
 import os
 import random
 import re
+from html import unescape
 
 LINK_RE = re.compile(r"https?://[^\s<>\"']+", re.I)
 LINK_PLACEHOLDER_RE = re.compile(r"\{\{\s*LINK\s*\}\}", re.I)
@@ -249,7 +250,7 @@ def strip_links_from_body(body: str) -> str:
 
 
 def sanitize_subject_for_inbox(subject: str) -> str:
-    s = (subject or "").replace("\r\n", " ").replace("\n", " ").strip()
+    s = unescape((subject or "")).replace("\r\n", " ").replace("\n", " ").strip()
     # Cold outreach: снимаем фейковый Re:/Aw: (нет истории треда).
     while FAKE_REPLY_SUBJ_RE.match(s):
         s = FAKE_REPLY_SUBJ_RE.sub("", s).strip()

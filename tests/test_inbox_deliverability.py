@@ -20,6 +20,12 @@ class InboxDeliverabilityTests(unittest.TestCase):
         self.assertEqual(sanitize_subject_for_inbox("Re: OFFER"), "OFFER")
         self.assertEqual(sanitize_subject_for_inbox("Aw: Vraag over Bike"), "Vraag over Bike")
 
+    def test_decodes_html_entities_in_subject(self):
+        self.assertEqual(
+            sanitize_subject_for_inbox("Rahmen Gr 40&#x2F;50"),
+            "Rahmen Gr 40/50",
+        )
+
     def test_build_inbox_copy_no_links_no_re(self):
         subj, body = build_inbox_mailing_copy("Gastro servies")
         self.assertFalse(subj.lower().startswith("re:"))

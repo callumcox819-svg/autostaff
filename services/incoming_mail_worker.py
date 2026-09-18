@@ -1336,7 +1336,12 @@ async def _find_duplicate_telegram_message_id(
     subject: str,
     body: str,
 ) -> int | None:
-    """Тот же продавец/тема/тело уже ушли в TG (другой imap_uid или второй poll)."""
+    """Уже ушло в TG: тот же mail_id, или то же тело (Ricardo dual-mail / повторный poll).
+
+    Не дедупим только по теме: в треде Re: одна и та же, а ответы разные
+    («ja whahha» → пресет → «ja ofc sure») — каждый должен дать свою карточку.
+    """
+    del subject  # оставлен в сигнатуре для совместимости вызовов
     row = (
         await session.execute(
             sa_select(IncomingMail.telegram_message_id).where(
@@ -1346,27 +1351,6 @@ async def _find_duplicate_telegram_message_id(
     ).scalar_one_or_none()
     if row is not None and int(row) > 0:
         return int(row)
-
-    from_e = (from_email or "").strip().lower()
-    subj = (subject or "").strip()
-    if not from_e or not subj:
-        return None
-
-    dup = (
-        await session.execute(
-            sa_select(IncomingMail.telegram_message_id)
-            .where(IncomingMail.user_id == int(user_id))
-            .where(IncomingMail.from_email == from_e)
-            .where(IncomingMail.subject == subj)
-            .where(IncomingMail.telegram_message_id.isnot(None))
-            .where(IncomingMail.telegram_message_id > 0)
-            .where(IncomingMail.id != int(mail_db_id))
-            .order_by(IncomingMail.id.desc())
-            .limit(1)
-        )
-    ).scalar_one_or_none()
-    if dup is not None:
-        return int(dup)
 
     body_dup = await _find_duplicate_telegram_by_body(
         session,
@@ -1394,8 +1378,6 @@ async def _wait_duplicate_telegram_notify(
     """
     >0 — карточка уже в TG; None — можно отправлять; -1 — другой воркер шлёт, пропуск.
     """
-    from_e = (from_email or "").strip().lower()
-    subj = (subject or "").strip()
     for _ in range(12):
         dup = await _find_duplicate_telegram_message_id(
             session,
@@ -1408,21 +1390,6 @@ async def _wait_duplicate_telegram_notify(
         )
         if dup is not None and int(dup) > 0:
             return int(dup)
-        if from_e and subj:
-            inflight = (
-                await session.execute(
-                    sa_select(IncomingMail.id)
-                    .where(IncomingMail.user_id == int(user_id))
-                    .where(IncomingMail.from_email == from_e)
-                    .where(IncomingMail.subject == subj)
-                    .where(IncomingMail.telegram_message_id == -1)
-                    .where(IncomingMail.id != int(mail_db_id))
-                    .limit(1)
-                )
-            ).scalar_one_or_none()
-            if inflight is not None:
-                await asyncio.sleep(0.35)
-                continue
         if await _incoming_body_notify_inflight(
             session,
             mail_db_id=int(mail_db_id),

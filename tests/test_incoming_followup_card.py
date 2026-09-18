@@ -2,6 +2,8 @@ import unittest
 from unittest.mock import AsyncMock, MagicMock
 
 from services.incoming_mail_worker import (
+    _find_duplicate_telegram_message_id,
+    _incoming_body_dedupe_key,
     is_first_inbound_mail_for_seller,
     render_mail_text_chunks,
     seller_thread_tg_anchor_message_id,
@@ -85,6 +87,28 @@ class FollowupIncomingCardTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(tid, 555)
         session.execute.assert_not_called()
+
+    def test_short_replies_have_no_body_dedupe_key(self):
+        # Короткие Ja не схлопываются по телу — иначе второй ответ в треде теряется.
+        self.assertEqual(_incoming_body_dedupe_key("ja whahha"), "")
+        self.assertEqual(_incoming_body_dedupe_key("ja ofc sure"), "")
+
+    async def test_same_re_subject_different_reply_not_duplicate(self):
+        """Пресет → второй ответ продавца с той же Re: темой — новая карточка."""
+        session = AsyncMock()
+        own = MagicMock()
+        own.scalar_one_or_none.return_value = None
+        session.execute = AsyncMock(return_value=own)
+        tid = await _find_duplicate_telegram_message_id(
+            session,
+            mail_db_id=2,
+            user_id=1,
+            account_id=1,
+            from_email="zemamen800@gmail.com",
+            subject="Re: Nog beschikbaar? Charizard VMAX",
+            body="ja ofc sure\n\nOn Fri, Sep 18, 2026 at 10:06 AM Gremlis Anna wrote:",
+        )
+        self.assertIsNone(tid)
 
 
 if __name__ == "__main__":

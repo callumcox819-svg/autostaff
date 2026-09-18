@@ -75,8 +75,8 @@ class CountryScopeTests(unittest.TestCase):
         self.assertEqual(domains, SWITZERLAND_VALIDATION_DOMAINS)
         self.assertIn("gmx.ch", domains)
         self.assertIn("bluewin.ch", domains)
-        self.assertEqual(domains[0], "gmail.com")
-        self.assertLess(domains.index("gmail.com"), domains.index("gmx.ch"))
+        self.assertEqual(domains[0], "gmx.ch")
+        self.assertLess(domains.index("gmx.ch"), domains.index("gmail.com"))
         self.assertNotEqual(domains, GERMANY_VALIDATION_DOMAINS)
 
     def test_legacy_nl_still_all_countries_if_unset(self):

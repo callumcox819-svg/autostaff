@@ -739,6 +739,7 @@ async def _validate_offers_old(
 
     from services.validemail_keys import (
         combined_local_probe,
+        gmx_domain_probe_timeout_sec,
         max_domains_per_seller,
         max_unknown_domains_per_seller,
         max_locals_per_seller,
@@ -1124,33 +1125,66 @@ async def _validate_offers_old(
         if not locals_list:
             return
 
-        # Нашли — стоп. Нет ящика — следующий домен. Несколько unknown подряд — не ждём 12 минут.
+        # Нашли — стоп. Нет ящика — следующий домен.
+        # GMX/web.de: unknown/policy ≠ «ящика нет» — скип семьи GMX и идём дальше по приоритету
+        # (не жжём unknown_cap и не обрываем gmail/icloud).
         unknown_streak = 0
         unknown_cap = max_unknown_domains_per_seller()
         skip_gmx_family = False
         for dom, wave in _domain_priority_waves(locals_list, domains_clean):
             if found_by_idx[i]:
                 break
-            if skip_gmx_family and _is_gmx_mailbox(f"x@{dom}"):
+            is_gmx_dom = _is_gmx_mailbox(f"x@{dom}")
+            if skip_gmx_family and is_gmx_dom:
                 continue
-            if gmx_mx_dead() and _is_gmx_mailbox(f"x@{dom}"):
+            if gmx_mx_dead() and is_gmx_dom:
                 skip_gmx_family = True
                 continue
             if stats is not None:
                 async with state_lock:
                     stats["current_domain"] = dom
-            verdict = await _probe_one_list(
-                i,
-                api_key,
-                wave,
-                count_api_errors=count_api_errors,
-            )
-            if gmx_mx_dead() and _is_gmx_mailbox(f"x@{dom}"):
+            try:
+                if is_gmx_dom:
+                    # Не сидим на GMX до seller-timeout — иначе gmail из приоритета не успевает.
+                    verdict = await asyncio.wait_for(
+                        _probe_one_list(
+                            i,
+                            api_key,
+                            wave,
+                            count_api_errors=count_api_errors,
+                        ),
+                        timeout=gmx_domain_probe_timeout_sec(),
+                    )
+                else:
+                    verdict = await _probe_one_list(
+                        i,
+                        api_key,
+                        wave,
+                        count_api_errors=count_api_errors,
+                    )
+            except asyncio.TimeoutError:
+                if is_gmx_dom:
+                    skip_gmx_family = True
+                    if stats is not None:
+                        async with state_lock:
+                            stats["gmx_domain_timeout"] = int(
+                                stats.get("gmx_domain_timeout") or 0
+                            ) + 1
+                    continue
+                verdict = "unknown"
+            if gmx_mx_dead() and is_gmx_dom:
                 skip_gmx_family = True
             if found_by_idx[i] or verdict == "hit":
                 break
             if verdict == "no":
                 unknown_streak = 0
+                continue
+            # unknown / timeout / policy
+            if is_gmx_dom:
+                skip_gmx_family = True
+                if stats is not None:
+                    async with state_lock:
+                        stats["gmx_unknown_skip"] = int(stats.get("gmx_unknown_skip") or 0) + 1
                 continue
             unknown_streak += 1
             if unknown_streak >= unknown_cap:

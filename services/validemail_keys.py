@@ -184,8 +184,19 @@ def seller_validation_timeout_sec() -> float:
             return max(8.0, min(120.0, float(raw)))
         except (TypeError, ValueError):
             pass
-    # Один продавец не должен съесть весь 2-мин прогон.
-    return 20.0 if is_mailcheck_style_url() else 90.0
+    # mailcheck: GMX может отвечать медленно — хватить времени ещё на gmail/icloud после.
+    return 45.0 if is_mailcheck_style_url() else 90.0
+
+
+def gmx_domain_probe_timeout_sec() -> float:
+    """Сколько ждать один GMX-домен, потом следующий в приоритете (gmail и т.д.)."""
+    raw = (os.getenv("VALIDEMAIL_GMX_DOMAIN_TIMEOUT_SEC") or "").strip()
+    if raw:
+        try:
+            return max(4.0, min(60.0, float(raw)))
+        except (TypeError, ValueError):
+            pass
+    return 12.0
 
 
 def domain_probe_wave_size() -> int:

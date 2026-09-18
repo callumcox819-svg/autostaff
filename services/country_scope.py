@@ -20,13 +20,13 @@ GERMANY_VALIDATION_DOMAINS: tuple[str, ...] = (
     "hotmail.de",
 )
 
-# CH: быстрые MX первыми (gmail/icloud), локальные ISP после.
-# gmx.ch первым сериализует весь прогон и съедает 180s wall — hit rate падает.
+# CH: приоритет — локальные ISP (gmx.ch), дальше gmail/icloud.
+# «Нет ящика» → следующий домен; GMX unknown/policy → скип семьи GMX, не стоп всего списка.
 SWITZERLAND_VALIDATION_DOMAINS: tuple[str, ...] = (
-    "gmail.com",
-    "icloud.com",
     "gmx.ch",
+    "gmail.com",
     "bluewin.ch",
+    "icloud.com",
     "hotmail.com",
     "outlook.com",
     "sunrise.ch",

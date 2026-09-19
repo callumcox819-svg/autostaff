@@ -125,6 +125,26 @@ def configure_gmx_pacing(emails: Iterable[str]) -> float:
     return _GMX_GAP_SEC
 
 
+def _use_gmx_smtp_throttle(email: str, url: str) -> bool:
+    """
+    Старый throttle (sem=1 + gap) нужен только для нашего SMTP/mailcheck.
+    На validemail.co он душит весь прогон — там хватает RPS/concurrency ключа.
+    """
+    if not _is_gmx_mailbox(email):
+        return False
+    ul = (url or "").strip().lower()
+    if "validemail.co" in ul:
+        return False
+    try:
+        from services.validemail_keys import hard_backend_enabled, is_hard_validation_domain
+
+        if hard_backend_enabled() and is_hard_validation_domain(email):
+            return False
+    except Exception:
+        pass
+    return True
+
+
 def _gmx_sem() -> asyncio.Semaphore:
     """GMX/web.de: по умолчанию 1 SMTP за раз + пауза между запросами."""
     global _GMX_SEM
@@ -758,7 +778,7 @@ async def _check_one(
         return email, False, {"error": "empty"}
     if cancel_event and cancel_event.is_set():
         return email, False, {"error": "cancelled", "_cancelled": True}
-    if _is_gmx_mailbox(email_lc) and gmx_mx_dead():
+    if _use_gmx_smtp_throttle(email_lc, url) and gmx_mx_dead():
         return email, False, {
             "status": "unknown",
             "reason": "policy_skip",
@@ -784,7 +804,7 @@ async def _check_one(
 
     async with _global_inflight_sem():
         async with semaphore:
-            gmx_cm = _gmx_sem() if _is_gmx_mailbox(email_lc) else None
+            gmx_cm = _gmx_sem() if _use_gmx_smtp_throttle(email_lc, url) else None
             if gmx_cm is not None:
                 await gmx_cm.acquire()
                 await _gmx_pace()

@@ -745,8 +745,10 @@ async def _validate_offers_old(
         max_unknown_domains_per_seller,
         max_locals_per_seller,
         probe_by_domain_waves,
+        resolve_hard_api_keys,
         seller_batch_pause_sec,
         seller_batch_size,
+        seller_parallel_cap_for_run,
         seller_parallel_per_key,
         seller_validation_timeout_sec,
         validation_concurrency_plan,
@@ -762,9 +764,10 @@ async def _validate_offers_old(
         domains_clean = domains_clean[:dom_cap]
 
     n_keys = max(1, len(api_keys))
+    hard_n = len(resolve_hard_api_keys())
     per_key_limit, parallel_pool = validation_concurrency_plan(n_keys)
     sellers_parallel = seller_parallel_per_key()
-    parallel_pool = global_inflight_cap(n_keys)
+    parallel_pool = global_inflight_cap(max(n_keys, hard_n or 1))
 
     if progress_cb:
         try:
@@ -1203,9 +1206,10 @@ async def _validate_offers_old(
     if stats is not None:
         stats["sellers_total"] = n_sellers
 
-    seller_sem_cap = max(1, sellers_parallel * n_keys)
+    seller_sem_cap = seller_parallel_cap_for_run(n_keys, hard_n)
     if stats is not None:
         stats["seller_parallel_cap"] = seller_sem_cap
+        stats["validemail_hard_keys"] = hard_n
 
     async def _run_sellers_batched() -> None:
         """Все продавцы в одной очереди (sem), без синхронных «волн» по 120 шт."""

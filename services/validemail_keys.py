@@ -283,6 +283,19 @@ def seller_batch_pause_sec() -> float:
         return 0.0
 
 
+def seller_parallel_cap_for_run(easy_keys: int, hard_keys: int = 0) -> int:
+    """Сколько продавцов гоняем параллельно (учитываем hard-ключи)."""
+    n_easy = max(1, int(easy_keys or 1))
+    n_hard = max(0, int(hard_keys or 0))
+    per = seller_parallel_per_key()
+    # mailcheck sellers × easy + небольшой буст от co-ключей
+    base = per * n_easy
+    if n_hard:
+        # co: до 10 параллели на ключ, но продавцы шире — не упираемся в 1×mailcheck
+        base = max(base, min(80, 8 * n_hard + per))
+    return max(1, min(120, base))
+
+
 def seller_validation_timeout_sec() -> float:
     raw = (os.getenv("VALIDEMAIL_SELLER_TIMEOUT_SEC") or "").strip()
     if raw:

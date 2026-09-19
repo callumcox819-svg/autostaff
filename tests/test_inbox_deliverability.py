@@ -33,7 +33,7 @@ class InboxDeliverabilityTests(unittest.TestCase):
         self.assertNotIn("https://", body.lower())
         self.assertTrue(len(body) < 200)
 
-    def test_defaults_favor_deliverability(self):
+    def test_defaults_fast_no_hourly_cap(self):
         with patch.dict(os.environ, {}, clear=False):
             for k in (
                 "MAILING_FAST_MODE",
@@ -43,11 +43,11 @@ class InboxDeliverabilityTests(unittest.TestCase):
                 "MAILING_MAX_PER_ACCOUNT_HOUR",
             ):
                 os.environ.pop(k, None)
-            self.assertFalse(mailing_fast_mode())
+            self.assertTrue(mailing_fast_mode())
             self.assertTrue(mailing_inbox_success_profile())
             self.assertTrue(mailing_body_variation())
-            self.assertEqual(inbox_stagger_ms(), 80)
-            self.assertEqual(mailing_max_per_account_hour(), 30)
+            self.assertEqual(inbox_stagger_ms(), 0)
+            self.assertEqual(mailing_max_per_account_hour(), 0)
 
     def test_slow_mode_stagger(self):
         with patch.dict(os.environ, {"MAILING_FAST_MODE": "0"}, clear=False):

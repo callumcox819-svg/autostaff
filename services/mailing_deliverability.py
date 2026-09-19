@@ -109,8 +109,8 @@ def _env_on(name: str, *, default: str = "1") -> bool:
 
 
 def mailing_fast_mode() -> bool:
-    """Быстрый BURST. По умолчанию выкл. — меньше спама / блоков Gmail."""
-    return _env_on("MAILING_FAST_MODE", default="0")
+    """Быстрый BURST (почти без пауз). По умолчанию вкл. — нужен большой трафик."""
+    return _env_on("MAILING_FAST_MODE", default="1")
 
 
 def mailing_inbox_success_profile() -> bool:

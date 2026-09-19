@@ -376,6 +376,8 @@ class ValidEmailNormalizeTests(unittest.TestCase):
                 "VALIDEMAIL_API_TIMEOUT": "",
                 "VALIDEMAIL_URL": "https://validemail.co/api/v1/validate",
                 "VALIDEMAIL_MAILCHECK": "0",
+                "VALIDEMAIL_FAST": "0",
+                "VALIDEMAIL_TRAFFIC_MODE": "0",
             },
             clear=False,
         ):

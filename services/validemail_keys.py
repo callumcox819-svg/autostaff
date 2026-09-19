@@ -288,11 +288,12 @@ def seller_parallel_cap_for_run(easy_keys: int, hard_keys: int = 0) -> int:
     n_easy = max(1, int(easy_keys or 1))
     n_hard = max(0, int(hard_keys or 0))
     per = seller_parallel_per_key()
-    # mailcheck sellers × easy + небольшой буст от co-ключей
     base = per * n_easy
     if n_hard:
-        # co: до 10 параллели на ключ, но продавцы шире — не упираемся в 1×mailcheck
-        base = max(base, min(80, 8 * n_hard + per))
+        # co: 10 RPS/key — держим больше продавцов в полёте
+        base = max(base, min(100, 12 * n_hard + per))
+    if validation_fast_mode():
+        base = max(base, min(100, base + 8))
     return max(1, min(120, base))
 
 
@@ -303,18 +304,23 @@ def seller_validation_timeout_sec() -> float:
             return max(8.0, min(120.0, float(raw)))
         except (TypeError, ValueError):
             pass
-    # mailcheck: GMX может отвечать медленно — хватить времени ещё на gmail/icloud после.
+    # dual/hard: не держим продавца 45с на медленных ISP
+    if hard_backend_enabled():
+        return 35.0 if is_mailcheck_style_url() else 50.0
     return 45.0 if is_mailcheck_style_url() else 90.0
 
 
 def gmx_domain_probe_timeout_sec() -> float:
-    """Сколько ждать один GMX-домен, потом следующий в приоритете (gmail и т.д.)."""
+    """Сколько ждать один GMX/ISP-домен, потом следующий в приоритете."""
     raw = (os.getenv("VALIDEMAIL_GMX_DOMAIN_TIMEOUT_SEC") or "").strip()
     if raw:
         try:
-            return max(4.0, min(60.0, float(raw)))
+            return max(3.0, min(60.0, float(raw)))
         except (TypeError, ValueError):
             pass
+    # На validemail.co нет смысла ждать 12с SMTP — режем волну быстрее.
+    if hard_backend_enabled():
+        return 6.0
     return 12.0
 
 
@@ -345,14 +351,14 @@ def max_domains_per_seller() -> int:
 
 
 def max_unknown_domains_per_seller() -> int:
-    """Сколько доменов подряд с unknown, потом стоп. «Нет ящика» — список не режем."""
+    """Сколько доменов подряд с unknown, потом стоп."""
     raw = (os.getenv("VALIDEMAIL_MAX_UNKNOWN_DOMAINS") or "").strip()
     if not raw:
-        return 4
+        return 3 if validation_fast_mode() else 4
     try:
         return max(1, min(16, int(raw)))
     except (TypeError, ValueError):
-        return 4
+        return 3 if validation_fast_mode() else 4
 
 
 def validation_pool_size(num_keys: int | None = None) -> int:

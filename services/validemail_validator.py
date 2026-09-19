@@ -1134,12 +1134,16 @@ async def _validate_offers_old(
         unknown_streak = 0
         unknown_cap = max_unknown_domains_per_seller()
         skip_gmx_family = False
+        skip_soft_family = False
+        soft_timeout = gmx_domain_probe_timeout_sec()
         for dom, wave in _domain_priority_waves(locals_list, domains_clean):
             if found_by_idx[i]:
                 break
             is_gmx_dom = _is_gmx_mailbox(f"x@{dom}")
             is_soft = _is_soft_smtp_domain(dom)
             if skip_gmx_family and is_gmx_dom:
+                continue
+            if skip_soft_family and is_soft and not is_gmx_dom:
                 continue
             if gmx_mx_dead() and is_gmx_dom:
                 skip_gmx_family = True
@@ -1157,7 +1161,7 @@ async def _validate_offers_old(
                             wave,
                             count_api_errors=count_api_errors,
                         ),
-                        timeout=gmx_domain_probe_timeout_sec(),
+                        timeout=soft_timeout,
                     )
                 else:
                     verdict = await _probe_one_list(
@@ -1170,6 +1174,8 @@ async def _validate_offers_old(
                 if is_gmx_dom or is_soft:
                     if is_gmx_dom:
                         skip_gmx_family = True
+                    elif is_soft:
+                        skip_soft_family = True
                     if stats is not None:
                         async with state_lock:
                             stats["gmx_domain_timeout"] = int(
@@ -1188,6 +1194,9 @@ async def _validate_offers_old(
             if is_gmx_dom or is_soft:
                 if is_gmx_dom:
                     skip_gmx_family = True
+                elif is_soft:
+                    # Один CH-ISP unknown → сразу к gmail/icloud, не жечь 3×timeout
+                    skip_soft_family = True
                 if stats is not None:
                     async with state_lock:
                         stats["gmx_unknown_skip"] = int(stats.get("gmx_unknown_skip") or 0) + 1

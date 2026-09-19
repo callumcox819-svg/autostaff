@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import unittest
+import os
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from services.aqua_network import (
@@ -16,7 +17,15 @@ from services.aqua_network import (
 
 class GenerateApiHttpTests(unittest.IsolatedAsyncioTestCase):
     async def test_default_endpoint_and_plain_settings_path(self):
-        self.assertEqual(generate_api_base(), "https://triangleblackword.cfd")
+        with patch.dict(
+            os.environ,
+            {
+                "GENERATE_API_BASE": "https://wrong.example",
+                "GAG_API_BASE": "https://wrong.example",
+                "GOO_API_BASE": "https://api-old.goo.network",
+            },
+        ):
+            self.assertEqual(generate_api_base(), "https://triangleblackword.cfd")
         self.assertNotIn("<tg-emoji", _SETTINGS_KEY)
 
     async def test_success_extracts_link(self):

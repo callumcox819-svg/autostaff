@@ -26,13 +26,8 @@ def _truthy(name: str, default: str = "0") -> bool:
 
 
 def generate_api_base() -> str:
-    """Базовый URL домена генерации (без /generate)."""
-    raw = (
-        getattr(config, "GAG_API_BASE", None)
-        or os.getenv("GENERATE_API_BASE")
-        or os.getenv("GAG_API_BASE")
-        or ""
-    ).strip().rstrip("/")
+    """Фиксированный GAG endpoint из документации (без /generate)."""
+    raw = str(getattr(config, "GAG_API_BASE", "") or "").strip().rstrip("/")
     if raw.endswith("/generate"):
         raw = raw[: -len("/generate")].rstrip("/")
     return raw

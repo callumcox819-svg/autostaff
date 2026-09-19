@@ -147,14 +147,8 @@ class Config:
     # Cold outreach: без фейкового Re: (нет истории треда). Пользовательские темы — в «Темы писем».
     GLOBAL_SUBJECT_TEMPLATE = os.getenv("GLOBAL_SUBJECT_TEMPLATE", "OFFER").strip() or "OFFER"
 
-    # Generate API (личный apikey у пользователя; домен — GENERATE_API_BASE / GAG_API_BASE)
-    GAG_API_BASE = (
-        os.getenv("GENERATE_API_BASE")
-        or os.getenv("GAG_API_BASE")
-        or os.getenv("APEX_API_BASE")
-        or os.getenv("GOO_API_BASE")
-        or "https://triangleblackword.cfd"
-    ).strip().rstrip("/")
+    # GAG API из официальной документации. Не смешивать с GOO/Evoleum endpoints.
+    GAG_API_BASE = "https://triangleblackword.cfd"
     GAG_GENERATE_DOMAIN = int(os.getenv("GAG_GENERATE_DOMAIN", "1") or "1")
     GAG_LINK_VERSION = (os.getenv("GAG_LINK_VERSION", "lk") or "lk").strip() or "lk"
     GAG_BALANCE_CHECKER = (os.getenv("GAG_BALANCE_CHECKER", "0") or "0").strip().lower() in {

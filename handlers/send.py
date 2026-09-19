@@ -27,7 +27,7 @@ from services.placeholders import apply_placeholders
 
 from handlers.status import tg_answer_safe
 from services.sender import normalize_send_error
-from services.smtp_block_control import mark_account_smtp_blocked
+from services.smtp_block_control import mark_account_smtp_blocked, mark_account_dead_no_access
 from services.smtp_account_check import is_account_no_access_error
 from keyboards.main_menu import is_send_trigger, main_menu_kb
 
@@ -464,6 +464,16 @@ async def _handle_send_failure(
     state.failed_count += 1
     state.last_error = err or "UNKNOWN"
     state.last_failed_to = (tgt.email or "").strip()
+
+    if await mark_account_dead_no_access(
+        session,
+        acc,
+        err,
+        db_user_id=db_user_id,
+        bot=bot,
+        chat_id=chat_id,
+    ):
+        return True
 
     if await mark_account_smtp_blocked(
         session,

@@ -101,6 +101,8 @@ def is_transient_smtp_check_failure(err: str | None) -> bool:
 
 def _classify_status(err: str) -> Tuple[Optional[str], str]:
     norm = normalize_send_error(err)
+    if is_account_no_access_error(norm):
+        return "bad", norm
     if is_smtp_account_block_error(norm):
         return "smtp_blocked", norm
     kind = norm.split("|", 1)[0].split(":", 1)[0].strip().upper()

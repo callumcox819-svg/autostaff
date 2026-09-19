@@ -70,8 +70,16 @@ def is_temporary_smtp_busy(err: str | None) -> bool:
 
 
 def is_smtp_account_block_error(err: str | None) -> bool:
-    """Ошибка уровня ящика (лимит Gmail, блок, неверный пароль) — не ошибка одного получателя."""
+    """
+    Временный блок/лимит ящика (SMTP off, IMAP ещё может жить).
+    Неверный пароль / WebLoginRequired сюда НЕ входят — это мёртвый аккаунт.
+    """
+    from services.smtp_account_check import is_account_no_access_error
+
     s = normalize_send_error(err or "")
+    # Мёртвый доступ — не «пауза SMTP»
+    if is_account_no_access_error(s):
+        return False
     kind = s.split("|", 1)[0].split(":", 1)[0].strip().upper()
     if kind in (
         "RECIPIENT_DEAD",
@@ -79,16 +87,14 @@ def is_smtp_account_block_error(err: str | None) -> bool:
         "PROXY_ERROR",
         "SMTP_TIMEOUT",
         "SMTP_ACCEPTED_NOT_IN_SENT",
+        "ACCOUNT_INVALID_CREDENTIALS",
+        "ACCOUNT_WEB_LOGIN_REQUIRED",
     ):
         return False
     # 421 busy — только пауза, ящик с рассылки НЕ снимаем
     if is_temporary_smtp_busy(s):
         return False
-    if kind in (
-        "ACCOUNT_BLOCKED",
-        "ACCOUNT_INVALID_CREDENTIALS",
-        "ACCOUNT_WEB_LOGIN_REQUIRED",
-    ):
+    if kind in ("ACCOUNT_BLOCKED",):
         return True
     # ACCOUNT_RATE_LIMIT: снимаем только при жёсткой квоте (не Server busy)
     if kind == "ACCOUNT_RATE_LIMIT":
@@ -132,13 +138,74 @@ def is_smtp_account_block_error(err: str | None) -> bool:
         "too many messages",
         "mailbox full",
         "account has been disabled",
-        "web login required",
-        "username and password not accepted",
         "5.4.5",
         "5.7.1",
         "message blocked",
     )
     return any(p in t for p in phrases)
+
+
+def apply_account_dead_fields(account: EmailAccount, err: str | None = None) -> bool:
+    """Пометить ящик мёртвым (bad): ни SMTP, ни IMAP. Без автовозврата."""
+    was_dead = (getattr(account, "status", None) or "").strip().lower() == "bad"
+    account.status = "bad"
+    if err is not None:
+        account.last_error = (err or "")[:1000]
+    account.smtp_blocked_until = None
+    return not was_dead
+
+
+def account_dead_notice_html(*, email: str = "", lead: str = "") -> str:
+    em = html.escape((email or "").strip())
+    tail = f"\n<code>{em}</code>" if em else ""
+    return (
+        f"{lead}{html_emoji('fail')} <b>Ящик мёртв</b> "
+        f"(неверные данные / WebLoginRequired).\n"
+        f"Снят с SMTP и IMAP, <b>без</b> автовозврата.{tail}"
+    )
+
+
+async def mark_account_dead_no_access(
+    session: AsyncSession,
+    account: EmailAccount,
+    err: str,
+    *,
+    db_user_id: int,
+    bot: Bot | None = None,
+    chat_id: int | None = None,
+) -> bool:
+    """Пометить ящик bad при ACCOUNT_INVALID / WebLoginRequired. Возвращает True если применили."""
+    from services.smtp_account_check import is_account_no_access_error
+
+    if not is_account_no_access_error(err):
+        return False
+
+    row = await session.get(EmailAccount, int(account.id))
+    if not row:
+        return False
+    account = row
+
+    newly = apply_account_dead_fields(account, err)
+    try:
+        await session.commit()
+    except Exception:
+        await session.rollback()
+        raise
+
+    if not newly:
+        return True
+
+    notify = await block_control_enabled(session, db_user_id)
+    if bot and chat_id and notify:
+        try:
+            await bot.send_message(
+                int(chat_id),
+                account_dead_notice_html(email=account.email or ""),
+                parse_mode="HTML",
+            )
+        except Exception:
+            pass
+    return True
 
 
 def is_smtp_blocked_status(status: str | None) -> bool:
@@ -312,6 +379,13 @@ async def restore_due_smtp_blocked_accounts(session: AsyncSession) -> int:
     for acc in rows:
         until = getattr(acc, "smtp_blocked_until", None)
         if until is not None and until > now:
+            continue
+        # Ранее ошибочно ставили smtp_blocked на мёртвые credentials — не возвращаем.
+        from services.smtp_account_check import is_account_no_access_error
+
+        if is_account_no_access_error(getattr(acc, "last_error", None)):
+            apply_account_dead_fields(acc, getattr(acc, "last_error", None))
+            changed = True
             continue
         if until is None:
             updated = getattr(acc, "updated_at", None)

@@ -21,6 +21,7 @@ from models import EmailAccount, Offer, OfferEmail, User
 from services.offer_storage import offer_effective_title
 from services.placeholders import apply_placeholders
 from services.smtp_block_control import is_smtp_account_block_error, mark_account_smtp_blocked
+from services.smtp_account_check import is_account_no_access_error
 from services.smtp_delivery_verify import verify_message_in_sent
 from services.smtp_proxy_send import send_email_via_account_with_proxy
 from services.country_scope import get_scoped_setting, set_scoped_setting
@@ -490,16 +491,28 @@ async def _run_mass_test(message: Message, tg_id: int) -> None:
                 else:
                     err_s = err or "unknown"
                     fail_lines.append(f"<code>{escape(to_email)}</code>: {escape(err_s[:120])}")
-                    if is_smtp_account_block_error(err_s):
+                    if is_smtp_account_block_error(err_s) or is_account_no_access_error(err_s):
                         async with async_session() as session_blk:
-                            await mark_account_smtp_blocked(
-                                session_blk,
-                                account,
-                                err_s,
-                                db_user_id=user_id,
-                                bot=message.bot,
-                                chat_id=int(message.chat.id),
-                            )
+                            if is_account_no_access_error(err_s):
+                                from services.smtp_block_control import mark_account_dead_no_access
+
+                                await mark_account_dead_no_access(
+                                    session_blk,
+                                    account,
+                                    err_s,
+                                    db_user_id=user_id,
+                                    bot=message.bot,
+                                    chat_id=int(message.chat.id),
+                                )
+                            else:
+                                await mark_account_smtp_blocked(
+                                    session_blk,
+                                    account,
+                                    err_s,
+                                    db_user_id=user_id,
+                                    bot=message.bot,
+                                    chat_id=int(message.chat.id),
+                                )
                         acc_ids = [aid for aid in acc_ids if aid != int(account.id)]
 
             summary = (

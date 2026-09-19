@@ -109,9 +109,8 @@ def _extract_link(data: dict[str, Any]) -> str:
 async def _post_generate(body: dict[str, Any], *, timeout_sec: float = 30.0) -> dict[str, Any]:
     base = generate_api_base()
     if not base:
-        raise AquaError(
-            "Домен генерации не задан. На сервере: GENERATE_API_BASE или GAG_API_BASE"
-        )
+        logger.error("GAG API base is not configured")
+        raise AquaError("Сервис генерации GAG временно не настроен. Обратитесь к администратору.")
 
     apikey = normalize_aqua_api_key(str(body.get("apikey") or ""))
     if not apikey:
@@ -164,9 +163,8 @@ async def verify_gag_auth(
     if not key:
         raise AquaError(f"Личный API key не задан ({_SETTINGS_KEY})")
     if not generate_api_base():
-        raise AquaError(
-            "Домен генерации не задан на сервере (GENERATE_API_BASE / GAG_API_BASE)."
-        )
+        logger.error("GAG API base is not configured")
+        raise AquaError("Сервис генерации GAG временно не настроен. Обратитесь к администратору.")
     if not re.fullmatch(r"[a-f0-9]{16,64}", key, flags=re.I):
         logger.warning("apikey не похож на hex-токен (длина/формат)")
     return True

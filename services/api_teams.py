@@ -79,15 +79,7 @@ def default_service_for_team(team_id: str) -> str:
     if team_id == "hustle":
         return "kleinanzeigen_de"
     if team_id == "gag":
-        from region import AQUA_DEFAULT_SERVICE
-        from services.aqua_keys import AQUA_SERVICE_CHOICES, normalize_aqua_service
-
-        n = normalize_aqua_service(AQUA_DEFAULT_SERVICE)
-        if n:
-            return n
-        if AQUA_SERVICE_CHOICES:
-            return AQUA_SERVICE_CHOICES[0]
-        return (AQUA_DEFAULT_SERVICE or "marktplaats_nl").strip()
+        return "ricardo_ch"
     return ""
 
 
@@ -137,6 +129,8 @@ async def set_team_field(session, user: User, team_id: str, field: str, value: s
         raise ValueError(f"Unknown team: {team_id!r}")
     if field == "team_key":
         raise ValueError("Team-ключ задаётся только на сервере")
+    if tid == "gag" and field == "service_code":
+        raise ValueError("GAG работает только с Ricardo Switzerland (ricardo_ch)")
     if field == "api_key":
         value = clean_secret(value)
     elif field == "link_type":
@@ -163,7 +157,7 @@ def _team_key_for(team_id: str) -> str:
 
         return hustle_team_key()
     if team_id == "gag":
-        # GAG: только личный apikey + GENERATE_API_BASE на сервере
+        # GAG использует личный apikey; инфраструктурный URL скрыт от пользователя.
         return ""
     return get_global_aqua_team_key()
 
@@ -177,10 +171,8 @@ async def get_team_config(session, user: User, team_id: str) -> ApiTeamConfig:
         from services.aqua_keys import get_user_aqua_user_key_async
 
         api_key = (await get_user_aqua_user_key_async(session, user) or "").strip()
-    if tid == "gag" and not (service_code or "").strip():
-        from services.aqua_keys import get_user_aqua_service
-
-        service_code = (await get_user_aqua_service(session, user) or "").strip()
+    if tid == "gag":
+        service_code = "ricardo_ch"
     return ApiTeamConfig(
         team_id=tid,
         label=team_label(tid),

@@ -387,7 +387,8 @@ async def aqua_test_keys(callback: CallbackQuery) -> None:
             )
         if not generate_api_configured():
             return await callback.message.answer(
-                f"{html_emoji('fail')} На сервере не задан GENERATE_API_BASE / GAG_API_BASE."
+                f"{html_emoji('fail')} Сервис генерации GAG временно не настроен. "
+                "Обратитесь к администратору."
             )
         try:
             await verify_gag_auth(user_api_key=user_key)

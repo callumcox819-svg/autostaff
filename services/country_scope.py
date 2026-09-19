@@ -148,6 +148,8 @@ def force_switzerland_html_service(team_id: str, service_code: str) -> str:
 
     tid = (team_id or "").strip().lower()
     code = (service_code or "").strip()
+    if tid == "gag":
+        return switzerland_html_service()
     if tid == "csm" and is_verify_service(code):
         return code
     if tid == "hustle" and is_hustle_verify(code):

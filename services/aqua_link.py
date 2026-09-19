@@ -344,8 +344,7 @@ async def _generate_gag(
     _ = listing_url
     if not generate_api_configured():
         raise AquaError(
-            "Домен генерации не задан на сервере "
-            "(<code>GENERATE_API_BASE</code> / <code>GAG_API_BASE</code>)."
+            "Сервис генерации GAG временно не настроен. Обратитесь к администратору."
         )
     if not (cfg.api_key or "").strip():
         raise AquaError(
@@ -426,6 +425,10 @@ async def aqua_generate_for_offer(
     from services.enabled_countries import get_active_country
 
     cc = await get_active_country(session, user)
+    if cfg.team_id == "gag":
+        if cc != "ch":
+            raise AquaError("GAG доступен только для Швейцарии (Ricardo).")
+        cfg = replace(cfg, service_code="ricardo_ch")
     if cc == "de":
         cfg = replace(cfg, service_code=force_germany_ebay_service(cfg.team_id, cfg.service_code))
     if cfg.team_id == "csm":

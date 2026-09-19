@@ -113,7 +113,7 @@ def _team_detail_kb(team_id: str) -> InlineKeyboardMarkup:
                 )
             ]
         )
-    else:
+    elif team_id != "gag":
         rows.append(
             [
                 inline_button(
@@ -202,6 +202,11 @@ def _team_detail_text(cfg, *, buyer_name: str = "", address: str = "", country_n
             f"<b>Площадка:</b> <b>{html.escape(hustle_service_label(cfg.service_code))}</b>"
             f" (<code>{html.escape(cfg.service_code or '—')}</code>)"
         )
+    elif cfg.team_id == "gag":
+        lines.append(
+            "<b>Сервис:</b> <b>Ricardo Switzerland</b> "
+            "(<code>ricardo_ch</code>)"
+        )
     else:
         lines.append(f"<b>Код сервиса:</b> <code>{html.escape(cfg.service_code or '—')}</code>")
     if cfg.team_id != "gag":
@@ -227,7 +232,7 @@ def _team_detail_text(cfg, *, buyer_name: str = "", address: str = "", country_n
         lines.append(
             f"<b>ФИО{cc}:</b> <code>{html.escape(buyer_name or '—')}</code>\n"
             f"<b>Адрес{cc}:</b> <code>{html.escape(address or '—')}</code>\n"
-            "<i>GAG: личный apikey + <code>GENERATE_API_BASE</code> на сервере. "
+            "<i>GAG работает только для Швейцарии через Ricardo. "
             "Домен — «Домен команды» или Домен 1–4.</i>"
         )
     lines.append(
@@ -737,10 +742,12 @@ async def api_team_edit(callback: CallbackQuery, state: FSMContext) -> None:
     if field == "address" and tid == "hustle":
         hint = "\nАдрес в Германии, например: <code>Berliner Straße 115, 63272 Frankfurt</code>."
     if field == "service_code" and tid == "gag":
-        hint = (
-            "\nКод сервиса GAG (как в API / папка HTML), "
-            "например: <code>marktplaats_nl</code>, <code>kleinanzeigen_de</code>."
+        await state.clear()
+        await callback.answer(
+            toast("fail", "GAG: только Ricardo Switzerland"),
+            show_alert=True,
         )
+        return
     if field == "buyer_name" and tid == "gag":
         hint = "\nФИО получателя в теле /generate."
     if field == "address" and tid == "gag":

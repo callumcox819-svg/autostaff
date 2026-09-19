@@ -3041,30 +3041,43 @@ async def _reply_thread_kwargs(
                 inbox_email=inbox,
                 contact_email=contact,
             )
-        # Корень = id рассылки из лога (то, что у продавца в Inbox).
-        # seller In-Reply-To / Sent @mail.gmail.com НЕ подменяют его —
-        # иначе HTML уходит в другой диалог.
+        # Корень = id рассылки, который видит получатель (не Sent @mail.gmail.com).
+        from services.email_threading import prefer_thread_root_message_id
+
         log_cold = usable_thread_message_id(cold_outbound)
         seller_root = None
         if parent_refs:
             seller_root = usable_thread_message_id(
                 (parent_refs or "").split()[0] if parent_refs else None
             )
-        if log_cold:
-            cold_outbound = log_cold
-        elif seller_root:
-            cold_outbound = seller_root
+        dialog_first = None
+        if dialog_refs:
+            dialog_first = usable_thread_message_id(
+                (dialog_refs or "").split()[0] if dialog_refs else None
+            )
+        # Self-test: карточка = сама рассылка (нет In-Reply-To) → inbound MID из Inbox.
+        inbound_is_cold = bool(inbound) and not (
+            (getattr(mail_row, "rfc_in_reply_to", None) or "").strip()
+            if mail_row is not None
+            else (meta or {}).get("rfc_in_reply_to")
+        )
+        if inbound_is_cold:
+            cold_outbound = prefer_thread_root_message_id(
+                inbound,
+                log_cold,
+                seller_root,
+                last_ours,
+                dialog_first,
+            )
         else:
-            cold_outbound = None
-            if last_ours:
-                cold_outbound = usable_thread_message_id(last_ours)
-            if not cold_outbound and dialog_refs:
-                first = usable_thread_message_id(
-                    (dialog_refs or "").split()[0] if dialog_refs else None
-                )
-                if first:
-                    cold_outbound = first
-        # Sent refresh только если в логе вообще нет MID.
+            cold_outbound = prefer_thread_root_message_id(
+                log_cold,
+                seller_root,
+                inbound,
+                last_ours,
+                dialog_first,
+            )
+        # Sent refresh только если корня нет; @mail.gmail.com отсекается внутри.
         if not usable_thread_message_id(cold_outbound) and (smtp_password or "").strip() and inbox:
             try:
                 from services.email_threading import refresh_cold_message_id_from_sent

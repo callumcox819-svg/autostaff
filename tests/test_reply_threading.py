@@ -94,7 +94,13 @@ def test_client_gmail_smtp_id_used_as_in_reply_to():
     assert kw["references"].endswith("<jaajaja@mail.gmail.com>")
 
 
-def test_client_cold_only_yields_headers():
+def test_prefer_thread_root_skips_sent_rewrite():
+    from services.email_threading import prefer_thread_root_message_id
+
+    client = "<178983505180.1.15370952257649259846@gmail.com>"
+    sent = "<CAC-ogsLX1Fn_Ae=tV9Mj80y8wJwmn7cYsV-5s0zdzJN=NVeezg@mail.gmail.com>"
+    assert prefer_thread_root_message_id(sent, client) == client
+    assert prefer_thread_root_message_id(client, sent) == client
     from services.email_threading import threading_send_kwargs
 
     cold = "<1757781234567.1.1234567890123456789@gmail.com>"

@@ -60,6 +60,25 @@ def usable_thread_message_id(raw: str | None) -> str | None:
     return normalize_rfc_message_id(raw)
 
 
+def is_sent_rewritten_gmail_message_id(raw: str | None) -> bool:
+    """Gmail Sent часто даёт <…@mail.gmail.com> — у получателя в Inbox другой id."""
+    mid = normalize_rfc_message_id(raw)
+    if not mid:
+        return False
+    host = mid[1:-1].rsplit("@", 1)[-1].lower()
+    return host == "mail.gmail.com"
+
+
+def prefer_thread_root_message_id(*candidates: str | None) -> str | None:
+    """Корень треда: клиентский / обычный MID, не Sent @mail.gmail.com."""
+    norms = [usable_thread_message_id(c) for c in candidates]
+    norms = [n for n in norms if n]
+    for n in norms:
+        if not is_sent_rewritten_gmail_message_id(n):
+            return n
+    return norms[0] if norms else None
+
+
 def build_references_header(*message_ids: str | None) -> str | None:
     """Ordered unique Message-IDs for References (oldest → newest)."""
     out: list[str] = []
@@ -257,9 +276,14 @@ async def resolve_outbound_rfc_message_id(
             sf = (sent_from or "").strip().lower()
             if sf and sf == inbox:
                 hit = usable_thread_message_id(mid)
-                if hit:
+                if hit and not is_sent_rewritten_gmail_message_id(hit):
                     return hit
 
+    for mid, _sf in rows:
+        hit = usable_thread_message_id(mid)
+        if hit and not is_sent_rewritten_gmail_message_id(hit):
+            return hit
+    # Fallback: любой MID, даже Sent (лучше, чем ничего)
     for mid, _sf in rows:
         hit = usable_thread_message_id(mid)
         if hit:
@@ -398,6 +422,9 @@ async def refresh_cold_message_id_from_sent(
         return None
     mid = usable_thread_message_id(real)
     if not mid:
+        return None
+    # Sent @mail.gmail.com ≠ id в Inbox получателя — не якорим тред на нём.
+    if is_sent_rewritten_gmail_message_id(mid):
         return None
     from sqlalchemy import func, or_, select
 

@@ -455,46 +455,38 @@ async def _run_mass_test(message: Message, tg_id: int) -> None:
                         from services.mailing_send_log import record_mailing_send
 
                         raw_link = await pick_random_raw_link(session2)
-                        if raw_link:
-                            test_offer = Offer(
-                                user_id=user_id,
-                                title=item_title[:200] or "TEST",
-                                link=raw_link,
-                                price=(getattr(offer, "price", None) or "1") if offer else "1",
-                                photo=getattr(offer, "photo", None) if offer else None,
-                                person_name="TEST",
-                            )
-                            session2.add(test_offer)
-                            await session2.flush()
-                            session2.add(OfferEmail(offer_id=test_offer.id, email=to_email))
-                            await record_mailing_send(
-                                session2,
-                                user_id=int(user_id),
-                                offer_id=int(test_offer.id),
-                                recipient_email=to_email,
-                                mail_subject=subject,
-                                from_account_email=acc_email,
-                                service_label="test_mail",
-                                rfc_message_id=msgid or "",
-                                mail_body=body or "",
-                            )
-                            await session2.commit()
-                        elif msgid:
-                            # Даже без raw_link — сохранить Message-ID для трединга ответов
+                        # Всегда пишем MID в лог — иначе HTML-ответ рвёт диалог.
+                        try:
+                            offer_id = int(getattr(offer, "id", 0) or 0) if offer else 0
+                            if not offer_id:
+                                test_offer = Offer(
+                                    user_id=user_id,
+                                    title=(item_title[:200] or "TEST"),
+                                    link=raw_link or "https://example.invalid/test",
+                                    price=(getattr(offer, "price", None) or "1") if offer else "1",
+                                    photo=getattr(offer, "photo", None) if offer else None,
+                                    person_name="TEST",
+                                )
+                                session2.add(test_offer)
+                                await session2.flush()
+                                session2.add(OfferEmail(offer_id=test_offer.id, email=to_email))
+                                offer_id = int(test_offer.id)
+                            if msgid and offer_id:
+                                await record_mailing_send(
+                                    session2,
+                                    user_id=int(user_id),
+                                    offer_id=int(offer_id),
+                                    recipient_email=to_email,
+                                    mail_subject=subject,
+                                    from_account_email=acc_email,
+                                    service_label="test_mail",
+                                    rfc_message_id=msgid or "",
+                                    mail_body=body or "",
+                                )
+                                await session2.commit()
+                        except Exception:
                             try:
-                                if offer and getattr(offer, "id", None):
-                                    await record_mailing_send(
-                                        session2,
-                                        user_id=int(user_id),
-                                        offer_id=int(offer.id),
-                                        recipient_email=to_email,
-                                        mail_subject=subject,
-                                        from_account_email=acc_email,
-                                        service_label="test_mail",
-                                        rfc_message_id=msgid or "",
-                                        mail_body=body or "",
-                                    )
-                                    await session2.commit()
+                                await session2.rollback()
                             except Exception:
                                 pass
                 else:

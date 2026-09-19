@@ -394,18 +394,27 @@ async def mail_tmpl_send(callback: CallbackQuery, state: FSMContext):
         if ok and msgid:
             try:
                 from database import db_session
-                from services.email_threading import remember_dialog_outbound
+                from services.email_threading import (
+                    is_client_smtp_message_id,
+                    normalize_rfc_message_id,
+                    remember_dialog_outbound,
+                )
                 from services.smtp_delivery_verify import fetch_real_sent_message_id
 
-                real_mid = await fetch_real_sent_message_id(
-                    inbox_em,
-                    acc_password,
-                    subject=out_subject,
-                    to_email=to_email,
-                    local_message_id=msgid,
-                    wait_sec=2.0,
-                )
-                store_mid = real_mid or msgid
+                store_mid = msgid
+                local = normalize_rfc_message_id(msgid)
+                if local and is_client_smtp_message_id(local):
+                    store_mid = local
+                else:
+                    real_mid = await fetch_real_sent_message_id(
+                        inbox_em,
+                        acc_password,
+                        subject=out_subject,
+                        to_email=to_email,
+                        local_message_id=msgid,
+                        wait_sec=2.0,
+                    )
+                    store_mid = real_mid or msgid
                 async with db_session() as s2:
                     await remember_dialog_outbound(
                         s2,

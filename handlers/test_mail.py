@@ -414,12 +414,21 @@ async def _run_mass_test(message: Message, tg_id: int) -> None:
                             wait_sec=6.0,
                         )
                         if real_mid:
-                            msgid = real_mid
-                        else:
-                            from services.email_threading import is_synthetic_local_message_id
+                            # Для verify/Sent ок; в лог треда кладём клиентский MID
+                            # (его видит получатель), если он есть.
+                            pass
+                        from services.email_threading import (
+                            is_client_smtp_message_id,
+                            normalize_rfc_message_id,
+                        )
 
-                            if is_synthetic_local_message_id(msgid):
-                                msgid = ""
+                        local = normalize_rfc_message_id(msgid)
+                        if local and is_client_smtp_message_id(local):
+                            pass  # keep msgid as SMTP DATA id
+                        elif real_mid:
+                            msgid = real_mid
+                        elif not local:
+                            msgid = ""
                     except Exception:
                         pass
                     ok_n += 1

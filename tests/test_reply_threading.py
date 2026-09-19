@@ -65,39 +65,42 @@ def test_threading_falls_back_to_cold_when_no_inbound():
     assert kw["references"] == "<CAcold@mail.gmail.com>"
 
 
-def test_no_inbound_uses_gmail_parent_not_local_smtp():
+def test_no_inbound_uses_client_cold_mid():
     from services.email_threading import threading_send_kwargs
 
+    cold = "<1757781234567.1.1234567890123456789@gmail.com>"
     kw = threading_send_kwargs(
         None,
-        outbound_rfc_message_id="<1757781234567.1.1234567890123456789@gmail.com>",
+        outbound_rfc_message_id=cold,
         parent_references="<CAFooBar@mail.gmail.com>",
     )
-    assert kw["in_reply_to"] == "<CAFooBar@mail.gmail.com>"
-    assert kw["references"] == "<CAFooBar@mail.gmail.com>"
-    assert "@gmail.com>" not in kw["references"].replace("@mail.gmail.com>", "")
+    # Корень = cold из лога (то, что у получателя), не Sent @mail.gmail.com.
+    assert kw["in_reply_to"] == cold
+    assert cold in kw["references"]
+    assert "<CAFooBar@mail.gmail.com>" in kw["references"]
 
 
-def test_synthetic_gmail_smtp_id_never_used_as_in_reply_to():
+def test_client_gmail_smtp_id_used_as_in_reply_to():
     from services.email_threading import threading_send_kwargs
 
+    cold = "<1757781234567.1.1234567890123456789@gmail.com>"
     kw = threading_send_kwargs(
         "<jaajaja@mail.gmail.com>",
-        outbound_rfc_message_id="<1757781234567.1.1234567890123456789@gmail.com>",
-        parent_references="<1757781234567.1.1234567890123456789@gmail.com> <CAOrig@mail.gmail.com>",
+        outbound_rfc_message_id=cold,
+        parent_references=f"{cold} <CAOrig@mail.gmail.com>",
     )
-    assert kw["in_reply_to"] == "<CAOrig@mail.gmail.com>"
-    assert "<1757781234567.1.1234567890123456789@gmail.com>" not in kw["references"]
-    assert kw["references"] == "<CAOrig@mail.gmail.com> <jaajaja@mail.gmail.com>"
+    assert kw["in_reply_to"] == cold
+    assert cold in kw["references"]
+    assert kw["references"].endswith("<jaajaja@mail.gmail.com>")
 
 
-def test_synthetic_only_yields_no_headers():
+def test_client_cold_only_yields_headers():
     from services.email_threading import threading_send_kwargs
 
-    assert threading_send_kwargs(
-        None,
-        outbound_rfc_message_id="<1757781234567.1.1234567890123456789@gmail.com>",
-    ) == {}
+    cold = "<1757781234567.1.1234567890123456789@gmail.com>"
+    kw = threading_send_kwargs(None, outbound_rfc_message_id=cold)
+    assert kw["in_reply_to"] == cold
+    assert kw["references"] == cold
 
 
 def test_build_references_header_dedupes():

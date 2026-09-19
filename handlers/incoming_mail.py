@@ -3041,15 +3041,20 @@ async def _reply_thread_kwargs(
                 inbox_email=inbox,
                 contact_email=contact,
             )
-        # Корень треда — id оригинала, который назвал продавец (In-Reply-To / References).
+        # Корень = id рассылки из лога (то, что у продавца в Inbox).
+        # seller In-Reply-To / Sent @mail.gmail.com НЕ подменяют его —
+        # иначе HTML уходит в другой диалог.
+        log_cold = usable_thread_message_id(cold_outbound)
         seller_root = None
         if parent_refs:
             seller_root = usable_thread_message_id(
                 (parent_refs or "").split()[0] if parent_refs else None
             )
-        if seller_root:
+        if log_cold:
+            cold_outbound = log_cold
+        elif seller_root:
             cold_outbound = seller_root
-        elif not usable_thread_message_id(cold_outbound):
+        else:
             cold_outbound = None
             if last_ours:
                 cold_outbound = usable_thread_message_id(last_ours)
@@ -3059,6 +3064,7 @@ async def _reply_thread_kwargs(
                 )
                 if first:
                     cold_outbound = first
+        # Sent refresh только если в логе вообще нет MID.
         if not usable_thread_message_id(cold_outbound) and (smtp_password or "").strip() and inbox:
             try:
                 from services.email_threading import refresh_cold_message_id_from_sent
@@ -3125,7 +3131,17 @@ async def _remember_reply_msgid(
         from services.email_threading import remember_dialog_outbound
 
         store_mid = msgid
-        if smtp_password and inbox_email:
+        # Не подменяем клиентский MID на Sent @mail.gmail.com — у получателя
+        # в Inbox обычно остаётся тот id, что ушёл в SMTP DATA.
+        from services.email_threading import is_client_smtp_message_id, normalize_rfc_message_id
+
+        local_norm = normalize_rfc_message_id(msgid)
+        if (
+            smtp_password
+            and inbox_email
+            and local_norm
+            and not is_client_smtp_message_id(local_norm)
+        ):
             try:
                 from services.smtp_delivery_verify import fetch_real_sent_message_id
 

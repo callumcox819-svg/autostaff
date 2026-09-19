@@ -5,8 +5,10 @@ from __future__ import annotations
 import re
 from typing import Any
 
-# Наш SMTP MID: <unix_ms.1.random@gmail.com>. Gmail его переписывает на
-# <…@mail.gmail.com> — у получателя этого id нет, In-Reply-To рвёт диалог.
+# Раньше считали любой <…@gmail.com> «синтетикой» и не ставили в In-Reply-To.
+# На практике smtp.gmail.com часто ОСТАВЛЯЕТ клиентский Message-ID у получателя
+# (см. .eml тест-мейлов) — тогда якорь должен быть именно он, а не id из Sent
+# (<…@mail.gmail.com>), иначе Gmail открывает второй диалог.
 _SYNTHETIC_LOCAL_MID_RE = re.compile(
     r"^<\d{10,}\.1\.\d{12,}@(?:gmail\.com|googlemail\.com)>$",
     re.I,
@@ -31,26 +33,31 @@ def normalize_rfc_message_id(raw: str | None) -> str | None:
 
 
 def is_synthetic_local_message_id(raw: str | None) -> bool:
-    """True если id не тот, что видит получатель в Gmail.
+    """Устарело: клиентский @gmail.com MID у получателя обычно есть — не отбрасываем.
 
-    smtp.gmail.com подменяет Message-ID на <…@mail.gmail.com>.
-    Наши <unix.1.rand@gmail.com> и python make_msgid@gmail.com у получателя нет.
+    Оставлен для совместимости импортов/тестов; всегда False.
     """
+    _ = raw
+    return False
+
+
+def is_client_smtp_message_id(raw: str | None) -> bool:
+    """True если похоже на наш SMTP Message-ID (make_msgid / старый gmail-like)."""
     mid = normalize_rfc_message_id(raw)
     if not mid:
         return False
     if _SYNTHETIC_LOCAL_MID_RE.match(mid):
         return True
     host = mid[1:-1].rsplit("@", 1)[-1].lower()
-    return host in {"gmail.com", "googlemail.com"}
+    if host not in {"gmail.com", "googlemail.com"}:
+        return False
+    # python email.utils.make_msgid: <time.pid.rand@gmail.com>
+    return bool(re.match(r"^<\d+\.\d+\.\d+@(?:gmail|googlemail)\.com>$", mid, re.I))
 
 
 def usable_thread_message_id(raw: str | None) -> str | None:
-    """Message-ID, который можно ставить в In-Reply-To / References у Gmail."""
-    mid = normalize_rfc_message_id(raw)
-    if not mid or is_synthetic_local_message_id(mid):
-        return None
-    return mid
+    """Message-ID для In-Reply-To / References (включая клиентский @gmail.com)."""
+    return normalize_rfc_message_id(raw)
 
 
 def build_references_header(*message_ids: str | None) -> str | None:
@@ -79,11 +86,9 @@ def threading_send_kwargs(
 ) -> dict[str, str]:
     """
     Kwargs for SMTP reply (как кнопка Reply в Gmail):
-    - In-Reply-To = Message-ID ПЕРВОГО письма рассылки (то, что лежит
-      у продавца в ящике). Если указать id его «jaaa», Gmail клеит
-      пресет к этому ответу и держит рассылку отдельным диалогом.
-    - Никогда не ставим наш локальный SMTP id — Gmail его переписывает.
-    - References = оригинал → цепочка продавца → его «jaaa».
+    - In-Reply-To = Message-ID первого письма рассылки у продавца в Inbox
+      (часто наш клиентский <…@gmail.com>, не id из Sent @mail.gmail.com).
+    - References = оригинал → цепочка → входящее продавца.
     """
     inbound = usable_thread_message_id(inbound_rfc_message_id)
     outbound = usable_thread_message_id(outbound_rfc_message_id)
@@ -310,7 +315,7 @@ async def remember_dialog_outbound(
     from models import ConversationLink
     from services.offer_storage import normalize_incoming_seller_email
 
-    mid = usable_thread_message_id(outbound_message_id)
+    mid = normalize_rfc_message_id(outbound_message_id)
     if not mid or not user_id:
         return
     inbox = (inbox_email or "").strip().lower()

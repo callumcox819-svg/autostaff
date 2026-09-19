@@ -51,15 +51,9 @@ class HtmlCountrySubjectTests(unittest.IsolatedAsyncioTestCase):
 
         session = AsyncMock()
         user = SimpleNamespace(id=1)
-        with (
-            patch(
-                "services.html_spoof.is_spoofing_enabled",
-                new=AsyncMock(return_value=True),
-            ),
-            patch(
-                "services.html_reply.get_scoped_setting",
-                new=AsyncMock(return_value="Ihre Ricardo-Zahlung"),
-            ),
+        with patch(
+            "services.html_spoof.is_spoofing_enabled",
+            new=AsyncMock(return_value=True),
         ):
             subject = await get_html_reply_subject(
                 session, user, fallback="Re: Alte NL-Thema"

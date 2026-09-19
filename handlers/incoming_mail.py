@@ -3115,6 +3115,8 @@ async def _remember_reply_msgid(
     contact_email: str,
     msgid: str | None,
     references: str | None = None,
+    smtp_password: str | None = None,
+    subject: str | None = None,
 ) -> None:
     if not msgid or not user_id:
         return
@@ -3122,13 +3124,35 @@ async def _remember_reply_msgid(
         from database import db_session
         from services.email_threading import remember_dialog_outbound
 
+        store_mid = msgid
+        if smtp_password and inbox_email:
+            try:
+                from services.smtp_delivery_verify import fetch_real_sent_message_id
+
+                real_mid = await fetch_real_sent_message_id(
+                    inbox_email,
+                    smtp_password,
+                    subject=subject or "",
+                    to_email=contact_email,
+                    local_message_id=msgid,
+                    wait_sec=2.0,
+                )
+                if real_mid:
+                    store_mid = real_mid
+            except Exception:
+                logger.exception(
+                    "fetch real sent msgid failed user=%s to=%s",
+                    user_id,
+                    (contact_email or "")[:80],
+                )
+
         async with db_session() as session:
             await remember_dialog_outbound(
                 session,
                 user_id=int(user_id),
                 inbox_email=inbox_email,
                 contact_email=contact_email,
-                outbound_message_id=msgid,
+                outbound_message_id=store_mid,
                 references_header=references,
             )
             await session.commit()
@@ -3355,6 +3379,7 @@ async def cb_mail_reply_html_send(callback: CallbackQuery, state: FSMContext):
             )
             uid_db = int(user.id)
             inbox_em = account_email or getattr(acc, "email", None) or ""
+            acc_password = getattr(acc, "password", None) or ""
             try:
                 session.expunge(acc)
             except Exception:
@@ -3378,6 +3403,8 @@ async def cb_mail_reply_html_send(callback: CallbackQuery, state: FSMContext):
                 contact_email=to_email,
                 msgid=msgid,
                 references=thread_kw.get("references"),
+                smtp_password=acc_password,
+                subject=subject,
             )
         return ok, err, msgid
 
@@ -3683,6 +3710,7 @@ async def mail_reply_custom_html(message: Message, state: FSMContext):
             )
             uid_db = int(user.id)
             inbox_em = account_email or getattr(acc, "email", None) or ""
+            acc_password = getattr(acc, "password", None) or ""
             try:
                 session.expunge(acc)
             except Exception:
@@ -3706,6 +3734,8 @@ async def mail_reply_custom_html(message: Message, state: FSMContext):
                 contact_email=to_email,
                 msgid=msgid,
                 references=thread_kw.get("references"),
+                smtp_password=acc_password,
+                subject=subject,
             )
         return ok, err, msgid
 

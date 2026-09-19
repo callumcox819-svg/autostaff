@@ -253,24 +253,21 @@ async def _spoof_name_menu_payload(tg_user_id: int) -> tuple[str, InlineKeyboard
             return None
         key = _html_nick_key_for_service(service)
         cur = (await get_scoped_setting(session, user, key) or "").strip()
-        html_subj = (await get_scoped_setting(session, user, HTML_THEME_KEY) or "").strip() or "— не задано —"
 
     label = _service_label(service)
     cur_disp = html.escape(cur) if cur else "— не задано —"
-    subj_disp = html.escape(html_subj)
     text = (
-        f"{html_emoji('user')} <b>HTML: имя и тема</b>\n"
+        f"{html_emoji('user')} <b>HTML: спуфинг</b>\n"
         f"Сервис: <b>{html.escape(label)}</b>\n\n"
-        f"Только при {html_emoji('green')} <b>Спуфинг</b> и отправке <b>HTML</b>:\n"
+        f"При {html_emoji('green')} <b>Спуфинг</b> и отправке <b>HTML</b>:\n"
         f"{html_emoji('user')} <b>Имя (From):</b> <code>{cur_disp}</code>\n"
-        f"{html_emoji('pin')} <b>Тема письма:</b> <code>{subj_disp}</code>\n\n"
-        f"Текстом / пресет / рассылка — имя из «{html_emoji('email')} E-mail», "
-        f"тема рассылки — из настроек текущей страны; <code>OFFER</code> = товар."
+        f"Тема письма — всегда <code>Re:</code> исходного диалога "
+        f"(иначе Gmail открывает второе письмо).\n\n"
+        f"Текстом / пресет / рассылка — имя из «{html_emoji('email')} E-mail»."
     )
     kb = InlineKeyboardMarkup(
         inline_keyboard=[
             [inline_button("check", f"Установить имя ({label})", callback_data="spoof_name_set")],
-            [inline_button("pin", "Тема для HTML", callback_data="html_theme_menu")],
             _back_kb("settings_open").inline_keyboard[0],
         ]
     )
@@ -690,9 +687,11 @@ async def html_theme_menu(callback: CallbackQuery, state: FSMContext):
     cur_show = cur if cur else "—"
     txt = (
         f"{html_emoji('pin')} <b>Тема для HTML</b>\n\n"
-        "Только при 🟢 <b>Спуфинг</b> и отправке <b>HTML</b> (не для текста/пресета и не для рассылки).\n"
-        "Рассылка — тема текущей страны; <code>OFFER</code> → название товара.\n\n"
-        f"Текущее значение:\n<code>{cur_show}</code>"
+        "Больше не подставляется в Subject письма — из‑за неё Gmail "
+        "открывал HTML отдельно от диалога.\n"
+        "Спуфинг HTML: только <b>имя From</b> и <code>{{NICK}}</code>; "
+        "тема всегда <code>Re:</code> исходного треда.\n\n"
+        f"Старое значение (не используется):\n<code>{cur_show}</code>"
     )
     await _safe_send(callback.message.edit_text(txt, reply_markup=kb, parse_mode="HTML"))
     await callback.answer()

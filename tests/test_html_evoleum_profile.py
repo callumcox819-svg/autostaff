@@ -46,7 +46,7 @@ class HtmlSpoofNickTests(unittest.TestCase):
 
 
 class HtmlCountrySubjectTests(unittest.IsolatedAsyncioTestCase):
-    async def test_html_reply_uses_scoped_theme_when_spoofing_enabled(self):
+    async def test_html_reply_keeps_re_subject_even_when_spoofing(self):
         from services.html_reply import get_html_reply_subject
 
         session = AsyncMock()
@@ -64,7 +64,8 @@ class HtmlCountrySubjectTests(unittest.IsolatedAsyncioTestCase):
             subject = await get_html_reply_subject(
                 session, user, fallback="Re: Alte NL-Thema"
             )
-        self.assertEqual(subject, "Ihre Ricardo-Zahlung")
+        # Spoof theme must not replace Subject — Gmail would split the thread.
+        self.assertEqual(subject, "Re: Alte NL-Thema")
 
 
 class HtmlCtxBuyerTests(unittest.IsolatedAsyncioTestCase):

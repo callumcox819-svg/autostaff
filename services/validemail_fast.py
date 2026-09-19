@@ -225,14 +225,16 @@ class _KeyRateLimiter:
             await asyncio.sleep(min(0.25, max(0.01, wait)))
 
 
-def _rate_limiter_for_key(api_key: str) -> _KeyRateLimiter:
+def _rate_limiter_for_key(api_key: str, *, url: str | None = None) -> _KeyRateLimiter:
     k = (api_key or "").strip()
     if k not in _KEY_RATE_LIMITERS:
         try:
             from services.validemail_keys import validemail_rps_per_key
 
-            rps = validemail_rps_per_key()
+            rps = validemail_rps_per_key(url)
         except Exception:
+            rps = 9.0
+        if rps <= 0:
             rps = 9.0
         _KEY_RATE_LIMITERS[k] = _KeyRateLimiter(rps)
     return _KEY_RATE_LIMITERS[k]
@@ -700,11 +702,11 @@ async def _fetch_validemail_once(
     try:
         from services.validemail_keys import validemail_rps_per_key
 
-        rps = validemail_rps_per_key()
+        rps = validemail_rps_per_key(url)
     except Exception:
-        rps = 10.0
+        rps = 10.0 if "validemail.co" in (url or "").lower() else 0.0
     if rps > 0:
-        await _rate_limiter_for_key(api_key).acquire()
+        await _rate_limiter_for_key(api_key, url=url).acquire()
     s = await _get_session()
     headers, params = _build_request(url, api_key, email_lc)
     if _is_gmx_mailbox(email_lc):
@@ -950,6 +952,77 @@ async def _validate_emails_single_key(
     return out
 
 
+async def _validate_emails_partitioned(
+    emails_list: list[str],
+    *,
+    easy_keys: list[str],
+    easy_url: str,
+    hard_keys: list[str],
+    hard_url: str,
+    concurrency: int,
+    use_ssl_verify: bool,
+    progress_cb: ProgressCb | None,
+    stop_on_first_ok: bool,
+) -> list[tuple[str, bool, dict]]:
+    """Лёгкие домены → mailcheck; сложные → validemail.co (параллельно)."""
+    from services.validemail_keys import is_hard_validation_domain
+
+    easy_idx: list[tuple[int, str]] = []
+    hard_idx: list[tuple[int, str]] = []
+    for i, e in enumerate(emails_list):
+        if is_hard_validation_domain(e):
+            hard_idx.append((i, e))
+        else:
+            easy_idx.append((i, e))
+
+    logger.info(
+        "validemail dual: easy=%s → %s (%s keys), hard=%s → %s (%s keys)",
+        len(easy_idx),
+        (easy_url or "")[:48],
+        len(easy_keys),
+        len(hard_idx),
+        (hard_url or "")[:48],
+        len(hard_keys),
+    )
+
+    shared = {"done": 0, "in_use": 0, "total": len(emails_list)}
+    cancel_event = asyncio.Event() if stop_on_first_ok else None
+    merged: list[tuple[str, bool, dict] | None] = [None] * len(emails_list)
+
+    async def _part(
+        rows: list[tuple[int, str]],
+        *,
+        keys: list[str],
+        url: str,
+    ) -> None:
+        if not rows:
+            return
+        emails_only = [e for _, e in rows]
+        out = await validate_emails_fast(
+            emails_only,
+            api_keys=keys,
+            concurrency=concurrency,
+            url=url,
+            use_ssl_verify=use_ssl_verify,
+            progress_cb=progress_cb,
+            stop_on_first_ok=stop_on_first_ok,
+            _skip_hard_split=True,
+            _shared_counters=shared,
+            _cancel_event=cancel_event,
+        )
+        for (orig_i, _em), row in zip(rows, out):
+            merged[orig_i] = row
+
+    await asyncio.gather(
+        _part(easy_idx, keys=easy_keys, url=easy_url),
+        _part(hard_idx, keys=hard_keys, url=hard_url),
+    )
+    return [
+        merged[i] if merged[i] is not None else (emails_list[i], False, {"error": "not_checked"})
+        for i in range(len(emails_list))
+    ]
+
+
 async def validate_emails_fast(
     emails: Iterable[str],
     *,
@@ -960,19 +1033,35 @@ async def validate_emails_fast(
     use_ssl_verify: bool = True,
     progress_cb: ProgressCb | None = None,
     stop_on_first_ok: bool = False,
+    _skip_hard_split: bool = False,
+    _shared_counters: dict | None = None,
+    _cancel_event: asyncio.Event | None = None,
 ) -> list[tuple[str, bool, dict]]:
     """
     Быстрая параллельная проверка email.
     Несколько api_keys: emails делятся между ключами, каждый ключ — свой пул запросов.
+    При VALIDEMAIL_HARD_URL + ключах: GMX/web/bluewin/sunrise → co, остальное → url.
   """
     try:
-        from services.validemail_keys import MAILCHECK_DEFAULT_URL, MAILCHECK_DUMMY_KEY
+        from services.validemail_keys import (
+            MAILCHECK_DEFAULT_URL,
+            MAILCHECK_DUMMY_KEY,
+            hard_backend_enabled,
+            hard_validation_url,
+            resolve_hard_api_keys,
+            resolve_validemail_api_keys,
+        )
 
         default_url = MAILCHECK_DEFAULT_URL
         dummy_key = MAILCHECK_DUMMY_KEY
     except Exception:
         default_url = "https://validator-production-7106.up.railway.app/api/v1/validate"
         dummy_key = "mailcheck"
+        hard_backend_enabled = lambda: False  # type: ignore
+        hard_validation_url = lambda: ""  # type: ignore
+        resolve_hard_api_keys = lambda: []  # type: ignore
+        resolve_validemail_api_keys = lambda: []  # type: ignore
+
     url = (url or "").strip() or default_url
     emails_list = [str(e).strip() for e in emails if str(e).strip()]
     configure_gmx_pacing(emails_list)
@@ -989,11 +1078,37 @@ async def validate_emails_fast(
         else:
             return [(e, False, {"error": "no api key"}) for e in emails_list]
 
-    cancel_event = asyncio.Event() if stop_on_first_ok else None
+    # Dual: сложные домены на отдельный validemail.co пул.
+    if not _skip_hard_split and hard_backend_enabled():
+        hard_url = hard_validation_url()
+        hard_keys = resolve_hard_api_keys()
+        easy_keys = keys
+        try:
+            easy_from_cfg = resolve_validemail_api_keys()
+            if easy_from_cfg:
+                easy_keys = easy_from_cfg
+        except Exception:
+            pass
+        if hard_url and hard_keys:
+            return await _validate_emails_partitioned(
+                emails_list,
+                easy_keys=easy_keys,
+                easy_url=url,
+                hard_keys=hard_keys,
+                hard_url=hard_url,
+                concurrency=concurrency,
+                use_ssl_verify=use_ssl_verify,
+                progress_cb=progress_cb,
+                stop_on_first_ok=stop_on_first_ok,
+            )
+
+    cancel_event = _cancel_event if _cancel_event is not None else (
+        asyncio.Event() if stop_on_first_ok else None
+    )
 
     from services.validemail_keys import per_key_concurrency_limit, validation_concurrency_plan
 
-    per_key_cap = per_key_concurrency_limit()
+    per_key_cap = per_key_concurrency_limit(url)
 
     if len(keys) == 1:
         single_limit = min(per_key_cap, max(2, int(concurrency)))
@@ -1006,14 +1121,17 @@ async def validate_emails_fast(
             progress_cb=progress_cb,
             stop_on_first_ok=stop_on_first_ok,
             cancel_event=cancel_event,
+            counters=_shared_counters,
         )
 
     n_keys = len(keys)
     planned_per, planned_total = validation_concurrency_plan(n_keys)
+    # Plan was for default URL — пересчёт под текущий url (co vs mailcheck).
+    planned_per = min(planned_per, per_key_cap)
+    planned_total = planned_per * n_keys
     per_key_limit, total_limit = planned_per, planned_total
     if int(concurrency) > 0:
         c = int(concurrency)
-        # Caller should pass total pool (keys × per-key). Small values were a common bug (24 → 4/key).
         if c >= per_key_cap * n_keys // 2:
             per_key_limit = min(per_key_cap, max(2, c // n_keys))
             total_limit = per_key_limit * n_keys
@@ -1033,8 +1151,12 @@ async def validate_emails_fast(
     for i, e in enumerate(emails_list):
         buckets[i % n_keys].append((i, e))
 
-    shared_counters = {"done": 0, "in_use": 0, "total": len(emails_list)}
-    if progress_cb:
+    shared_counters = _shared_counters if _shared_counters is not None else {
+        "done": 0,
+        "in_use": 0,
+        "total": len(emails_list),
+    }
+    if progress_cb and _shared_counters is None:
         try:
             progress_cb(0, shared_counters["total"], total_limit, 0)
         except Exception:

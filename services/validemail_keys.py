@@ -34,11 +34,103 @@ def keys_from_config() -> list[str]:
     return [str(k).strip() for k in (config.VALIDEMAIL_API_KEYS or []) if str(k).strip()]
 
 
+def _parse_key_list(raw: str) -> list[str]:
+    out: list[str] = []
+    seen: set[str] = set()
+    for part in (raw or "").replace(";", ",").split(","):
+        k = part.strip()
+        if not k or k in seen:
+            continue
+        seen.add(k)
+        out.append(k)
+    return out
+
+
+def hard_validation_url() -> str:
+    """validemail.co (или другой) только для сложных доменов. Пусто = dual выкл."""
+    return (os.getenv("VALIDEMAIL_HARD_URL") or "").strip()
+
+
+def resolve_hard_api_keys() -> list[str]:
+    """5–6 ключей validemail.co для GMX/web.de/bluewin/sunrise и т.п."""
+    out: list[str] = []
+    seen: set[str] = set()
+
+    def add(k: str) -> None:
+        s = (k or "").strip()
+        if not s or s.lower() in {"mailcheck", "none", "dummy"} or s in seen:
+            return
+        seen.add(s)
+        out.append(s)
+
+    for k in _parse_key_list(os.getenv("VALIDEMAIL_HARD_API_KEYS") or ""):
+        add(k)
+    add(os.getenv("VALIDEMAIL_HARD_API_KEY") or "")
+    for i in range(1, 33):
+        add(os.getenv(f"VALIDEMAIL_HARD_API_KEY_{i}") or "")
+    return out
+
+
+def hard_backend_enabled() -> bool:
+    return bool(hard_validation_url() and resolve_hard_api_keys())
+
+
+def hard_validation_domains() -> frozenset[str]:
+    """Домены → hard API. Env дополняет дефолт (GMX + CH ISP)."""
+    base = {
+        "gmx.de",
+        "gmx.net",
+        "gmx.at",
+        "gmx.ch",
+        "gmx.com",
+        "web.de",
+        "t-online.de",
+        "online.de",
+        "bluewin.ch",
+        "bluemail.ch",
+        "sunrise.ch",
+        "hispeed.ch",
+        "swisscom.ch",
+    }
+    extra = (os.getenv("VALIDEMAIL_HARD_DOMAINS") or "").strip().lower()
+    if extra:
+        for part in extra.replace(";", ",").split(","):
+            d = part.strip().lstrip("@")
+            if d:
+                base.add(d)
+    return frozenset(base)
+
+
+def is_hard_validation_domain(domain_or_email: str) -> bool:
+    """Сложный SMTP → validemail.co; gmail/icloud → наш mailcheck."""
+    if not hard_backend_enabled():
+        return False
+    s = (domain_or_email or "").strip().lower()
+    if "@" in s:
+        s = s.rsplit("@", 1)[-1]
+    if not s:
+        return False
+    hard = hard_validation_domains()
+    if s in hard or s.startswith("gmx."):
+        return True
+    return False
+
+
 def resolve_validemail_api_keys() -> list[str]:
+    """Ключи «лёгкого» бэкенда (mailcheck / VALIDEMAIL_URL)."""
     keys = keys_from_config()
+    # Не путать hard co-ключи с mailcheck: если в VALIDEMAIL_API_KEYS только
+    # настоящие ключи, а URL — mailcheck и включён hard — оставляем dummy.
+    if hard_backend_enabled() and is_mailcheck_style_url():
+        easy = [k for k in keys if k.lower() in {"mailcheck", "none", "dummy"}]
+        if easy:
+            return easy
+        if not keys:
+            return [MAILCHECK_DUMMY_KEY]
+        # Явно заданы чужие ключи при mailcheck URL — всё равно mailcheck dummy.
+        return [MAILCHECK_DUMMY_KEY]
     if keys:
         return keys
-    # mailcheck без API_KEY на сервере — нужен dummy только для пула семафоров.
     if is_mailcheck_style_url():
         return [MAILCHECK_DUMMY_KEY]
     return []
@@ -113,31 +205,45 @@ def _env_int(name: str, *, default: int, traffic: int | None = None) -> int:
     return default
 
 
-def validemail_rps_per_key() -> float:
+def validemail_rps_per_key(url: str | None = None) -> float:
     """validemail.co: 10 req/s. mailcheck: без RPS-лимита (0)."""
     raw = (os.getenv("VALIDEMAIL_RPS_PER_KEY") or "").strip()
     if raw in ("0", "off", "false", "no"):
         return 0.0
+    mailcheck = is_mailcheck_style_url(url)
+    # Для hard URL (validemail.co) — всегда лимит co, даже если основной VALIDEMAIL_URL = mailcheck.
+    u = (url or "").strip().lower()
+    if u and ("validemail.co" in u):
+        mailcheck = False
     if not raw:
-        return 0.0 if is_mailcheck_style_url() else 10.0
+        return 0.0 if mailcheck else 10.0
     try:
         v = float(raw)
         if v <= 0:
             return 0.0
-        return max(1.0, min(10.0, v)) if not is_mailcheck_style_url() else max(0.0, v)
+        return max(1.0, min(10.0, v)) if not mailcheck else max(0.0, v)
     except (TypeError, ValueError):
-        return 0.0 if is_mailcheck_style_url() else 10.0
+        return 0.0 if mailcheck else 10.0
 
 
-def per_key_concurrency_limit() -> int:
+def per_key_concurrency_limit(url: str | None = None) -> int:
     """N одновременных запросов на ключ. ValidEmail ≤10; mailcheck — выше."""
     raw = (os.getenv("VALIDEMAIL_CONCURRENCY_PER_KEY") or "").strip()
-    mailcheck = is_mailcheck_style_url()
+    u = (url or "").strip().lower()
+    mailcheck = is_mailcheck_style_url(url)
+    if u and "validemail.co" in u:
+        mailcheck = False
     ceiling = 64 if mailcheck else 10
     default = 40 if mailcheck else 10
-    if raw:
+    if raw and mailcheck:
         try:
             return max(1, min(ceiling, int(raw)))
+        except (TypeError, ValueError):
+            pass
+    if raw and not mailcheck:
+        # Не тащим mailcheck CONCURRENCY_PER_KEY=40 на co (там потолок 10).
+        try:
+            return max(1, min(10, int(raw))) if int(raw) <= 10 else 10
         except (TypeError, ValueError):
             pass
     return default

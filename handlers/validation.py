@@ -572,9 +572,9 @@ async def _run_validation_pipeline_inner(
         if not api_keys:
             return await status_msg.edit_text(
                 f"{html_emoji('fail')} Ключи валидации не заданы.\n\n"
-                "Для mailcheck (свой API): <code>VALIDEMAIL_API_KEYS=mailcheck</code>\n"
-                "или укажи <code>VALIDEMAIL_URL=…/api/v1/validate</code> — ключ подставится сам.\n"
-                "Для ValidEmail: <code>VALIDEMAIL_API_KEYS=key1,key2</code>",
+                "Лёгкие домены (gmail/icloud): <code>VALIDEMAIL_API_KEYS=mailcheck</code>\n"
+                "Сложные (GMX/web/bluewin): <code>VALIDEMAIL_HARD_URL=https://validemail.co/api/v1/validate</code>\n"
+                "и <code>VALIDEMAIL_HARD_API_KEYS=key1,key2,…</code>",
                 parse_mode="HTML",
             )
 
@@ -643,9 +643,10 @@ async def _run_validation_pipeline_inner(
             )
             already_keys |= with_offers - chs_keys
 
-    from services.validemail_keys import validation_traffic_mode
+    from services.validemail_keys import hard_backend_enabled, resolve_hard_api_keys, validation_traffic_mode
 
     n_keys = len(api_keys)
+    hard_keys = resolve_hard_api_keys() if hard_backend_enabled() else []
     pool = validation_pool_size(n_keys)
     per_key_lim = per_key_concurrency_limit()
     cfg = ValidationConfig(
@@ -664,6 +665,7 @@ async def _run_validation_pipeline_inner(
     live_stats: dict = {
         "offers_total": total_offers,
         "validemail_keys": n_keys,
+        "validemail_hard_keys": len(hard_keys),
         "validemail_pool": pool,
         "validemail_per_key": per_key_lim,
         "validemail_threads": n_keys,

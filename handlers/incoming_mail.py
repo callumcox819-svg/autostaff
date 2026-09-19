@@ -3330,8 +3330,8 @@ async def cb_mail_reply_html_send(callback: CallbackQuery, state: FSMContext):
             if not (ctx.get("BUYER_NAME") or "").strip() or not (ctx.get("ADDRESS") or "").strip():
                 return (
                     False,
-                    "Для HTML заполни ФИО и адрес в Команды API у выбранной команды "
-                    "(Hustle Castle / Evoleum) — для текущей рабочей страны.",
+                    "Для HTML заполни ФИО и адрес у выбранной команды API "
+                    "для текущей рабочей страны.",
                     None,
                 )
             html_body = await prepare_html_body(_apply_link(raw_html, link), session, user)
@@ -3658,8 +3658,8 @@ async def mail_reply_custom_html(message: Message, state: FSMContext):
             if not (ctx.get("BUYER_NAME") or "").strip() or not (ctx.get("ADDRESS") or "").strip():
                 return (
                     False,
-                    "Для HTML заполни ФИО и адрес в Команды API у выбранной команды "
-                    "(Hustle Castle / Evoleum) — для текущей рабочей страны.",
+                    "Для HTML заполни ФИО и адрес у выбранной команды API "
+                    "для текущей рабочей страны.",
                     None,
                 )
             html_body = await prepare_html_body(_apply_link(html_text, link), session, user)

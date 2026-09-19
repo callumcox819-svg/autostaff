@@ -372,9 +372,10 @@ async def resolve_html_buyer_profile(session, user: User) -> tuple[str, str]:
     except Exception:
         cfg = None
 
-    if cfg and cfg.team_id == "hustle":
-        name = (await get_team_field(session, user, "hustle", "buyer_name") or "").strip()
-        address = (await get_team_field(session, user, "hustle", "address") or "").strip()
+    if cfg and cfg.team_id in {"hustle", "gag"}:
+        team_id = cfg.team_id
+        name = (await get_team_field(session, user, team_id, "buyer_name") or "").strip()
+        address = (await get_team_field(session, user, team_id, "address") or "").strip()
         return name, address
 
     name = await get_user_profile_buyer_name(session, user)

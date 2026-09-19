@@ -113,14 +113,9 @@ def _plain_body_content_transfer_encoding(body: str) -> str:
 
 
 def _gmail_like_msgid(from_addr: str) -> str:
-    """Формат Message-ID как у писем через smtp.gmail.com (см. экспорт .eml)."""
-    import random
-    import time
-
+    """Устарело: оставлен для совместимости импортов; используем make_msgid."""
     domain = (from_addr.split("@")[-1] if "@" in from_addr else "gmail.com").strip() or "gmail.com"
-    ts = int(time.time() * 1000)
-    tail = random.randrange(10**18, 10**19 - 1)
-    return f"<{ts}.1.{tail}@{domain}>"
+    return make_msgid(domain=domain)
 
 
 def _set_message_headers(
@@ -136,17 +131,13 @@ def _set_message_headers(
     references: Optional[str] = None,
 ) -> None:
     domain = from_addr.split("@")[-1] if "@" in from_addr else None
-    # Gmail-like Message-ID и для ответов — иначе часть клиентов хуже клеит тред.
-    use_gmail_mid = for_mailing or bool(in_reply_to) or (domain or "").lower() in {
-        "gmail.com",
-        "googlemail.com",
-    }
-    if use_gmail_mid:
-        msg_date = formatdate(localtime=False)
-        msg_id = _gmail_like_msgid(from_addr)
-    else:
-        msg_date = formatdate(localtime=True)
-        msg_id = make_msgid(domain=domain)
+    # Не мимикрируем под Gmail Message-ID — Gmail всё равно переписывает;
+    # синтетический <ms.1.rand@gmail.com> хуже выглядит для фильтров.
+    msg_date = formatdate(localtime=True)
+    try:
+        msg_id = make_msgid(domain=domain) if domain else make_msgid()
+    except Exception:
+        msg_id = make_msgid()
     if minimal:
         if disp_name:
             msg["From"] = formataddr((disp_name, from_addr))

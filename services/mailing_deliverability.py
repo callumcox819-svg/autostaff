@@ -109,8 +109,8 @@ def _env_on(name: str, *, default: str = "1") -> bool:
 
 
 def mailing_fast_mode() -> bool:
-    """Быстрый BURST (почти без пауз). По умолчанию вкл. — нужен большой трафик."""
-    return _env_on("MAILING_FAST_MODE", default="1")
+    """Быстрый BURST. По умолчанию выкл. — меньше спама / блоков Gmail."""
+    return _env_on("MAILING_FAST_MODE", default="0")
 
 
 def mailing_inbox_success_profile() -> bool:
@@ -191,15 +191,37 @@ def mailing_strip_link() -> bool:
 
 
 def mailing_ehlo_name() -> str | None:
+    """
+    EHLO hostname. Пусто / auto → системный FQDN (не [127.0.0.1]).
+    Явно: MAILING_EHLO_NAME=mail.example.com
+    """
     raw = (os.getenv("MAILING_EHLO_NAME") or os.getenv("SMTP_EHLO_HOSTNAME") or "").strip()
-    if raw:
-        return raw[:253]
-    return "[127.0.0.1]"
+    if raw.lower() in {"", "auto", "default", "system"}:
+        try:
+            import socket
+
+            host = (socket.getfqdn() or socket.gethostname() or "").strip()
+            if host and host.lower() not in {"localhost", "localhost.localdomain"}:
+                return host[:253]
+        except Exception:
+            pass
+        return None  # smtplib.ehlo() без аргумента
+    if raw in {"[127.0.0.1]", "127.0.0.1", "localhost"}:
+        return None
+    return raw[:253]
 
 
 def mailing_max_per_account_hour() -> int:
-    """Мягкий лимит писем с одного Gmail за час. По умолчанию 0 = выкл. (быстрый трафик)."""
-    return max(0, min(500, int(os.getenv("MAILING_MAX_PER_ACCOUNT_HOUR", "0"))))
+    """
+    Лимит писем с одного ящика за час.
+    Дефолт 30 — холодная Gmail-рассылка без суточного бана.
+    0 = выкл. (MAILING_MAX_PER_ACCOUNT_HOUR=0).
+    """
+    raw = (os.getenv("MAILING_MAX_PER_ACCOUNT_HOUR", "30") or "30").strip()
+    try:
+        return max(0, min(500, int(raw)))
+    except (TypeError, ValueError):
+        return 30
 
 
 def inbox_stagger_ms() -> int:

@@ -2165,7 +2165,7 @@ async def _process_mails_for_account_impl(
                 from_email_clean, from_name or "", subject or ""
             )
             if smtp_block_bounce:
-                skip_telegram_notify = False
+                skip_telegram_notify = True
             elif recipient_dsn_bounce:
                 skip_telegram_notify = True
             elif _is_mailer_daemon_notice(from_email_clean, subject or ""):
@@ -2384,6 +2384,36 @@ async def _process_mails_for_account_impl(
                 forwarded += 1
                 continue
 
+            # Message blocked: не слать карточки (Перевести / ссылка бессмысленны).
+            # Первый раз — SMTP off + короткая строка; повторы — тихо.
+            if smtp_block_bounce:
+                if not account_already_smtp_blocked:
+                    try:
+                        async with _imap_db_session() as session:
+                            acc_pre = (
+                                await session.execute(
+                                    sa_select(EmailAccount)
+                                    .where(EmailAccount.id == int(acc_id))
+                                    .limit(1)
+                                )
+                            ).scalars().first()
+                            if acc_pre:
+                                from services.smtp_block_control import mark_account_smtp_blocked
+
+                                await mark_account_smtp_blocked(
+                                    session,
+                                    acc_pre,
+                                    (body_clean or subject or "SMTP block bounce")[:1000],
+                                    db_user_id=int(user_id),
+                                    bot=bot,
+                                    chat_id=int(tg_id),
+                                    force=True,
+                                )
+                    except Exception:
+                        logger.exception("Failed mark smtp_blocked acc=%s", acc_id)
+                forwarded += 1
+                continue
+
             if skip_telegram_notify:
                 forwarded += 1
                 continue
@@ -2398,35 +2428,6 @@ async def _process_mails_for_account_impl(
                     )
                 forwarded += 1
                 continue
-
-            # Повторные Message blocked на уже снятом с SMTP ящике — не спамим карточками.
-            if smtp_block_bounce and account_already_smtp_blocked:
-                forwarded += 1
-                continue
-
-            # Первый block bounce: сразу smtp_blocked, чтобы в этом же опросе не ушло 2–3 карточки.
-            if smtp_block_bounce and not account_already_smtp_blocked:
-                try:
-                    async with _imap_db_session() as session:
-                        acc_pre = (
-                            await session.execute(
-                                sa_select(EmailAccount).where(EmailAccount.id == int(acc_id)).limit(1)
-                            )
-                        ).scalars().first()
-                        if acc_pre:
-                            from services.smtp_block_control import mark_account_smtp_blocked
-
-                            await mark_account_smtp_blocked(
-                                session,
-                                acc_pre,
-                                (body_clean or subject or "SMTP block bounce")[:1000],
-                                db_user_id=int(user_id),
-                                bot=bot,
-                                chat_id=int(tg_id),
-                                force=True,
-                            )
-                except Exception:
-                    logger.exception("Failed pre-mark smtp_blocked acc=%s", acc_id)
 
             await _upsert_convlink(
                 user_id=user_id,

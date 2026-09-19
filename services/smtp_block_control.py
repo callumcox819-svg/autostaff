@@ -260,21 +260,33 @@ async def mark_account_smtp_blocked(
 
     notify = force or await block_control_enabled(session, db_user_id)
     if bot and chat_id and notify:
-        if not force:
+        em = html.escape((account.email or "").strip())
+        if force:
+            # IMAP Message blocked: одна короткая строка, без карточки письма.
+            try:
+                await bot.send_message(
+                    int(chat_id),
+                    f"{html_emoji('yellow')} <code>{em}</code> — SMTP off "
+                    f"(Message blocked). IMAP ok · авто ~"
+                    f"{smtp_block_cooldown_hours_range()[0]:g}–"
+                    f"{smtp_block_cooldown_hours_range()[1]:g} ч.",
+                    parse_mode="HTML",
+                )
+            except Exception:
+                pass
+        else:
             await notify_smtp_stream_stopped_for_imap(
                 bot,
                 int(chat_id),
                 account.email or "",
                 reason=err,
             )
-            em = html.escape((account.email or "").strip())
             await bot.send_message(
                 int(chat_id),
                 smtp_removed_from_mailing_notice_html(lead="")
                 + f"\n<code>{em}</code>",
                 parse_mode="HTML",
             )
-        # force (IMAP Message blocked): текст на карточке письма — без второго сообщения
     return True
 
 

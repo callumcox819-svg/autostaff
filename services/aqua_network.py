@@ -201,7 +201,9 @@ async def generate_aqua_link_no_parse(
         if default.lower().startswith(("http://", "https://")):
             img = default
 
-    ver = (version or "").strip() or _link_version()
+    ver = (version or "").strip().lower() or _link_version()
+    if ver not in {"1", "2", "lk"}:
+        ver = "lk"
     body: dict[str, Any] = {
         "apikey": normalize_aqua_api_key(user_api_key),
         "title": title,
@@ -212,9 +214,8 @@ async def generate_aqua_link_no_parse(
         "balanceChecker": _balance_checker_flag(balance_checker),
         "version": ver,
     }
-    if domain is not None:
-        body["domain"] = max(5, min(8, int(domain)))
-    # domain is None → домен команды, поле domain не отправляем
+    selected_domain = domain if domain is not None else _generate_domain_num()
+    body["domain"] = max(1, min(8, int(selected_domain)))
     if img.lower().startswith(("http://", "https://")):
         body["image"] = img
 

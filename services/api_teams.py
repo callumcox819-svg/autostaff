@@ -28,6 +28,13 @@ LINK_TYPES: tuple[tuple[str, str, str], ...] = (
 )
 _LINK_TYPE_IDS = {t for t, _, _ in LINK_TYPES}
 
+GAG_LINK_TYPES: tuple[tuple[str, str, str], ...] = (
+    ("lk", "LK — /get/", "link"),
+    ("1", "Версия 1 — /buy/", "presets"),
+    ("2", "Версия 2 — /", "puzzle"),
+)
+_GAG_LINK_TYPE_IDS = {t for t, _, _ in GAG_LINK_TYPES}
+
 
 @dataclass(frozen=True)
 class ApiTeamConfig:
@@ -47,8 +54,12 @@ def team_label(team_id: str) -> str:
     return team_id or "—"
 
 
-def link_type_label(link_type: str) -> str:
-    for tid, label, _ in LINK_TYPES:
+def link_types_for_team(team_id: str) -> tuple[tuple[str, str, str], ...]:
+    return GAG_LINK_TYPES if (team_id or "").strip().lower() == "gag" else LINK_TYPES
+
+
+def link_type_label(link_type: str, *, team_id: str = "") -> str:
+    for tid, label, _ in link_types_for_team(team_id):
         if tid == link_type:
             return label
     return link_type or "—"
@@ -135,8 +146,10 @@ async def set_team_field(session, user: User, team_id: str, field: str, value: s
         value = clean_secret(value)
     elif field == "link_type":
         v = (value or "").strip().lower()
-        if v not in _LINK_TYPE_IDS:
-            raise ValueError("Тип: lk, card или other")
+        allowed = _GAG_LINK_TYPE_IDS if tid == "gag" else _LINK_TYPE_IDS
+        if v not in allowed:
+            expected = "lk, 1 или 2" if tid == "gag" else "lk, card или other"
+            raise ValueError(f"Тип: {expected}")
         value = v
     elif field == "profile_id":
         value = clean_secret(value)
@@ -173,6 +186,9 @@ async def get_team_config(session, user: User, team_id: str) -> ApiTeamConfig:
         api_key = (await get_user_aqua_user_key_async(session, user) or "").strip()
     if tid == "gag":
         service_code = "ricardo_ch"
+    link_type = await get_team_field(session, user, tid, "link_type") or "lk"
+    if tid == "gag" and link_type not in _GAG_LINK_TYPE_IDS:
+        link_type = "lk"
     return ApiTeamConfig(
         team_id=tid,
         label=team_label(tid),
@@ -180,7 +196,7 @@ async def get_team_config(session, user: User, team_id: str) -> ApiTeamConfig:
         team_key=_team_key_for(tid),
         service_code=service_code,
         profile_id=profile_id,
-        link_type=await get_team_field(session, user, tid, "link_type") or "lk",
+        link_type=link_type,
     )
 
 

@@ -1,4 +1,4 @@
-"""Домен генерации в профиле: команда (без domain в API) или Домен 1–4 → API 5–8."""
+"""Номер домена GAG API: точное значение 1–8 из документации."""
 
 from __future__ import annotations
 
@@ -9,32 +9,23 @@ from services.country_scope import get_scoped_setting, set_scoped_setting
 
 AQUA_GENERATE_DOMAIN_KEY = "aqua_generate_domain"
 
-DOMAIN_MODE_TEAM = "team"
-DOMAIN_MODES_NUMBERED = ("1", "2", "3", "4")
+DOMAIN_MODE_TEAM = "team"  # legacy: старое значение мигрируется в домен 1
+DOMAIN_MODES_NUMBERED = tuple(str(n) for n in range(1, 9))
 
 _BAD_HOSTS = frozenset({"undefined", "null", "none", ""})
 
 
-async def get_user_gag_domain_mode(session, user: User, *, default: str = DOMAIN_MODE_TEAM) -> str:
+async def get_user_gag_domain_mode(session, user: User, *, default: str = "1") -> str:
     raw = (await get_scoped_setting(session, user, AQUA_GENERATE_DOMAIN_KEY) or "").strip().lower()
     if raw in (DOMAIN_MODE_TEAM, "command", "team_domain", "0"):
-        return DOMAIN_MODE_TEAM
+        return "1"
     if raw in DOMAIN_MODES_NUMBERED:
         return raw
-    if raw.isdigit():
-        n = int(raw)
-        if 5 <= n <= 8:
-            return str(n - 4)
-        if 1 <= n <= 4:
-            return str(n)
     return default
 
 
 async def set_user_gag_domain_mode(session, user: User, mode: str) -> None:
     m = (mode or "").strip().lower()
-    if m == DOMAIN_MODE_TEAM:
-        await set_scoped_setting(session, user, AQUA_GENERATE_DOMAIN_KEY, DOMAIN_MODE_TEAM)
-        return
     if m in DOMAIN_MODES_NUMBERED:
         await set_scoped_setting(session, user, AQUA_GENERATE_DOMAIN_KEY, m)
         return
@@ -42,35 +33,26 @@ async def set_user_gag_domain_mode(session, user: User, mode: str) -> None:
 
 
 def gag_api_domain_for_mode(mode: str) -> int | None:
-    """
-    None — домен команды (поле domain в JSON не отправляем).
-    5–8 — для «Домен 1» … «Домен 4» (слот + 4).
-    """
+    """Точное поле domain из API: целое число 1–8."""
     m = (mode or "").strip().lower()
     if m in (DOMAIN_MODE_TEAM, "", "team"):
-        return None
+        return 1
     if m in DOMAIN_MODES_NUMBERED:
-        return int(m) + 4
-    return None
+        return int(m)
+    return 1
 
 
 def profile_domain_label(mode: str) -> str:
-    m = (mode or DOMAIN_MODE_TEAM).strip().lower()
+    m = (mode or "1").strip().lower()
     if m == DOMAIN_MODE_TEAM:
-        return "Домен команды"
+        m = "1"
     if m in DOMAIN_MODES_NUMBERED:
         return f"Домен {m}"
     return m or "—"
 
 
 def domain_mode_menu_options() -> tuple[tuple[str, str], ...]:
-    return (
-        (DOMAIN_MODE_TEAM, "Домен команды"),
-        ("1", "Домен 1"),
-        ("2", "Домен 2"),
-        ("3", "Домен 3"),
-        ("4", "Домен 4"),
-    )
+    return tuple((str(n), f"Домен {n}") for n in range(1, 9))
 
 
 def finalize_gag_generated_url(url: str, *, mode: str) -> str:
@@ -84,18 +66,12 @@ def finalize_gag_generated_url(url: str, *, mode: str) -> str:
     if host and host not in _BAD_HOSTS:
         return raw
 
-    if (mode or "").strip().lower() == DOMAIN_MODE_TEAM:
-        raise ValueError(
-            "API вернул некорректную ссылку. Выбери «Домен команды» в профиле и проверь apikey."
-        )
-    raise ValueError(f"API вернул некорректную ссылку ({raw}). Попробуй другой «Домен 1–4» или команду.")
+    raise ValueError(f"API вернул некорректную ссылку ({raw}). Попробуй другой домен 1–8.")
 
 
 # Совместимость со старым кодом
 async def get_active_domain_slot(session, user: User, *, default: int = 1) -> int:
     mode = await get_user_gag_domain_mode(session, user)
-    if mode == DOMAIN_MODE_TEAM:
-        return 0
     return int(mode)
 
 

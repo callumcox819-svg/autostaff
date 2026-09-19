@@ -86,9 +86,8 @@ def _domain_menu_text(mode: str) -> str:
     _ = mode
     return (
         f"{html_emoji('link')} <b>Домен генерации</b>\n\n"
-        f"• {html_emoji('profile')} <b>Домен команды</b> — без поля <code>domain</code> в API\n"
-        f"• {html_emoji('edit')} <b>Домен 1–4</b> — в API: "
-        f"<code>5</code>, <code>6</code>, <code>7</code>, <code>8</code> (слот + 4)"
+        f"Выбери номер домена GAG: <code>1</code>–<code>8</code>.\n"
+        "В API отправляется выбранный номер без преобразования."
     )
 
 
@@ -264,7 +263,7 @@ async def aqua_domain_pick(callback: CallbackQuery, state: FSMContext) -> None:
 @router.callback_query(F.data.startswith("aqua_domain_set:"))
 async def aqua_domain_set(callback: CallbackQuery, state: FSMContext) -> None:
     code = (callback.data or "").split(":", 1)[1].strip().lower()
-    allowed = {"team", "1", "2", "3", "4"}
+    allowed = {str(n) for n in range(1, 9)}
     if code not in allowed:
         return await callback.answer("Неизвестный домен", show_alert=True)
     async with Session() as session:

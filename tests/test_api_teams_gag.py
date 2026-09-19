@@ -18,6 +18,14 @@ class ApiTeamsGagTests(unittest.TestCase):
     def test_gag_service_is_fixed_to_swiss_ricardo(self):
         self.assertEqual(default_service_for_team("gag"), "ricardo_ch")
 
+    def test_gag_link_versions_match_api_documentation(self):
+        from services.api_teams import link_types_for_team
+
+        self.assertEqual(
+            [code for code, _, _ in link_types_for_team("gag")],
+            ["lk", "1", "2"],
+        )
+
     def test_gag_ui_hides_internal_server_config_and_foreign_services(self):
         from handlers.api_teams import _team_detail_kb, _team_detail_text
 

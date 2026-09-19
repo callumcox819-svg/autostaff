@@ -14,10 +14,10 @@ from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMar
 from database import Session
 from services.api_teams import (
     API_TEAMS,
-    LINK_TYPES,
     get_selected_team_id,
     get_team_config,
     link_type_label,
+    link_types_for_team,
     set_selected_team_id,
     set_team_field,
     team_label,
@@ -233,10 +233,11 @@ def _team_detail_text(cfg, *, buyer_name: str = "", address: str = "", country_n
             f"<b>ФИО{cc}:</b> <code>{html.escape(buyer_name or '—')}</code>\n"
             f"<b>Адрес{cc}:</b> <code>{html.escape(address or '—')}</code>\n"
             "<i>GAG работает только для Швейцарии через Ricardo. "
-            "Домен — «Домен команды» или Домен 1–4.</i>"
+            "Домен — номер 1–8 по документации API.</i>"
         )
     lines.append(
-        f"<b>Тип ссылки:</b> <b>{html.escape(link_type_label(cfg.link_type or 'lk'))}</b>"
+        f"<b>Тип ссылки:</b> "
+        f"<b>{html.escape(link_type_label(cfg.link_type or 'lk', team_id=cfg.team_id))}</b>"
     )
     return "\n".join(lines)
 
@@ -321,7 +322,7 @@ def _csm_services_kb(team_id: str, country: str, current_service: str) -> Inline
 
 def _link_type_kb(team_id: str, current: str) -> InlineKeyboardMarkup:
     rows: list[list[InlineKeyboardButton]] = []
-    for tid, label, emoji_key in LINK_TYPES:
+    for tid, label, emoji_key in link_types_for_team(team_id):
         on = tid == current
         caption = f"{label}" + (" ✓" if on else "")
         if on:
@@ -339,7 +340,7 @@ def _link_type_text(team_id: str, current: str) -> str:
         f"{html_emoji('link')} <b>Тип ссылки</b>\n"
         f"Команда: <b>{html.escape(team_label(team_id))}</b>\n\n"
         f"Какая ссылка будет генерироваться:\n"
-        f"сейчас — <b>{html.escape(link_type_label(current))}</b>"
+        f"сейчас — <b>{html.escape(link_type_label(current, team_id=team_id))}</b>"
     )
 
 
@@ -698,7 +699,7 @@ async def api_team_type_set(callback: CallbackQuery, state: FSMContext) -> None:
             return
     cur = cfg.link_type or "lk"
     await _edit(callback, _link_type_text(tid, cur), _link_type_kb(tid, cur))
-    await callback.answer(toast("ok", f"Тип: {link_type_label(cur)}"))
+    await callback.answer(toast("ok", f"Тип: {link_type_label(cur, team_id=tid)}"))
 
 
 @router.callback_query(F.data.startswith("api_team_edit:"))

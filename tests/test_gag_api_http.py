@@ -5,7 +5,13 @@ from __future__ import annotations
 import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from services.aqua_network import AquaError, _SETTINGS_KEY, _post_generate, generate_api_base
+from services.aqua_network import (
+    AquaError,
+    _SETTINGS_KEY,
+    _post_generate,
+    generate_api_base,
+    generate_aqua_link_no_parse,
+)
 
 
 class GenerateApiHttpTests(unittest.IsolatedAsyncioTestCase):
@@ -58,6 +64,27 @@ class GenerateApiHttpTests(unittest.IsolatedAsyncioTestCase):
                         "service": "demo",
                     }
                 )
+
+    async def test_generate_payload_matches_gag_documentation(self):
+        post = AsyncMock(return_value={"url": "https://example.test/get/abc"})
+        with patch("services.aqua_network._post_generate", new=post):
+            link = await generate_aqua_link_no_parse(
+                user_api_key="abcd" * 8,
+                service="ricardo_ch",
+                name="Kinderwagen",
+                price="120",
+                buyer_name="Anna",
+                address="Zürich",
+                domain=7,
+                version="1",
+            )
+
+        self.assertEqual(link, "https://example.test/get/abc")
+        body = post.await_args.args[0]
+        self.assertEqual(body["apikey"], "abcd" * 8)
+        self.assertEqual(body["service"], "ricardo_ch")
+        self.assertEqual(body["domain"], 7)
+        self.assertEqual(body["version"], "1")
 
 
 if __name__ == "__main__":

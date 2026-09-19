@@ -212,16 +212,8 @@ def mailing_ehlo_name() -> str | None:
 
 
 def mailing_max_per_account_hour() -> int:
-    """
-    Лимит писем с одного ящика за час.
-    Дефолт 30 — холодная Gmail-рассылка без суточного бана.
-    0 = выкл. (MAILING_MAX_PER_ACCOUNT_HOUR=0).
-    """
-    raw = (os.getenv("MAILING_MAX_PER_ACCOUNT_HOUR", "30") or "30").strip()
-    try:
-        return max(0, min(500, int(raw)))
-    except (TypeError, ValueError):
-        return 30
+    """Мягкий лимит писем с одного Gmail за час. По умолчанию 0 = выкл. (быстрый трафик)."""
+    return max(0, min(500, int(os.getenv("MAILING_MAX_PER_ACCOUNT_HOUR", "0"))))
 
 
 def inbox_stagger_ms() -> int:

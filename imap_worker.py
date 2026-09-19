@@ -141,7 +141,9 @@ async def main() -> None:
         await asyncio.sleep(delay)
 
     from services.incoming_mail_worker import start_incoming_mail_worker
+    from services.smtp_block_control import start_smtp_block_cooldown_worker
 
+    start_smtp_block_cooldown_worker()
     start_incoming_mail_worker(bot, poll_seconds=poll_seconds)
     asyncio.create_task(_worker_heartbeat())
     asyncio.create_task(_scheduler_watchdog())

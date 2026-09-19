@@ -484,6 +484,31 @@ async def _ensure_conversation_links_thread_columns() -> None:
         )
 
 
+async def _ensure_email_accounts_smtp_blocked_until_column() -> None:
+    """Пауза smtp_blocked → автовозврат в рассылку через N часов."""
+    if engine.dialect.name != "postgresql":
+        return
+    async with engine.begin() as conn:
+        await conn.execute(
+            text(
+                "ALTER TABLE email_accounts "
+                "ADD COLUMN IF NOT EXISTS smtp_blocked_until TIMESTAMP"
+            )
+        )
+        # Уже заблокированные: пауза от updated_at + 5.5ч (глобальный дефолт).
+        await conn.execute(
+            text(
+                """
+                UPDATE email_accounts
+                SET smtp_blocked_until = COALESCE(updated_at, NOW() AT TIME ZONE 'utc')
+                    + INTERVAL '5.5 hours'
+                WHERE lower(coalesce(status, '')) = 'smtp_blocked'
+                  AND smtp_blocked_until IS NULL
+                """
+            )
+        )
+
+
 async def init_db() -> None:
     dialect = engine.dialect.name
     if dialect == "postgresql":
@@ -565,6 +590,11 @@ async def init_db() -> None:
         await _ensure_conversation_links_pinned_offer_id_column()
     except Exception as e:
         log.error("Failed conversation_links.pinned_offer_id migration: %s", e)
+
+    try:
+        await _ensure_email_accounts_smtp_blocked_until_column()
+    except Exception as e:
+        log.error("Failed email_accounts.smtp_blocked_until migration: %s", e)
 
     try:
         await _migrate_seller_blacklist_names()

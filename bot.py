@@ -264,8 +264,10 @@ def _log_mailing_env_once() -> None:
 
 async def _on_startup(bot: Bot) -> None:
     from services.bot_commands import register_bot_commands
+    from services.smtp_block_control import start_smtp_block_cooldown_worker
 
     _log_mailing_env_once()
+    start_smtp_block_cooldown_worker()
 
     try:
         await register_bot_commands(bot)

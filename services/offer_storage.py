@@ -1345,12 +1345,52 @@ def ensure_offer_link_column(offer: Offer | None, listing_url: str) -> None:
         offer.link = url
 
 
+def _photo_candidate_from_value(val: Any) -> str:
+    if isinstance(val, list) and val:
+        return _photo_candidate_from_value(val[0])
+    if isinstance(val, dict):
+        for k in ("url", "src", "href", "image", "photo"):
+            s = str(val.get(k) or "").strip()
+            if s:
+                return s
+        return ""
+    return str(val or "").strip()
+
+
+def _photo_from_raw_dict(raw: dict[str, Any], *, depth: int = 0) -> str:
+    if depth > 3 or not isinstance(raw, dict):
+        return ""
+    for key in (
+        "item_photo",
+        "photo",
+        "image",
+        "img",
+        "image_url",
+        "photo_url",
+        "thumbnail",
+        "picture",
+    ):
+        s = _photo_candidate_from_value(raw.get(key))
+        if s:
+            return s
+    for key in ("images", "pictures", "photos"):
+        s = _photo_candidate_from_value(raw.get(key))
+        if s:
+            return s
+    void = raw.get("void")
+    if isinstance(void, dict):
+        nested = _photo_from_raw_dict(void, depth=depth + 1)
+        if nested:
+            return nested
+    return ""
+
+
 def offer_effective_photo(offer: Offer | None) -> str:
     """Фото: item_photo из raw_json (VOID), иначе Offer.photo."""
     if not offer:
         return ""
     raw = parse_offer_raw(getattr(offer, "raw_json", None))
-    from_raw = _first_raw_str(raw, ("item_photo", "photo", "image", "img"))
+    from_raw = _photo_from_raw_dict(raw)
     if from_raw:
         return from_raw
     return str(getattr(offer, "photo", None) or "").strip()

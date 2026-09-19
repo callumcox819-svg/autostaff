@@ -36,6 +36,18 @@ def _is_http_url(url: str | None) -> bool:
     return u.startswith(("http://", "https://"))
 
 
+def normalize_http_image_url(url: str | None) -> str:
+    """Абсолютный http(s) URL фото; `//cdn…` → https."""
+    u = (url or "").strip()
+    if not u:
+        return ""
+    if u.startswith("//"):
+        u = "https:" + u
+    if not _is_http_url(u):
+        return ""
+    return u
+
+
 async def resolve_aqua_image_url(
     session,
     user: User,
@@ -47,8 +59,9 @@ async def resolve_aqua_image_url(
         (image or "").strip(),
         offer_effective_photo(offer),
     ):
-        if _is_http_url(candidate):
-            return candidate.strip()
+        norm = normalize_http_image_url(candidate)
+        if norm:
+            return norm
 
     uid = int(getattr(user, "id", 0) or 0)
     if uid:
@@ -61,15 +74,12 @@ async def resolve_aqua_image_url(
             )
         ).scalars().all()
         for p in rows:
-            ps = (p or "").strip()
-            if _is_http_url(ps):
-                return ps
+            norm = normalize_http_image_url(p)
+            if norm:
+                return norm
 
     default = (getattr(config, "AQUA_DEFAULT_IMAGE_URL", None) or "").strip()
-    if _is_http_url(default):
-        return default
-
-    return ""
+    return normalize_http_image_url(default)
 
 
 async def _generate_csm(session, user: User, cfg, offer: Offer | None, *, listing_url: str | None, price: str | None) -> str:

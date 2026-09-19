@@ -142,6 +142,8 @@ class EmailAccount(Base):
 
     status = Column(String, nullable=True, default="active")
     last_error = Column(Text, nullable=True)
+    # Когда smtp_blocked можно снова ставить в рассылку (UTC).
+    smtp_blocked_until = Column(DateTime, nullable=True)
 
     last_seen_uid = Column(Integer, nullable=True)
 

@@ -55,10 +55,18 @@ def _canon_email(email: str) -> str:
     return (email or "").strip().lower()
 
 
-def _format_eur_price(price: str) -> str:
+def _html_currency_for_country(country: str) -> str:
+    cc = (country or "").strip().lower()
+    if cc == "ch":
+        return "CHF"
+    return "EUR"
+
+
+def _format_html_price(price: str, *, currency: str = "EUR") -> str:
     p = (price or "").strip()
     if not p:
         return ""
+    cur = (currency or "EUR").strip().upper() or "EUR"
     # «0» / «0 €» / «EUR 0» — для HTML считаем пустым (часто мусор после parse).
     digits = re.sub(r"[^\d.,]", "", p).replace(",", ".")
     try:
@@ -66,23 +74,34 @@ def _format_eur_price(price: str) -> str:
             return ""
     except ValueError:
         pass
+    m = re.search(r"([\d]+(?:[.,]\d+)?)", p)
+    if not m:
+        return f"{cur} {p}"
+    num_raw = m.group(1)
+    swiss_dot = ".-" in p[m.start() :]
     up = p.upper()
-    if "EUR" in up or "€" in p:
-        # Убираем дубль вида «EUR 0 €» → нормализуем число + EUR
-        m = re.search(r"([\d]+(?:[.,]\d+)?)", p)
-        if m:
-            num = m.group(1).replace(",", ".")
-            try:
-                return f"EUR {float(num):.2f}"
-            except ValueError:
-                return f"EUR {m.group(1)}"
-        return p
-    return f"EUR {p}"
+    has_money_token = any(tok in up for tok in ("EUR", "CHF", "USD")) or "€" in p or "FR." in up
+    if has_money_token or "," in num_raw or "." in num_raw:
+        num = num_raw.replace(",", ".")
+        try:
+            formatted_num = f"{float(num):.2f}"
+        except ValueError:
+            formatted_num = num_raw
+        if swiss_dot and "." not in formatted_num:
+            return f"{cur} {formatted_num}.-"
+        return f"{cur} {formatted_num}"
+    if swiss_dot:
+        return f"{cur} {num_raw}.-"
+    return f"{cur} {num_raw}"
 
 
-def _pick_non_zero_price(*candidates: str) -> str:
+def _format_eur_price(price: str) -> str:
+    return _format_html_price(price, currency="EUR")
+
+
+def _pick_non_zero_price(*candidates: str, currency: str = "EUR") -> str:
     for c in candidates:
-        formatted = _format_eur_price((c or "").strip())
+        formatted = _format_html_price((c or "").strip(), currency=currency)
         if formatted:
             return formatted
     return ""
@@ -104,6 +123,8 @@ async def build_offer_html_ctx(
 
     from models import Offer, OfferEmail, User
     from services.aqua_keys import resolve_html_buyer_profile
+    from services.aqua_link import normalize_http_image_url, resolve_aqua_image_url
+    from services.enabled_countries import get_active_country
     from services.offer_storage import (
         offer_effective_photo,
         offer_effective_price,
@@ -140,7 +161,7 @@ async def build_offer_html_ctx(
             ).scalars().first()
         if off:
             title = (offer_effective_title(off) or "").strip()
-            photo = (offer_effective_photo(off) or "").strip()
+            photo = normalize_http_image_url(offer_effective_photo(off))
     except Exception:
         pass
 
@@ -154,7 +175,7 @@ async def build_offer_html_ctx(
         if not title:
             title = mail_title
         if not photo:
-            photo = mail_photo
+            photo = normalize_http_image_url(mail_photo)
 
     offer_price_raw = ""
     try:
@@ -165,20 +186,36 @@ async def build_offer_html_ctx(
     except Exception:
         pass
 
-    # Сначала цена с письма/кнопки «Цена», потом оффер (0 от parse отбрасываем).
-    price = _pick_non_zero_price(mail_price, offer_price_raw)
-
     buyer_name = ""
     address = ""
     nick = ""
+    currency = "EUR"
+    user = None
     try:
         user = await session.get(User, int(user_id))
         if user:
+            try:
+                currency = _html_currency_for_country(await get_active_country(session, user))
+            except Exception:
+                currency = "EUR"
             buyer_name, address = await resolve_html_buyer_profile(session, user)
             spoof = await get_spoof_display_name(session, user)
             nick = (spoof or "").strip()
     except Exception:
         pass
+
+    # Сначала цена с письма/кнопки «Цена», потом оффер (0 от parse отбрасываем).
+    price = _pick_non_zero_price(mail_price, offer_price_raw, currency=currency)
+
+    if not photo and user is not None:
+        try:
+            photo = normalize_http_image_url(
+                await resolve_aqua_image_url(
+                    session, user, off, image=mail_photo or None
+                )
+            )
+        except Exception:
+            pass
 
     return {
         "ITEM_TITLE": title,

@@ -339,7 +339,8 @@ async def cmd_imap_diag(message: Message) -> None:
     lines.append(breakdown_html)
     lines.append(
         "\n<i>Тест: ответьте на письмо рассылки → ~30 с карточка в TG. "
-        "mailer-daemon (Message blocked) — карточка в TG + ящик smtp_blocked. "
+        "mailer-daemon (Message blocked) — карточка в TG + ящик smtp_blocked "
+        "(автовозврат в рассылку через ~5–6 ч). "
         "Gmail Spam не читаем.</i>"
     )
     text = "\n".join(lines)

@@ -17,6 +17,14 @@ def test_void_raw_json_wins_over_stale_columns():
     assert "badehut" in offer_effective_photo(off).lower()
 
 
+def test_effective_photo_from_images_list_and_protocol_relative():
+    off = SimpleNamespace(
+        photo="",
+        raw_json='{"images": ["//cdn.example/a.jpg", "https://cdn.example/b.jpg"]}',
+    )
+    assert offer_effective_photo(off) == "//cdn.example/a.jpg"
+
+
 def test_effective_title_decodes_parser_html_entities():
     off = SimpleNamespace(
         title="",

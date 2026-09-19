@@ -2,7 +2,12 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from services.html_reply import _format_eur_price, _pick_non_zero_price, build_offer_html_ctx
+from services.html_reply import (
+    _format_eur_price,
+    _format_html_price,
+    _pick_non_zero_price,
+    build_offer_html_ctx,
+)
 from services.html_spoof import apply_nick_to_html
 from services.placeholders import apply_placeholders
 
@@ -17,8 +22,17 @@ class HtmlPriceFormatTests(unittest.TestCase):
         self.assertEqual(_format_eur_price("55"), "EUR 55")
         self.assertEqual(_format_eur_price("55.00 EUR"), "EUR 55.00")
 
+    def test_ch_price_is_chf(self):
+        self.assertEqual(_format_html_price("40", currency="CHF"), "CHF 40")
+        self.assertEqual(_format_html_price("40 .-", currency="CHF"), "CHF 40.-")
+        self.assertEqual(_format_html_price("EUR 40", currency="CHF"), "CHF 40.00")
+
     def test_pick_prefers_nonzero(self):
         self.assertEqual(_pick_non_zero_price("0 €", "55.00 EUR"), "EUR 55.00")
+        self.assertEqual(
+            _pick_non_zero_price("0", "40", currency="CHF"),
+            "CHF 40",
+        )
 
 
 class HtmlSpoofNickTests(unittest.TestCase):
@@ -84,6 +98,10 @@ class HtmlCtxBuyerTests(unittest.IsolatedAsyncioTestCase):
                 "services.html_reply.get_spoof_display_name",
                 new=AsyncMock(return_value="Marktplaats Support"),
             ),
+            patch(
+                "services.enabled_countries.get_active_country",
+                new=AsyncMock(return_value="nl"),
+            ),
         ):
             ctx = await build_offer_html_ctx(
                 session, 1, "seller@hotmail.com", link="https://x.test/l", mail=mail
@@ -93,8 +111,53 @@ class HtmlCtxBuyerTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Amsterdam", ctx["ADDRESS"])
         self.assertEqual(ctx["ITEM_TITLE"], "Philips 3200")
         self.assertIn("55", ctx["PRICE"])
+        self.assertIn("EUR", ctx["PRICE"])
         self.assertNotIn("EUR 0", ctx["PRICE"])
         self.assertIn("img.test", ctx["IMAGE_URL"])
+
+    async def test_ch_ctx_uses_chf_and_normalizes_image(self):
+        session = AsyncMock()
+        session.get = AsyncMock(return_value=SimpleNamespace(id=1))
+        offer = SimpleNamespace(
+            id=10,
+            title="",
+            price="40",
+            photo="",
+            raw_json='{"item_title":"KOMPRESSIONS-KNIESTRÜMPFE","item_price":"40","item_photo":"//img.ricardostatic.ch/sock.jpg"}',
+            user_id=1,
+        )
+        mail = SimpleNamespace(
+            resolved_offer_id=10,
+            product_title="",
+            offer_price="40",
+            photo_url="",
+        )
+        exec_offer = MagicMock()
+        exec_offer.scalars.return_value.first.return_value = offer
+        session.execute = AsyncMock(return_value=exec_offer)
+
+        with (
+            patch(
+                "services.aqua_keys.resolve_html_buyer_profile",
+                new=AsyncMock(
+                    return_value=("Anna Gremlis", "Panoramastrasse 11, 6052 Hergiswil")
+                ),
+            ),
+            patch(
+                "services.html_reply.get_spoof_display_name",
+                new=AsyncMock(return_value="Ricardo Support"),
+            ),
+            patch(
+                "services.enabled_countries.get_active_country",
+                new=AsyncMock(return_value="ch"),
+            ),
+        ):
+            ctx = await build_offer_html_ctx(
+                session, 1, "seller@bluewin.ch", link="https://x.test/l", mail=mail
+            )
+        self.assertEqual(ctx["PRICE"], "CHF 40")
+        self.assertTrue(ctx["IMAGE_URL"].startswith("https://img.ricardostatic.ch/"))
+        self.assertIn("Anna Gremlis", ctx["BUYER_NAME"])
 
     async def test_country_scoped_profile_ignores_stale_global_binding(self):
         from services.aqua_keys import resolve_html_buyer_profile

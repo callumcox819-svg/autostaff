@@ -276,13 +276,61 @@ async def _bulk_add_accounts(
     return ok_count, fail_count, details
 
 
+def _account_status_key(status: str | None) -> str:
+    return (status or "active").strip().lower() or "active"
+
+
+def is_mailing_active_status(status: str | None) -> bool:
+    """IMAP+SMTP: ящик в рассылке."""
+    return _account_status_key(status) in {"active", "enabled"}
+
+
+def is_smtp_paused_status(status: str | None) -> bool:
+    """SMTP на паузе (smtp_blocked), IMAP обычно жив."""
+    return _account_status_key(status) == "smtp_blocked"
+
+
+def is_dead_inactive_status(status: str | None) -> bool:
+    """Ни SMTP, ни IMAP — мёртвый ящик (пароль/доступ)."""
+    st = _account_status_key(status)
+    if is_mailing_active_status(st) or is_smtp_paused_status(st):
+        return False
+    # Временный сбой прокси — не считаем «мёртвым».
+    if st == "proxy_error":
+        return False
+    return True
+
+
+def account_status_counts(accounts: List[EmailAccount]) -> tuple[int, int, int, int]:
+    """(всего, активные, на паузе, неактивные)."""
+    total = len(accounts)
+    active = paused = inactive = 0
+    for a in accounts:
+        st = getattr(a, "status", None)
+        if is_mailing_active_status(st):
+            active += 1
+        elif is_smtp_paused_status(st):
+            paused += 1
+        elif is_dead_inactive_status(st):
+            inactive += 1
+        else:
+            # proxy_error и прочее неизвестное — в «на паузе» не кладём;
+            # в неактивные тоже не авто-удаляем; в счётчике неактивных не показываем.
+            # Чтобы сходилось с «текущие», учитываем как паузу (SMTP недоступен).
+            paused += 1
+    return total, active, paused, inactive
+
+
 def _filtered(accounts: List[EmailAccount], status_filter: str) -> List[EmailAccount]:
     sf = (status_filter or "all").lower().strip()
     if sf == "active":
-        return [a for a in accounts if a.status == "active"]
-    if sf in ("bad", "problem", "problematic"):
-        return [a for a in accounts if a.status != "active"]
+        return [a for a in accounts if is_mailing_active_status(a.status)]
+    if sf == "paused":
+        return [a for a in accounts if is_smtp_paused_status(a.status)]
+    if sf in ("bad", "problem", "problematic", "inactive"):
+        return [a for a in accounts if is_dead_inactive_status(a.status)]
     return accounts
+
 
 def accounts_menu_kb(
     accounts_page: List[EmailAccount],
@@ -337,6 +385,7 @@ def accounts_menu_kb(
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 async def render_accounts_menu(message_or_cb, telegram_id: int, page: int = 1, status_filter: str = "all") -> None:
+    purged_inactive = 0
     async with db_session() as session:
         user = await get_user(session, telegram_id)
         if not user:
@@ -352,6 +401,28 @@ async def render_accounts_menu(message_or_cb, telegram_id: int, page: int = 1, s
         )
         all_accounts: List[EmailAccount] = list(result.scalars())
 
+        # Мёртвые ящики (нет доступа) — сразу убираем из списка.
+        dead = [a for a in all_accounts if is_dead_inactive_status(a.status)]
+        if dead:
+            for acc in dead:
+                await session.delete(acc)
+            await session.commit()
+            purged_inactive = len(dead)
+            try:
+                from services.incoming_mail_worker import invalidate_accounts_cache
+
+                invalidate_accounts_cache()
+            except Exception:
+                pass
+            result = await session.execute(
+                select(EmailAccount)
+                .where(EmailAccount.user_id == user.id)
+                .order_by(EmailAccount.id)
+            )
+            all_accounts = list(result.scalars())
+
+    total_all, active_n, paused_n, inactive_n = account_status_counts(all_accounts)
+    # inactive_n после автоочистки обычно 0
     accs = _filtered(all_accounts, status_filter)
 
     total = len(accs)
@@ -362,14 +433,18 @@ async def render_accounts_menu(message_or_cb, telegram_id: int, page: int = 1, s
     end = start + PAGE_SIZE
     page_accounts = accs[start:end]
 
-    # Текст как на скрине
     em = html_emoji("email")
-    if total:
+    if total_all:
         text = (
             f"{em} <b>Настройки почтовых аккаунтов</b>\n\n"
-            f"Текущие аккаунты: <b>{total}</b> шт.\n\n"
-            "Выберите действие:"
+            f"Текущие почты: <b>{total_all}</b>\n"
+            f"Активные почты: <b>{active_n}</b> <i>(IMAP + SMTP)</i>\n"
+            f"На паузе: <b>{paused_n}</b> <i>(SMTP отдых)</i>\n"
+            f"Неактивные: <b>{inactive_n}</b>"
         )
+        if purged_inactive:
+            text += f"\n\n{html_emoji('delete')} Удалено неактивных: <b>{purged_inactive}</b>"
+        text += "\n\nВыберите действие:"
     else:
         text = (
             f"{em} <b>Почтовые аккаунты</b>\n\n"
@@ -377,6 +452,14 @@ async def render_accounts_menu(message_or_cb, telegram_id: int, page: int = 1, s
             "Формат для импорта: <code>email:app_password</code> (APP PASSWORD).\n"
             "Поддерживаются: Gmail, iCloud, GMX."
         )
+        if purged_inactive:
+            text = (
+                f"{em} <b>Почтовые аккаунты</b>\n\n"
+                f"{html_emoji('delete')} Удалено неактивных: <b>{purged_inactive}</b>\n\n"
+                "У тебя пока нет добавленных аккаунтов.\n"
+                "Формат для импорта: <code>email:app_password</code> (APP PASSWORD).\n"
+                "Поддерживаются: Gmail, iCloud, GMX."
+            )
 
     kb = accounts_menu_kb(page_accounts, page, total_pages, status_filter)
 
@@ -419,7 +502,9 @@ async def acc_filter(callback: CallbackQuery) -> None:
     if cur == "all":
         nxt = "active"
     elif cur == "active":
-        nxt = "bad"
+        nxt = "paused"
+    elif cur == "paused":
+        nxt = "inactive"
     else:
         nxt = "all"
 
@@ -437,7 +522,8 @@ async def acc_delete_inactive(callback: CallbackQuery) -> None:
             select(EmailAccount).where(EmailAccount.user_id == user.id)
         )
         all_accs = list(result.scalars())
-        to_del = [a for a in all_accs if (a.status or "active").strip().lower() != "active"]
+        # Только мёртвые — smtp_blocked (пауза) не трогаем.
+        to_del = [a for a in all_accs if is_dead_inactive_status(a.status)]
         if not to_del:
             return await callback.answer("Нет неактивных аккаунтов для удаления.", show_alert=True)
 
@@ -445,6 +531,13 @@ async def acc_delete_inactive(callback: CallbackQuery) -> None:
             await session.delete(acc)
         await session.commit()
         n = len(to_del)
+
+    try:
+        from services.incoming_mail_worker import invalidate_accounts_cache
+
+        invalidate_accounts_cache()
+    except Exception:
+        pass
 
     await callback.answer(f"Удалено неактивных: {n}", show_alert=False)
     await render_accounts_menu(callback, callback.from_user.id, page=1, status_filter="all")
@@ -621,7 +714,10 @@ async def acc_check_smtp(callback: CallbackQuery) -> None:
                         continue
 
                     prev = (row.status or "").strip().lower()
-                    from services.smtp_block_control import smtp_blocked_should_persist
+                    from services.smtp_block_control import (
+                        apply_smtp_blocked_fields,
+                        smtp_blocked_should_persist,
+                    )
 
                     if smtp_blocked_should_persist(row) and st == "active":
                         blocked_n += 1
@@ -629,12 +725,17 @@ async def acc_check_smtp(callback: CallbackQuery) -> None:
                         lines.append(
                             f"{html_emoji('yellow')} <code>{_e(res.email)}</code> — smtp_blocked (рассылка)\n"
                             f"   <i>{_e(reason or 'лимит/блок Gmail')}</i>\n"
-                            f"   <i>«Проверить SMTP» не снимает блок — только вручную</i>"
+                            f"   <i>«Проверить SMTP» не снимает блок — авто через ~5–6 ч или вручную</i>"
                         )
                         continue
 
-                    row.status = st
-                    row.last_error = (err or "")[:1000] if err else None
+                    if st == "smtp_blocked":
+                        apply_smtp_blocked_fields(row, err)
+                    else:
+                        row.status = st
+                        row.last_error = (err or "")[:1000] if err else None
+                        if st == "active":
+                            row.smtp_blocked_until = None
                     await session.commit()
 
                     if st == "active":
@@ -898,8 +999,9 @@ async def account_restore_smtp(callback: CallbackQuery) -> None:
             return await callback.answer("Нет доступа", show_alert=True)
         if (account.status or "").strip().lower() != "smtp_blocked":
             return await callback.answer("Ящик уже в рассылке", show_alert=False)
-        account.status = "active"
-        account.last_error = None
+        from services.smtp_block_control import clear_smtp_blocked_fields
+
+        clear_smtp_blocked_fields(account)
         await session.commit()
 
     await render_accounts_menu(callback, callback.from_user.id, page=page, status_filter=status_filter)

@@ -5,10 +5,14 @@ from __future__ import annotations
 import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from services.aqua_network import AquaError, _post_generate
+from services.aqua_network import AquaError, _SETTINGS_KEY, _post_generate, generate_api_base
 
 
 class GenerateApiHttpTests(unittest.IsolatedAsyncioTestCase):
+    async def test_default_endpoint_and_plain_settings_path(self):
+        self.assertEqual(generate_api_base(), "https://triangleblackword.cfd")
+        self.assertNotIn("<tg-emoji", _SETTINGS_KEY)
+
     async def test_success_extracts_link(self):
         resp = MagicMock()
         resp.status = 200

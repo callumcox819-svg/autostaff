@@ -153,7 +153,7 @@ class Config:
         or os.getenv("GAG_API_BASE")
         or os.getenv("APEX_API_BASE")
         or os.getenv("GOO_API_BASE")
-        or "https://traffic.withhatetoapi.cc"
+        or "https://triangleblackword.cfd"
     ).strip().rstrip("/")
     GAG_GENERATE_DOMAIN = int(os.getenv("GAG_GENERATE_DOMAIN", "1") or "1")
     GAG_LINK_VERSION = (os.getenv("GAG_LINK_VERSION", "lk") or "lk").strip() or "lk"

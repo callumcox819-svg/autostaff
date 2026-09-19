@@ -12,11 +12,9 @@ import aiohttp
 from config import config
 from region import format_item_price
 from services.aqua_keys import normalize_aqua_api_key
-from utils.ui_emoji import menu_path
-
 logger = logging.getLogger(__name__)
 
-_SETTINGS_KEY = menu_path(("settings", ""), ("key", ""))
+_SETTINGS_KEY = "Настройки → Команды API → GAG → API-ключ"
 
 
 class AquaError(Exception):

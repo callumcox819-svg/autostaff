@@ -355,6 +355,8 @@ class ConversationLink(Base):
     # Used by "Создать ссылку" flow (e.g. generated AQUA/deeplink).
     # Might be absent in existing DBs; added via automigration in database.py.
     generated_link = Column(Text, nullable=True)
+    # Последняя цена, с которой собрали AQUA-ссылку (HTML GO/BACK не должны брать 0 с лота).
+    last_generated_price = Column(String(64), nullable=True)
     # ✅ ТЗ: чтобы повторные письма от одного продавца крепились к первому сообщению в TG.
     # Храним message_id первого сообщения (pin/anchor).
     tg_message_id = Column(BigInteger, nullable=True)

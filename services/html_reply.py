@@ -200,8 +200,19 @@ async def build_offer_html_ctx(
     except Exception:
         pass
 
-    # Сначала цена с письма/кнопки «Цена», потом оффер (0 от parse отбрасываем).
-    price = _pick_non_zero_price(mail_price, offer_price_raw, currency=currency)
+    pin_price = ""
+    try:
+        inbox = (getattr(mail, "account_email", None) or "").strip() if mail is not None else ""
+        pin_link, pin_price = await load_dialog_html_pin(
+            session, int(user_id), inbox_email=inbox, seller_email=seller_email
+        )
+        if pin_link and not (link or "").strip():
+            link = pin_link
+    except Exception:
+        pin_price = ""
+
+    # Последняя сгенерированная цена (кнопка «Цена») важнее 0 € с parse лота.
+    price = _pick_non_zero_price(pin_price, mail_price, offer_price_raw, currency=currency)
 
     if not photo and user is not None:
         try:
@@ -226,6 +237,43 @@ async def build_offer_html_ctx(
     }
 
 
+async def _get_conversation_link(session, user_id: int, inbox_email: str, seller_email: str):
+    from sqlalchemy import func, select
+
+    from models import ConversationLink
+
+    inbox = _canon_email(inbox_email)
+    seller = _canon_email(seller_email)
+    if not inbox or not seller:
+        return None
+    return (
+        await session.execute(
+            select(ConversationLink)
+            .where(ConversationLink.user_id == int(user_id))
+            .where(func.lower(ConversationLink.account_email) == inbox)
+            .where(func.lower(ConversationLink.from_email) == seller)
+            .order_by(ConversationLink.id.desc())
+            .limit(1)
+        )
+    ).scalars().first()
+
+
+async def load_dialog_html_pin(
+    session,
+    user_id: int,
+    *,
+    inbox_email: str,
+    seller_email: str,
+) -> tuple[str, str]:
+    """Последняя AQUA-ссылка и цена диалога (после «Создать ссылку» / смены цены)."""
+    conv = await _get_conversation_link(session, user_id, inbox_email, seller_email)
+    if not conv:
+        return "", ""
+    link = (getattr(conv, "generated_link", None) or "").strip()
+    price = (getattr(conv, "last_generated_price", None) or "").strip()
+    return link, price
+
+
 async def resolve_aqua_link_for_reply(
     session,
     user_id: int,
@@ -234,26 +282,10 @@ async def resolve_aqua_link_for_reply(
     seller_email: str,
     mail_generated_link: str | None = None,
 ) -> str:
-    """AQUA-ссылка из ConversationLink или из письма после «Создать ссылку»."""
-    from sqlalchemy import select
-
-    from models import ConversationLink
-
-    link = (mail_generated_link or "").strip()
-    if link:
-        return link
-
-    inbox = _canon_email(account_email)
-    seller = _canon_email(seller_email)
-    if inbox and seller:
-        conv = (
-            await session.execute(
-                select(ConversationLink)
-                .where(ConversationLink.user_id == int(user_id))
-                .where(ConversationLink.account_email == inbox)
-                .where(ConversationLink.from_email == seller)
-            )
-        ).scalar_one_or_none()
-        if conv and conv.generated_link:
-            return str(conv.generated_link).strip()
-    return ""
+    """AQUA-ссылка: сначала последняя на диалоге, иначе с конкретного письма."""
+    pin_link, _ = await load_dialog_html_pin(
+        session, int(user_id), inbox_email=account_email, seller_email=seller_email
+    )
+    if pin_link:
+        return pin_link
+    return (mail_generated_link or "").strip()

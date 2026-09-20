@@ -231,5 +231,80 @@ class HtmlCtxBuyerTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Hergiswil", addr)
 
 
+class HtmlDialogPinTests(unittest.IsolatedAsyncioTestCase):
+    async def test_resolve_link_prefers_conversation_over_stale_mail(self):
+        from services.html_reply import resolve_aqua_link_for_reply
+
+        session = AsyncMock()
+        conv = SimpleNamespace(
+            generated_link="https://new.example/95",
+            last_generated_price="95.00 EUR",
+        )
+        exec_r = MagicMock()
+        exec_r.scalars.return_value.first.return_value = conv
+        session.execute = AsyncMock(return_value=exec_r)
+        link = await resolve_aqua_link_for_reply(
+            session,
+            1,
+            account_email="inbox@gmail.com",
+            seller_email="seller@gmail.com",
+            mail_generated_link="https://old.example/0",
+        )
+        self.assertEqual(link, "https://new.example/95")
+
+    async def test_html_ctx_uses_pinned_price_not_listing_zero(self):
+        session = AsyncMock()
+        session.get = AsyncMock(return_value=SimpleNamespace(id=1))
+        offer = SimpleNamespace(
+            id=10,
+            title="TUNTURI",
+            price="0 €",
+            photo="",
+            raw_json='{"item_title":"TUNTURI","item_price":"0 €"}',
+            user_id=1,
+        )
+        mail = SimpleNamespace(
+            resolved_offer_id=10,
+            product_title="TUNTURI",
+            offer_price="0 €",
+            photo_url="",
+            account_email="inbox@gmail.com",
+        )
+        conv = SimpleNamespace(
+            generated_link="https://new.example/95",
+            last_generated_price="95.00 EUR",
+        )
+
+        async def _exec(_stmt):
+            sql = str(_stmt)
+            out = MagicMock()
+            if "conversation_links" in sql.lower() or "ConversationLink" in sql:
+                out.scalars.return_value.first.return_value = conv
+            else:
+                out.scalars.return_value.first.return_value = offer
+            return out
+
+        session.execute = AsyncMock(side_effect=_exec)
+        with (
+            patch(
+                "services.aqua_keys.resolve_html_buyer_profile",
+                new=AsyncMock(return_value=("Maria", "Amsterdam")),
+            ),
+            patch(
+                "services.html_reply.get_spoof_display_name",
+                new=AsyncMock(return_value=""),
+            ),
+            patch(
+                "services.enabled_countries.get_active_country",
+                new=AsyncMock(return_value="nl"),
+            ),
+        ):
+            ctx = await build_offer_html_ctx(
+                session, 1, "seller@gmail.com", link="", mail=mail
+            )
+        self.assertIn("95", ctx["PRICE"])
+        self.assertNotIn("EUR 0", ctx["PRICE"])
+
+
 if __name__ == "__main__":
     unittest.main()

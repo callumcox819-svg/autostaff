@@ -414,6 +414,9 @@ async def _ensure_conversation_links_generated_link_column() -> None:
 
     async with engine.begin() as conn:
         await conn.execute(text("ALTER TABLE conversation_links ADD COLUMN IF NOT EXISTS generated_link TEXT"))
+        await conn.execute(
+            text("ALTER TABLE conversation_links ADD COLUMN IF NOT EXISTS last_generated_price VARCHAR(64)")
+        )
 
 
 async def _ensure_offers_raw_json_column() -> None:

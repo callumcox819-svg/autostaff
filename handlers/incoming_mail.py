@@ -1730,6 +1730,7 @@ async def _upsert_convlink(
     contact_email: str,
     ad_url: str | None = None,
     generated_link: str | None = None,
+    generated_price: str | None = None,
     pinned_offer_id: int | None = None,
 ) -> None:
     """
@@ -1757,6 +1758,7 @@ async def _upsert_convlink(
             from_email=contact,
             ad_url=(ad_url or "").strip() or None,
             generated_link=(generated_link or "").strip() or None,
+            last_generated_price=(generated_price or "").strip()[:64] or None,
             pinned_offer_id=int(pinned_offer_id) if pinned_offer_id else None,
         )
         session.add(conv)
@@ -1765,9 +1767,46 @@ async def _upsert_convlink(
             conv.ad_url = (ad_url or "").strip() or conv.ad_url
         if generated_link:
             conv.generated_link = (generated_link or "").strip() or conv.generated_link
+        if generated_price:
+            conv.last_generated_price = (generated_price or "").strip()[:64] or conv.last_generated_price
         if pinned_offer_id:
             conv.pinned_offer_id = int(pinned_offer_id)
     await session.commit()
+
+
+async def _pin_generated_link_on_dialog_mails(
+    session,
+    *,
+    user_id: int,
+    inbox_email: str,
+    contact_email: str,
+    generated_link: str,
+    generated_price: str | None = None,
+    offer_id: int | None = None,
+) -> None:
+    """Все письма диалога получают последнюю ссылку/цену для HTML."""
+    inbox = _canon_email(inbox_email)
+    contact = _canon_email(contact_email)
+    link = (generated_link or "").strip()
+    if not link or not inbox or not contact:
+        return
+    values: dict = {"generated_link": link}
+    price = (generated_price or "").strip()[:64]
+    if price:
+        values["offer_price"] = price
+    conds = [
+        IncomingMail.user_id == int(user_id),
+        func.lower(IncomingMail.account_email) == inbox,
+        func.lower(IncomingMail.from_email) == contact,
+    ]
+    await session.execute(sa_update(IncomingMail).where(*conds).values(**values))
+    if offer_id:
+        await session.execute(
+            sa_update(IncomingMail)
+            .where(IncomingMail.user_id == int(user_id))
+            .where(IncomingMail.resolved_offer_id == int(offer_id))
+            .values(**values)
+        )
 
 
 async def _offer_link_by_sender_email(session, user_id: int, from_email: str) -> str | None:
@@ -2281,7 +2320,17 @@ async def _create_aqua_link_from_db_work_impl(
             contact_email=contact_email,
             ad_url=url,
             generated_link=aqua_url,
+            generated_price=str(price) if price else None,
             pinned_offer_id=offer_id,
+        )
+        await _pin_generated_link_on_dialog_mails(
+            session,
+            user_id=int(tg_user.id),
+            inbox_email=inbox_email,
+            contact_email=contact_email,
+            generated_link=aqua_url,
+            generated_price=str(price) if price else None,
+            offer_id=offer_id,
         )
         mail.generated_link = aqua_url
         if offer_id:
@@ -2560,7 +2609,17 @@ async def _create_aqua_link_work(callback: CallbackQuery, acc_id: int, uid: str,
             contact_email=contact_email,
             ad_url=url,
             generated_link=aqua_url,
+            generated_price=str(price) if price else None,
             pinned_offer_id=offer_id,
+        )
+        await _pin_generated_link_on_dialog_mails(
+            session,
+            user_id=int(owner_user_id),
+            inbox_email=inbox_email,
+            contact_email=contact_email,
+            generated_link=aqua_url,
+            generated_price=str(price) if price else None,
+            offer_id=offer_id,
         )
         if mail:
             mail.generated_link = aqua_url
@@ -4064,14 +4123,24 @@ async def _regenerate_aqua_link_after_price(
                 contact_email=contact_email,
                 ad_url=ad_url or None,
                 generated_link=aqua_url,
+                generated_price=new_price,
             )
-
-        await session.execute(
-            sa_update(IncomingMail)
-            .where(IncomingMail.user_id == int(user.id))
-            .where(IncomingMail.resolved_offer_id == int(offer.id))
-            .values(generated_link=aqua_url, offer_price=new_price)
-        )
+            await _pin_generated_link_on_dialog_mails(
+                session,
+                user_id=int(user.id),
+                inbox_email=inbox_email,
+                contact_email=contact_email,
+                generated_link=aqua_url,
+                generated_price=new_price,
+                offer_id=int(offer.id),
+            )
+        else:
+            await session.execute(
+                sa_update(IncomingMail)
+                .where(IncomingMail.user_id == int(user.id))
+                .where(IncomingMail.resolved_offer_id == int(offer.id))
+                .values(generated_link=aqua_url, offer_price=new_price)
+            )
         await session.commit()
 
         card = {

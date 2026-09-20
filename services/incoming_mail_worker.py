@@ -2308,7 +2308,11 @@ async def _process_mails_for_account_impl(
                             if saved_product_title:
                                 existing.product_title = saved_product_title[:500]
                             if saved_offer_price:
-                                existing.offer_price = saved_offer_price[:64]
+                                from services.html_reply import _format_html_price
+
+                                incoming_ok = bool(_format_html_price(saved_offer_price))
+                                if incoming_ok or not (existing.offer_price or "").strip():
+                                    existing.offer_price = saved_offer_price[:64]
                             if saved_photo_url:
                                 existing.photo_url = saved_photo_url[:2000]
                             if saved_service_label:
@@ -2318,7 +2322,32 @@ async def _process_mails_for_account_impl(
                             "Validated offer bind IncomingMail id=%s acc=%s uid=%s",
                             mail_db_id,
                             acc_id,
-                            uid_key,
+                            uid_num,
+                        )
+                    try:
+                        conv_pin = (
+                            await session.execute(
+                                sa_select(ConversationLink).where(
+                                    ConversationLink.user_id == int(user_id),
+                                    func.lower(ConversationLink.account_email)
+                                    == inbox_email_clean.lower(),
+                                    func.lower(ConversationLink.from_email)
+                                    == from_email_clean.lower(),
+                                )
+                            )
+                        ).scalars().first()
+                        if conv_pin:
+                            pin_link = (getattr(conv_pin, "generated_link", None) or "").strip()
+                            pin_price = (
+                                getattr(conv_pin, "last_generated_price", None) or ""
+                            ).strip()
+                            if pin_link:
+                                existing.generated_link = pin_link
+                            if pin_price:
+                                existing.offer_price = pin_price[:64]
+                    except Exception:
+                        logger.exception(
+                            "Failed pin last generated link acc=%s uid=%s", acc_id, uid_num
                         )
 
                     if not smtp_block_bounce and not mailer_daemon:

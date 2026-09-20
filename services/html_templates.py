@@ -7,6 +7,7 @@ from pathlib import Path
 from region import HTML_DATA_DIR
 from services.aqua_keys import (
     aqua_service_for_html_dir,
+    html_dir_for_service,
     is_valid_aqua_service,
     normalize_aqua_service,
 )
@@ -22,12 +23,13 @@ def html_subdir_for_service(service_code: str | None) -> str | None:
     code = (service_code or "").strip().lower()
     if not code:
         return None
-    if (HTML_ROOT / code / "confirmation.html").is_file():
-        return code
+    mapped = html_dir_for_service(code)
+    if mapped:
+        return mapped
     if not is_valid_aqua_service(code):
         return None
     sub = aqua_service_for_html_dir(code)
-    return sub or None
+    return html_dir_for_service(sub) or sub or None
 
 
 def html_template_path(service_code: str | None, filename: str) -> Path | None:

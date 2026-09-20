@@ -250,7 +250,10 @@ async def _spoof_name_menu_payload(tg_user_id: int) -> tuple[str, InlineKeyboard
 
         service = await resolve_html_service(session, user)
         if not is_valid_aqua_service(service):
-            return None
+            from services.aqua_keys import html_dir_for_service
+
+            if not html_dir_for_service(service):
+                return None
         key = _html_nick_key_for_service(service)
         cur = (await get_scoped_setting(session, user, key) or "").strip()
 
@@ -304,7 +307,10 @@ async def spoof_name_menu(callback: CallbackQuery, state: FSMContext) -> None:
     await state.clear()
     payload = await _spoof_name_menu_payload(callback.from_user.id)
     if not payload:
-        return await callback.answer("Сначала выберите сервис в профиле", show_alert=True)
+        return await callback.answer(
+            "Нет HTML-шаблона для выбранной страны/площадки.",
+            show_alert=True,
+        )
     text, kb = payload
     await _cq_edit_text(callback, text, reply_markup=kb)
     await callback.answer()
@@ -318,7 +324,13 @@ async def spoof_name_set(callback: CallbackQuery, state: FSMContext) -> None:
 
         service = await resolve_html_service(session, user)
         if not is_valid_aqua_service(service):
-            return await callback.answer("Сначала выберите сервис в профиле", show_alert=True)
+            from services.aqua_keys import html_dir_for_service
+
+            if not html_dir_for_service(service):
+                return await callback.answer(
+                    "Нет HTML-шаблона для выбранной страны/площадки (DE: Kleinanzeigen).",
+                    show_alert=True,
+                )
     await state.set_state(SpoofNameState.waiting_name)
     await state.update_data(
         service=service,

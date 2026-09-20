@@ -50,8 +50,9 @@ class AquaHtmlRoutingTests(unittest.TestCase):
             self.assertTrue(ht.html_template_path("laendleanzeiger_at", "confirmation.html"))
             self.assertEqual(ht.html_subdir_for_service("laendleanzeiger_at"), "laendleanzeiger_at")
             self.assertIn("laendleanzeiger_at", ak.AQUA_SERVICE_CHOICES)
-            # чужой сервис без папки — не валиден
-            self.assertIsNone(ak.normalize_aqua_service("kleinanzeigen_de"))
+            self.assertEqual(ak.normalize_aqua_service("kleinanzeigen_de"), "kleinanzeigen_de")
+            self.assertTrue(ht.html_template_path("kleinanzeigen_de", "confirmation.html"))
+            self.assertIsNone(ak.normalize_aqua_service("no_such_market_xx"))
 
     def test_env_services_and_html_dir(self):
         with patch.dict(os.environ, {"AQUA_SERVICES": "demo_mkt", "HTML_DATA_DIR": "HTML"}, clear=False):
@@ -93,6 +94,29 @@ class AquaHtmlCountrySyncTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result, "ricardo_ch")
         write.assert_awaited_once_with(session, user, "aqua_service", "ricardo_ch")
 
+    async def test_germany_hustle_resolves_kleinanzeigen_html(self):
+        from services.aqua_keys import is_valid_aqua_service, resolve_html_service
+        from services.html_templates import html_template_path
+
+        session = AsyncMock()
+        user = SimpleNamespace(id=1)
+        cfg = SimpleNamespace(team_id="hustle", service_code="kleinanzeigen_de")
+        with (
+            patch(
+                "services.enabled_countries.get_active_country",
+                new=AsyncMock(return_value="de"),
+            ),
+            patch(
+                "services.api_teams.get_selected_team_config",
+                new=AsyncMock(return_value=cfg),
+            ),
+        ):
+            svc = await resolve_html_service(session, user)
+        self.assertEqual(svc, "kleinanzeigen_de")
+        self.assertTrue(is_valid_aqua_service(svc))
+        self.assertTrue(html_template_path(svc, "confirmation.html"))
+
 
 if __name__ == "__main__":
     unittest.main()
+

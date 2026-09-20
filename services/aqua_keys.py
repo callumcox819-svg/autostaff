@@ -57,6 +57,26 @@ def _services_from_html_dirs() -> tuple[str, ...]:
     return tuple(out)
 
 
+# Логический код площадки → папка data/HTML/, если своей ещё нет.
+HTML_SERVICE_ALIASES: dict[str, str] = {
+    "kleinanzeigen_de": "ebay_de",
+    "kleinanzeigenverif_de": "ebay_de",
+}
+
+
+def html_dir_for_service(code: str | None) -> str | None:
+    """Папка шаблона: своя confirmation.html или alias (DE Kleinanzeigen → ebay_de)."""
+    s = (code or "").strip().lower()
+    if not s:
+        return None
+    if _html_confirmation_exists(s):
+        return s
+    alias = HTML_SERVICE_ALIASES.get(s)
+    if alias and _html_confirmation_exists(alias):
+        return alias
+    return None
+
+
 def _html_confirmation_exists(code: str) -> bool:
     root = Path("data") / (HTML_DATA_DIR or "HTML") / code
     return (root / "confirmation.html").is_file()
@@ -71,8 +91,8 @@ def normalize_aqua_service(code: str | None) -> str | None:
         return None
     if AQUA_SERVICE_CHOICES and s in AQUA_SERVICE_CHOICES:
         return s
-    # Папка добавлена позже (без рестарта) — data/HTML/<service>/confirmation.html
-    if _html_confirmation_exists(s):
+    # Папка добавлена позже (без рестарта) или alias Kleinanzeigen → ebay_de
+    if html_dir_for_service(s):
         return s
     return None
 
@@ -154,8 +174,14 @@ async def resolve_html_service(session, user: User) -> str:
         candidates.append("willhaben_at")
     if cc == "ch" and not svc:
         candidates.append("ricardo_ch")
+    if cc == "de" and not svc:
+        candidates.append("kleinanzeigen_de")
+    if cc == "nl" and not svc:
+        candidates.append("marktplaats_nl")
     for raw in (
         svc,
+        f"kleinanzeigen_{cc}",
+        f"ebay_{cc}",
         f"ricardo_{cc}",
         f"tutti_{cc}",
         f"anibis_{cc}",
@@ -164,16 +190,19 @@ async def resolve_html_service(session, user: User) -> str:
         f"laendleanzeiger_{cc}",
         f"marktplaats_{cc}",
         cc,
+        "kleinanzeigen_de" if cc == "de" else "",
+        "ebay_de" if cc == "de" else "",
         "marktplaats_nl" if cc == "nl" else "",
+        "ricardo_ch" if cc == "ch" else "",
     ):
         code = (raw or "").strip().lower()
         if code and code not in candidates:
             candidates.append(code)
     for code in candidates:
-        if _html_confirmation_exists(code):
+        if html_dir_for_service(code):
             return code
         n = normalize_aqua_service(code)
-        if n and _html_confirmation_exists(n):
+        if n and html_dir_for_service(n):
             return n
     # Не подставляем HTML другой страны. Если папки нет, вызывающий код покажет
     # ошибку для текущей country/platform вместо отправки NL-шаблона.
@@ -184,7 +213,7 @@ async def resolve_html_service(session, user: User) -> str:
     if cc == "at":
         return "willhaben_at"
     if cc == "de":
-        return "ebay_de"
+        return "kleinanzeigen_de"
     if cc == "nl":
         return "marktplaats_nl"
     return cc

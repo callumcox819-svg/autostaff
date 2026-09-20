@@ -66,16 +66,25 @@ class GmailSenderBlockBounceTests(unittest.TestCase):
             )
         )
 
-    def test_recipient_not_found_is_not_sender_block(self):
+    def test_recipient_inbox_full_is_not_sender_block(self):
+        from services.bounce_recipient import is_recipient_delivery_failure_bounce
         from services.incoming_mail_worker import _is_smtp_block_bounce
 
+        body = (
+            "** Kotak masuk penerima penuh **\n"
+            "Pesan Anda tidak dapat dikirim ke klimtuin@gmail.com. "
+            "Kotak masuknya penuh.\n"
+            "https://support.google.com/mail/?p=OverQuotaPerm\n"
+            "552 5.2.2 The recipient's inbox is out of storage space"
+        )
         self.assertFalse(
             _is_smtp_block_bounce(
                 "mailer-daemon@googlemail.com",
                 "Delivery Status Notification (Failure)",
-                "Address not found. Your message wasn't delivered to x@gmail.com",
+                body,
             )
         )
+        self.assertTrue(is_recipient_delivery_failure_bounce("Delivery Status Notification (Failure)", body))
 
 
 if __name__ == "__main__":

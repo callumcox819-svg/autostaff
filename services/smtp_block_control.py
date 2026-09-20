@@ -162,7 +162,6 @@ def is_smtp_account_block_error(err: str | None) -> bool:
         "sending limit exceeded",
         "user sending limit",
         "too many messages",
-        "mailbox full",
         "account has been disabled",
         "5.4.5",
         "5.7.1",

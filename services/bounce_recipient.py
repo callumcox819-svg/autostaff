@@ -27,6 +27,19 @@ _RECIPIENT_FAIL_PHRASES = (
     "550 5.1.1",
     "5.5.0 requested action not taken",
     "requested action not taken: mailbox unavailable",
+    "recipient's inbox is out of storage",
+    "inbox is out of storage",
+    "overquotaperm",
+    "5.2.2",
+    "mailbox full",
+    "inbox is full",
+    "kotak masuk penerima penuh",
+    "kotak masuknya penuh",
+    "berisi terlalu banyak email",
+    "postvak van de ontvanger is vol",
+    "postvak is vol",
+    "postfach des empfängers ist voll",
+    "boîte du destinataire est pleine",
 )
 
 _BOUNCE_EMAIL_PATTERNS = (

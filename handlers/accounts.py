@@ -46,7 +46,6 @@ class AccountsAddStates(StatesGroup):
 
 
 class AccountsQuickGmailStates(StatesGroup):
-    waiting_sender_name = State()
     waiting_gmail_creds = State()
 
 # ===========================
@@ -801,7 +800,7 @@ def _is_gmail_address(email: str) -> bool:
 
 async def _quick_gmail_begin(message: Message, state: FSMContext) -> None:
     await state.clear()
-    await state.set_state(AccountsQuickGmailStates.waiting_sender_name)
+    await state.set_state(AccountsQuickGmailStates.waiting_gmail_creds)
     kb = InlineKeyboardMarkup(
         inline_keyboard=[
             [back_inline("settings_accounts", text="К списку аккаунтов")],
@@ -809,9 +808,12 @@ async def _quick_gmail_begin(message: Message, state: FSMContext) -> None:
     )
     await message.answer(
         f"{html_emoji('burst')} <b>Быстрое добавление (Gmail)</b>\n\n"
-        "<b>Шаг 1/2.</b> Введите <b>имя и фамилию</b> для отправки писем\n"
-        "(например: <code>Maria Johansen</code>).\n\n"
-        "Отмена: отправьте <code>-</code>",
+        "Отправьте Gmail-аккаунты:\n"
+        "<code>email@gmail.com:app_password</code>\n\n"
+        "Каждый аккаунт — с новой строки (можно несколько).\n"
+        "<b>app_password</b> — пароль приложения Google.\n\n"
+        f"Имя From задаётся в Настройки → <b>Имя отправителя</b>.\n\n"
+        "Отмена: <code>-</code>",
         reply_markup=kb,
         parse_mode="HTML",
     )
@@ -836,44 +838,12 @@ async def quick_gmail_open_cb(callback: CallbackQuery, state: FSMContext) -> Non
     await _quick_gmail_begin(callback.message, state)
 
 
-@router.message(AccountsQuickGmailStates.waiting_sender_name)
-async def quick_gmail_sender_name(message: Message, state: FSMContext) -> None:
-    raw = (message.text or "").strip()
-    if raw == "-":
-        await state.clear()
-        return await message.answer(f"{html_emoji('fail')} Отменено.")
-    words = [w for w in raw.split() if w.strip()]
-    if len(words) < 2:
-        return await message.answer(
-            "Укажите имя и фамилию через пробел (минимум 2 слова).\n"
-            "Пример: <code>Maria Johansen</code>",
-            parse_mode="HTML",
-        )
-    await state.update_data(quick_sender_name=raw)
-    await state.set_state(AccountsQuickGmailStates.waiting_gmail_creds)
-    await message.answer(
-        f"{html_emoji('ok')} Имя сохранено.\n\n"
-        "<b>Шаг 2/2.</b> Отправьте Gmail-аккаунты:\n"
-        "<code>email@gmail.com:app_password</code>\n\n"
-        "Каждый аккаунт — с новой строки (можно несколько).\n"
-        "<b>app_password</b> — пароль приложения Google.\n\n"
-        "Отмена: <code>-</code>",
-        parse_mode="HTML",
-    )
-
-
 @router.message(AccountsQuickGmailStates.waiting_gmail_creds)
 async def quick_gmail_creds(message: Message, state: FSMContext) -> None:
     raw = message.text or ""
     if raw.strip() == "-":
         await state.clear()
         return await message.answer(f"{html_emoji('fail')} Отменено.")
-
-    data = await state.get_data()
-    sender_name = (data.get("quick_sender_name") or "").strip()
-    if not sender_name:
-        await state.clear()
-        return await message.answer(f"Сессия сброшена. Начните с «{html_emoji('burst')} Быстрое добавление».")
 
     lines = [ln.strip() for ln in raw.splitlines() if ln.strip()]
     if not lines:
@@ -894,16 +864,17 @@ async def quick_gmail_creds(message: Message, state: FSMContext) -> None:
                 session.add(user)
                 await session.commit()
                 await session.refresh(user)
-            user.sender_name = sender_name
             ok_count, fail_count, details = await _bulk_add_accounts(
                 message, session, user, lines, gmail_only=True,
             )
             await session.commit()
+            from_name = (getattr(user, "sender_name", None) or "").strip() or "—"
         summary = (
             f"{html_emoji('burst')} <b>Готово</b>\n\n"
-            f"Имя отправителя: <b>{_e(sender_name)}</b>\n"
             f"Аккаунтов добавлено: <b>{ok_count}</b>\n"
-            f"Ошибок: <b>{fail_count}</b>\n\n"
+            f"Ошибок: <b>{fail_count}</b>\n"
+            f"Имя отправителя: <b>{_e(from_name)}</b> "
+            f"(Настройки → Имя отправителя)\n\n"
             + _trim_details(details)
         )
         await message.answer(summary, parse_mode="HTML")

@@ -169,6 +169,7 @@ class _SettingsInput(StatesGroup):
     subject_template = State()
     priority = State()
     html_theme = State()
+    sender_name = State()
 
 
 def settings_menu_kb(flags: dict[str, bool]) -> InlineKeyboardMarkup:
@@ -190,6 +191,9 @@ def settings_menu_kb(flags: dict[str, bool]) -> InlineKeyboardMarkup:
             [
                 toggle_button(flags.get("spoofing", False), "Спуфинг", "ref_toggle:spoofing"),
                 inline_button("profile", "Имя для\nспуфинга", callback_data="spoof_name_menu"),
+            ],
+            [
+                inline_button("write", "Имя\nотправителя", callback_data="sender_name_menu"),
             ],
             [
                 toggle_button(
@@ -409,12 +413,61 @@ async def sender_name_menu(callback: CallbackQuery) -> None:
     )
     await callback.message.edit_text(
         f"{html_emoji('write')} <b>Имя отправителя</b>\n\n"
-        f"Текущее имя: <code>{current}</code>\n\n"
+        f"Текущее имя: <code>{html.escape(current)}</code>\n\n"
+        "Это From для рассылки, тест-маила и обычных ответов "
+        "(не HTML-спуф).\n"
         "Нажми «Установить», чтобы задать другое.",
         reply_markup=kb,
         parse_mode="HTML",
     )
     await callback.answer()
+
+
+@router.callback_query(F.data == "sender_name_set")
+async def sender_name_set_start(callback: CallbackQuery, state: FSMContext) -> None:
+    await state.clear()
+    await state.set_state(_SettingsInput.sender_name)
+    await callback.message.edit_text(
+        f"{html_emoji('write')} <b>Имя отправителя</b>\n\n"
+        "Отправь имя и фамилию одним сообщением "
+        "(например: <code>Maria Johansen</code>).\n"
+        "«-» — очистить.",
+        reply_markup=InlineKeyboardMarkup(
+            inline_keyboard=_back_kb("sender_name_menu").inline_keyboard,
+        ),
+        parse_mode="HTML",
+    )
+    await callback.answer()
+
+
+@router.message(_SettingsInput.sender_name)
+async def sender_name_set_save(message: Message, state: FSMContext) -> None:
+    raw = (message.text or "").strip()
+    if not raw:
+        await message.answer(msg_fail("Пустое значение. Отправь ещё раз."), parse_mode="HTML")
+        return
+    if raw == "-":
+        value = ""
+    else:
+        words = [w for w in raw.split() if w.strip()]
+        if len(words) < 2:
+            await message.answer(
+                "Укажи имя и фамилию через пробел (минимум 2 слова).\n"
+                "Пример: <code>Maria Johansen</code>",
+                parse_mode="HTML",
+            )
+            return
+        value = raw
+    async with Session() as session:
+        user = await get_or_create_user(session, message.from_user.id)
+        user.sender_name = value or None
+        await session.commit()
+    await state.clear()
+    shown = html.escape(value) if value else "—"
+    await message.answer(
+        f"{msg_ok('Имя отправителя сохранено.')}\n<code>{shown}</code>",
+        parse_mode="HTML",
+    )
 
 
 @router.callback_query(F.data == "settings_templates")

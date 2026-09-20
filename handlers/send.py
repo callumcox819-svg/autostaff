@@ -224,7 +224,9 @@ async def _build_message_for_target(
 
     buyer_name = await get_user_profile_buyer_name(session, user)
     address = await get_user_profile_address(session, user)
-    sender_name = (getattr(user, "sender_name", None) or "").strip()
+    from services.users import load_live_sender_name
+
+    sender_name = await load_live_sender_name(session, telegram_id=tg_user_id)
     country = await get_active_country(session, user)
 
     from services.mailing_deliverability import (

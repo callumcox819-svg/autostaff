@@ -196,6 +196,9 @@ async def _send_pair(
     try:
         async with db_session() as session:
             subject, body = await build_message(session, tgt)
+            from services.users import load_live_sender_name
+
+            live_from = await load_live_sender_name(session, user_id=db_user_id)
         to_addr = (tgt.email or "").strip()
         ok, err, msgid = await _send_one_with_retry(
             db_user_id=db_user_id,
@@ -203,7 +206,7 @@ async def _send_pair(
             to_email=to_addr,
             subject=subject,
             body=body,
-            sender_name=sender_name,
+            sender_name=live_from or sender_name,
             sticky_proxy_id=sticky_proxy_id,
             per_letter_timeout_sec=per_letter_timeout_sec,
         )

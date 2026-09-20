@@ -308,7 +308,7 @@ async def mail_tmpl_send(callback: CallbackQuery, state: FSMContext):
                 _reply_thread_kwargs,
                 compose_threaded_reply_body,
             )
-            from services.html_reply import account_sender_display_name
+            from services.html_reply import live_account_sender_display_name
             from services.incoming_mail_worker import FULL_BODIES
 
             mid = mail_id or meta.get("_mail_id")
@@ -329,7 +329,7 @@ async def mail_tmpl_send(callback: CallbackQuery, state: FSMContext):
             parent_body = (getattr(mail_row, "body", None) or "").strip() if mail_row else ""
             if not parent_body and acc_id and uid:
                 parent_body = (FULL_BODIES.get((int(acc_id), str(uid))) or "").strip()
-            sender_name = account_sender_display_name(user)
+            sender_name = await live_account_sender_display_name(session, user)
             inbox_em = getattr(acc, "email", None) or meta.get("account_email") or ""
             body_copy = await compose_threaded_reply_body(
                 session,
@@ -371,7 +371,7 @@ async def mail_tmpl_send(callback: CallbackQuery, state: FSMContext):
                 (out_subject or "")[:80],
             )
             is_html_body = "<html" in body_copy.lower() or "<body" in body_copy.lower()
-            sender_name = account_sender_display_name(user)
+            sender_name = await live_account_sender_display_name(session, user)
             uid_db = int(user.id)
             inbox_em = getattr(acc, "email", None) or meta.get("account_email") or ""
             acc_password = getattr(acc, "password", None) or ""

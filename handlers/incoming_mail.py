@@ -2854,7 +2854,7 @@ async def cb_mail_reply_preset_send(callback: CallbackQuery, state: FSMContext):
             if not acc:
                 return False, "SMTP аккаунт не найден", None
             out_subject = _reply_subject(subject)
-            from services.html_reply import account_sender_display_name
+            from services.html_reply import live_account_sender_display_name
             from services.incoming_mail_worker import FULL_BODIES
 
             meta_now = FULL_META.get((acc_id, mail_uid)) or {}
@@ -2878,7 +2878,7 @@ async def cb_mail_reply_preset_send(callback: CallbackQuery, state: FSMContext):
                 )
             if not parent_body:
                 parent_body = (FULL_BODIES.get((int(acc_id), str(mail_uid))) or "").strip()
-            sender_name = account_sender_display_name(user)
+            sender_name = await live_account_sender_display_name(session, user)
             body_copy = await compose_threaded_reply_body(
                 session,
                 user_id=int(user.id),
@@ -3608,7 +3608,7 @@ async def mail_reply_text(message: Message, state: FSMContext):
             owner_user_id = await _get_acc_owner_user_id(session, acc_id)
             if owner_user_id and int(owner_user_id) != int(user.id):
                 return False, "Этот ящик не принадлежит вам.", None
-            from services.html_reply import account_sender_display_name
+            from services.html_reply import live_account_sender_display_name
 
             thread_kw = await _reply_thread_kwargs(
                 session,
@@ -3621,7 +3621,7 @@ async def mail_reply_text(message: Message, state: FSMContext):
                 account_email=getattr(acc, "email", None),
                 smtp_password=getattr(acc, "password", None),
             )
-            sender_name = account_sender_display_name(user)
+            sender_name = await live_account_sender_display_name(session, user)
             uid_db = int(user.id)
             inbox_em = getattr(acc, "email", None) or ""
             try:

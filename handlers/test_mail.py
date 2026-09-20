@@ -283,7 +283,9 @@ async def _build_test_message(
 
     buyer_name = await get_user_profile_buyer_name(session, user)
     address = await get_user_profile_address(session, user)
-    sender_name = (getattr(user, "sender_name", None) or "").strip()
+    from services.users import load_live_sender_name
+
+    sender_name = await load_live_sender_name(session, telegram_id=tg_id)
     country = await get_active_country(session, user)
 
     ctx = {
@@ -386,7 +388,9 @@ async def _run_mass_test(message: Message, tg_id: int) -> None:
                     subject, body, item_title = await _build_test_message(
                         session, tg_id=tg_id, user=user, offer=offer
                     )
-                    sender_name = getattr(user, "sender_name", None)
+                    from services.users import load_live_sender_name
+
+                    sender_name = await load_live_sender_name(session, user_id=user_id)
                     try:
                         session.expunge(account)
                     except Exception:

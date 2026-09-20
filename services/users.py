@@ -57,6 +57,23 @@ async def get_or_create_user(session: Session, telegram_id: int) -> User:
     return user
 
 
+async def load_live_sender_name(
+    session,
+    *,
+    user_id: int | None = None,
+    telegram_id: int | None = None,
+) -> str:
+    """Актуальное From-имя из БД (не кэш объекта на время BURST)."""
+    if user_id is not None:
+        stmt = select(User.sender_name).where(User.id == int(user_id))
+    elif telegram_id is not None:
+        stmt = select(User.sender_name).where(User.telegram_id == int(telegram_id))
+    else:
+        return ""
+    raw = (await session.execute(stmt)).scalar_one_or_none()
+    return (str(raw).strip() if raw else "")
+
+
 async def sync_config_admins_to_db() -> int:
     """При старте: ADMIN_IDS из env → is_admin в Postgres (переживает redeploy)."""
     admin_ids = {int(x) for x in (getattr(config, "ADMIN_IDS", []) or [])}

@@ -31,6 +31,18 @@ def account_sender_display_name(user: User) -> str | None:
     return name or None
 
 
+async def live_account_sender_display_name(session, user: User) -> str | None:
+    from services.users import load_live_sender_name
+
+    uid = getattr(user, "id", None)
+    name = ""
+    if uid:
+        name = await load_live_sender_name(session, user_id=int(uid))
+    if not name:
+        name = (getattr(user, "sender_name", None) or "").strip()
+    return sanitize_email_subject(name) or None
+
+
 async def get_html_sender_name(session, user: User) -> str | None:
     """
     HTML: при 🟢 Спуфинг — имя из «👤 Имя для спуфинга».
@@ -39,7 +51,7 @@ async def get_html_sender_name(session, user: User) -> str | None:
     spoof = await get_spoof_display_name(session, user)
     if spoof:
         return sanitize_email_subject(spoof)
-    return account_sender_display_name(user)
+    return await live_account_sender_display_name(session, user)
 
 
 async def prepare_html_body(html: str, session, user: User) -> str:

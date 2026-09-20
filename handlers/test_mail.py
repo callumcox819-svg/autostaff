@@ -37,13 +37,9 @@ EMAIL_RE = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
 TEST_MAIL_RECIPIENTS_KEY = "test_mail_recipients"
 MAX_TEST_RECIPIENTS = 4
 TEST_SEND_DELAY_SEC = 2.0
-TEST_SUBJECT_PREFIX = "[TEST] Re: "
-
-
 def _test_subject(subject: str) -> str:
-    """Помечает тестовую тему и имитирует Re: только в /testmail."""
-    clean = " ".join((subject or "").split()).strip()
-    return f"{TEST_SUBJECT_PREFIX}{clean or 'OFFER'}"
+    """Тема как у /send (уже Re: …)."""
+    return " ".join((subject or "").split()).strip() or "Re: OFFER"
 
 class TestMailStates(StatesGroup):
     waiting_recipients = State()
@@ -114,7 +110,7 @@ async def _menu_text(session, user: User) -> str:
         f"<b>{html_emoji('test_mail')} Тест маил</b>",
         "",
         "Текст — <b>как /send</b>: оффер из БД и умный пресет.",
-        "Тема теста: <code>[TEST] Re: + OFFER</code> (только здесь, /send не меняется).",
+        "Тема — как у /send: <code>Re: …</code>.",
         f"Получателей в списке: <b>{len(saved)}/{MAX_TEST_RECIPIENTS}</b>",
     ]
     if saved:

@@ -35,5 +35,48 @@ class SmtpBusyNotBlockTests(unittest.TestCase):
         self.assertFalse(is_smtp_account_block_error(err))
 
 
+class GmailSenderBlockBounceTests(unittest.TestCase):
+    def test_indonesian_pesan_diblokir_is_smtp_block(self):
+        from services.incoming_mail_worker import _is_smtp_block_bounce
+        from services.smtp_block_control import is_gmail_sender_block_text
+
+        body = (
+            "** Pesan diblokir **\n"
+            "Pesan Anda untuk dankbaar@gmail.com telah diblokir. "
+            "https://support.google.com/mail/answer/69585\n"
+            "Message rejected."
+        )
+        self.assertTrue(is_gmail_sender_block_text(body))
+        self.assertTrue(
+            _is_smtp_block_bounce(
+                "mailer-daemon@googlemail.com",
+                "Delivery Status Notification (Failure)",
+                body,
+            )
+        )
+
+    def test_english_message_blocked_still_matches(self):
+        from services.incoming_mail_worker import _is_smtp_block_bounce
+
+        self.assertTrue(
+            _is_smtp_block_bounce(
+                "mailer-daemon@googlemail.com",
+                "Delivery Status Notification (Failure)",
+                "Message blocked. Your message to x@gmail.com has been blocked.",
+            )
+        )
+
+    def test_recipient_not_found_is_not_sender_block(self):
+        from services.incoming_mail_worker import _is_smtp_block_bounce
+
+        self.assertFalse(
+            _is_smtp_block_bounce(
+                "mailer-daemon@googlemail.com",
+                "Delivery Status Notification (Failure)",
+                "Address not found. Your message wasn't delivered to x@gmail.com",
+            )
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

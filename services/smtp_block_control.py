@@ -21,6 +21,32 @@ from utils.ui_emoji import html_emoji
 
 logger = logging.getLogger(__name__)
 
+# Gmail «Message blocked» — любой язык интерфейса ящика (help 69585).
+GMAIL_SENDER_BLOCK_MARKERS: tuple[str, ...] = (
+    "message blocked",
+    "pesan diblokir",
+    "telah diblokir",
+    "bericht geblokkeerd",
+    "bericht is geblokkeerd",
+    "nachricht blockiert",
+    "nachricht wurde blockiert",
+    "mensaje bloqueado",
+    "mensagem bloqueada",
+    "messaggio bloccato",
+    "message bloqué",
+    "сообщение заблокировано",
+    "answer/69585",
+    "mail/answer/69585",
+    "5.7.1",
+)
+
+
+def is_gmail_sender_block_text(*parts: str) -> bool:
+    blob = " ".join(p or "" for p in parts).lower()
+    if not blob.strip():
+        return False
+    return any(m in blob for m in GMAIL_SENDER_BLOCK_MARKERS)
+
 _COOLDOWN_TASK: asyncio.Task | None = None
 
 
@@ -141,6 +167,9 @@ def is_smtp_account_block_error(err: str | None) -> bool:
         "5.4.5",
         "5.7.1",
         "message blocked",
+        "pesan diblokir",
+        "telah diblokir",
+        "answer/69585",
     )
     return any(p in t for p in phrases)
 

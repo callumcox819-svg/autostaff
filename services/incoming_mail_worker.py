@@ -420,16 +420,18 @@ def _is_recipient_delivery_failure_bounce(subject: str, body: str) -> bool:
 
 
 def _is_smtp_block_bounce(from_email: str, subject: str, body: str) -> bool:
-    """Gmail block / лимит — снимаем ящик с SMTP, оставляем IMAP."""
-    s = (subject or "").lower()
-    b = (body or "").lower()
+    """Gmail block отправителя (любой язык) — снимаем ящик с SMTP, IMAP оставляем."""
+    from services.smtp_block_control import is_gmail_sender_block_text
+
+    if not is_gmail_sender_block_text(subject, body):
+        return False
     f = (from_email or "").lower()
+    s = (subject or "").lower()
     if "mailer-daemon" in f or "postmaster" in f:
-        if "message blocked" in b or "5.7.1" in b:
-            return True
-    if "message blocked" in s or "5.7.1" in s:
         return True
-    return False
+    if "delivery status notification" in s:
+        return True
+    return "message blocked" in s or "pesan diblokir" in s
 
 
 def _truthy(v: str | None) -> bool:

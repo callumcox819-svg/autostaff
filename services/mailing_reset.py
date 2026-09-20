@@ -7,8 +7,8 @@ from datetime import datetime, timezone
 
 from sqlalchemy import delete, select
 
-from models import Offer, OfferEmail
-from services.user_settings import delete_user_setting, get_user_setting, set_user_setting
+from models import Offer, OfferEmail, UserSetting
+from services.user_settings import delete_user_setting, get_user_setting
 
 MAILING_RESET_SINCE_KEY = "mailing_reset_since"
 MAILING_RESET_SKIP_EMAILS_KEY = "mailing_reset_skip_emails"
@@ -50,15 +50,39 @@ async def get_mailing_reset_skip_emails(session, user_id: int) -> set[str]:
     return {e.strip().lower() for e in str(raw).split(",") if e.strip()}
 
 
+async def _upsert_setting_flush(session, user_id: int, key: str, value: str) -> None:
+    """Пишем setting без вложенного commit (иначе /reset падает на большой очереди)."""
+    row = (
+        await session.execute(
+            select(UserSetting).where(
+                UserSetting.user_id == int(user_id),
+                UserSetting.key == key,
+            )
+        )
+    ).scalar_one_or_none()
+    if row:
+        row.value = value
+        return
+    session.add(
+        UserSetting(
+            user_id=int(user_id),
+            key=key,
+            value=value,
+            html_nick="",
+            html_signature="",
+            sender_name="",
+        )
+    )
+
+
 async def mark_mailing_queue_reset(session, user_id: int, *, skip_emails: set[str]) -> None:
     """После /reset в очередь не возвращаются email, убранные сбросом."""
-    await set_user_setting(session, user_id, MAILING_RESET_SINCE_KEY, _utc_now_str())
-    await set_user_setting(
-        session,
-        user_id,
-        MAILING_RESET_SKIP_EMAILS_KEY,
-        json.dumps(sorted(skip_emails), ensure_ascii=False),
-    )
+    await _upsert_setting_flush(session, user_id, MAILING_RESET_SINCE_KEY, _utc_now_str())
+    payload = json.dumps(sorted(skip_emails), ensure_ascii=False)
+    # Не раздуваем user_settings до десятков МБ — since уже режет старую очередь.
+    if len(payload) > 900_000:
+        payload = json.dumps(sorted(skip_emails)[:12000], ensure_ascii=False)
+    await _upsert_setting_flush(session, user_id, MAILING_RESET_SKIP_EMAILS_KEY, payload)
 
 
 async def clear_mailing_reset(session, user_id: int) -> None:
@@ -74,33 +98,33 @@ async def reset_user_mailing_queue(
 ) -> dict[str, int]:
     """Убрать все OfferEmail (очередь); Offer в БД не трогаем."""
     if tg_user_id is not None:
-        from handlers.stopsend import stop_sending_for_user
+        try:
+            from handlers.stopsend import stop_sending_for_user
 
-        stop_sending_for_user(int(tg_user_id))
+            stop_sending_for_user(int(tg_user_id))
+        except Exception:
+            pass
 
-    offer_ids = [
-        int(x)
-        for x in (
-            await session.execute(select(Offer.id).where(Offer.user_id == int(user_id)))
-        ).scalars().all()
-    ]
+    uid = int(user_id)
+    offer_subq = select(Offer.id).where(Offer.user_id == uid)
 
     skip_emails: set[str] = set()
-    removed = 0
-    if offer_ids:
-        for em in (
-            await session.execute(
-                select(OfferEmail.email).where(OfferEmail.offer_id.in_(offer_ids))
-            )
-        ).scalars().all():
-            e = (str(em or "")).strip().lower()
-            if e:
-                skip_emails.add(e)
-
-        res = await session.execute(
-            delete(OfferEmail).where(OfferEmail.offer_id.in_(offer_ids))
+    for em in (
+        await session.execute(
+            select(OfferEmail.email)
+            .join(Offer, Offer.id == OfferEmail.offer_id)
+            .where(Offer.user_id == uid)
         )
-        removed = int(res.rowcount or 0)
+    ).scalars().all():
+        e = (str(em or "")).strip().lower()
+        if e:
+            skip_emails.add(e)
 
-    await mark_mailing_queue_reset(session, user_id, skip_emails=skip_emails)
+    res = await session.execute(
+        delete(OfferEmail).where(OfferEmail.offer_id.in_(offer_subq))
+    )
+    removed = int(res.rowcount or 0)
+    await session.flush()
+
+    await mark_mailing_queue_reset(session, uid, skip_emails=skip_emails)
     return {"removed": removed, "skip_emails": len(skip_emails)}

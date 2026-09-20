@@ -31,22 +31,49 @@ def _truthy(name: str, default: str = "") -> bool:
 
 
 def _apply_imap_worker_defaults() -> None:
-    """Дефолты для отдельного IMAP-сервиса (можно переопределить в .env)."""
+    """Дефолты IMAP. Старые 120с из Railway перебиваем — иначе ответы «замирают»."""
     defaults = {
-        "MAX_IMAP_CONCURRENT": "20",
-        "INCOMING_MAIL_POLL_SECONDS": "45",
-        "IMAP_PER_ACCOUNT_INTERVAL_SEC": "45",
-        "IMAP_CYCLE_SLEEP_SEC": "5",
-        "IMAP_ACCOUNT_TIMEOUT_SEC": "45",
-        "IMAP_CONNECT_TIMEOUT_SEC": "25",
-        # Отдельный сервис: SMTP на newbot, IMAP здесь — не глушим опрос на время /send.
+        "MAX_IMAP_CONCURRENT": "24",
+        "INCOMING_MAIL_POLL_SECONDS": "35",
+        "IMAP_PER_ACCOUNT_INTERVAL_SEC": "35",
+        "IMAP_CYCLE_SLEEP_SEC": "2",
+        "IMAP_ACCOUNT_TIMEOUT_SEC": "22",
+        "IMAP_CONNECT_TIMEOUT_SEC": "12",
         "IMAP_MAILING_PAUSE": "off",
-        "IMAP_ACCOUNTS_CACHE_SEC": "30",
+        "IMAP_ACCOUNTS_CACHE_SEC": "20",
         "DB_POOL_SIZE": "15",
         "DB_MAX_OVERFLOW": "25",
     }
+    slow_keys = {
+        "INCOMING_MAIL_POLL_SECONDS",
+        "IMAP_PER_ACCOUNT_INTERVAL_SEC",
+        "IMAP_CYCLE_SLEEP_SEC",
+        "IMAP_ACCOUNT_TIMEOUT_SEC",
+        "IMAP_CONNECT_TIMEOUT_SEC",
+    }
     for key, val in defaults.items():
-        os.environ.setdefault(key, val)
+        cur = (os.getenv(key) or "").strip()
+        if key == "IMAP_MAILING_PAUSE" and cur.lower() in {"per_user", "all", "slow"}:
+            os.environ[key] = "off"
+            continue
+        if key in slow_keys:
+            try:
+                n = float(cur) if cur else 0
+            except ValueError:
+                n = 0
+            if not cur or n > 40:
+                os.environ[key] = val
+                continue
+        if key == "MAX_IMAP_CONCURRENT":
+            try:
+                n = int(cur) if cur else 0
+            except ValueError:
+                n = 0
+            if n < 12:
+                os.environ[key] = val
+            continue
+        if not cur:
+            os.environ[key] = val
 
 
 async def _worker_heartbeat() -> None:
@@ -135,7 +162,7 @@ async def main() -> None:
     me = await bot.get_me()
     logger.info("IMAP worker: Bot @%s (id=%s) — только уведомления о письмах", me.username, me.id)
 
-    poll_seconds = int(os.getenv("INCOMING_MAIL_POLL_SECONDS", "120"))
+    poll_seconds = int(os.getenv("INCOMING_MAIL_POLL_SECONDS", "35"))
     delay = int(os.getenv("INCOMING_MAIL_START_DELAY_SEC", "10"))
     if delay > 0:
         logger.info("Старт опроса ящиков через %ss", delay)

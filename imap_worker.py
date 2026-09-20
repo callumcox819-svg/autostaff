@@ -34,9 +34,9 @@ def _apply_imap_worker_defaults() -> None:
     """Дефолты для отдельного IMAP-сервиса (можно переопределить в .env)."""
     defaults = {
         "MAX_IMAP_CONCURRENT": "20",
-        "INCOMING_MAIL_POLL_SECONDS": "120",
-        "IMAP_PER_ACCOUNT_INTERVAL_SEC": "120",
-        "IMAP_CYCLE_SLEEP_SEC": "10",
+        "INCOMING_MAIL_POLL_SECONDS": "45",
+        "IMAP_PER_ACCOUNT_INTERVAL_SEC": "45",
+        "IMAP_CYCLE_SLEEP_SEC": "5",
         "IMAP_ACCOUNT_TIMEOUT_SEC": "45",
         "IMAP_CONNECT_TIMEOUT_SEC": "25",
         # Отдельный сервис: SMTP на newbot, IMAP здесь — не глушим опрос на время /send.

@@ -636,7 +636,38 @@ async def is_inbound_from_mailed_seller(
         return True
     if await is_email_already_sent(session, int(user_id), fe):
         return True
-    return False
+    from sqlalchemy import func as sa_func
+
+    conv = (
+        await session.execute(
+            sa_select(ConversationLink.id)
+            .where(ConversationLink.user_id == int(user_id))
+            .where(sa_func.lower(ConversationLink.from_email) == fe)
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if conv is not None:
+        return True
+    mail_hit = (
+        await session.execute(
+            sa_select(IncomingMail.id)
+            .where(IncomingMail.user_id == int(user_id))
+            .where(sa_func.lower(IncomingMail.from_email) == fe)
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if mail_hit is not None:
+        return True
+    oe = (
+        await session.execute(
+            sa_select(OfferEmail.id)
+            .join(Offer, Offer.id == OfferEmail.offer_id)
+            .where(Offer.user_id == int(user_id))
+            .where(sa_func.lower(OfferEmail.email) == fe)
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    return oe is not None
 
 
 def _find_spam_mailbox_name(M: imaplib.IMAP4_SSL) -> str | None:
@@ -2148,7 +2179,7 @@ async def _process_mails_for_account_impl(
                     continue
             except Exception:
                 logger.exception("mailed-seller allow-check failed acc=%s", acc_id)
-                continue
+                # Не глотаем ответ продавца из‑за сбоя БД.
 
         if (not is_spam_box) and (not is_extra_box) and _looks_like_spam(
             from_email, from_name, subject, body
@@ -2776,7 +2807,7 @@ _MAX_IMAP_CONCURRENT = max(1, int(_os.getenv("MAX_IMAP_CONCURRENT", "6")))
 # per_user — не опрашивать ящики того, кто шлёт /send
 # slow — опрос реже при рассылке (почта приходит, бот не душится)
 # off — без замедления; all — пауза для всех
-_IMAP_MAILING_PAUSE = (__import__("os").getenv("IMAP_MAILING_PAUSE", "slow") or "slow").strip().lower()
+_IMAP_MAILING_PAUSE = (__import__("os").getenv("IMAP_MAILING_PAUSE", "off") or "off").strip().lower()
 _IMAP_POLL_SECONDS_MAILING = max(30, int(__import__("os").getenv("INCOMING_MAIL_POLL_SECONDS_MAILING", "90")))
 _IMAP_MAX_CONCURRENT_MAILING = max(1, int(__import__("os").getenv("MAX_IMAP_CONCURRENT_MAILING", "4")))
 _IMAP_BATCH_YIELD_SEC = max(0.0, float(__import__("os").getenv("IMAP_BATCH_YIELD_SEC", "0.08")))

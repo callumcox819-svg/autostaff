@@ -39,7 +39,8 @@ def _apply_imap_worker_defaults() -> None:
         "IMAP_CYCLE_SLEEP_SEC": "10",
         "IMAP_ACCOUNT_TIMEOUT_SEC": "45",
         "IMAP_CONNECT_TIMEOUT_SEC": "25",
-        "IMAP_MAILING_PAUSE": "per_user",
+        # Отдельный сервис: SMTP на newbot, IMAP здесь — не глушим опрос на время /send.
+        "IMAP_MAILING_PAUSE": "off",
         "IMAP_ACCOUNTS_CACHE_SEC": "30",
         "DB_POOL_SIZE": "15",
         "DB_MAX_OVERFLOW": "25",

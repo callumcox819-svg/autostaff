@@ -81,6 +81,15 @@ class CountryScopeTests(unittest.TestCase):
         self.assertLess(domains.index("gmx.ch"), domains.index("gmail.com"))
         self.assertNotEqual(domains, GERMANY_VALIDATION_DOMAINS)
 
+    def test_austria_default_domains(self):
+        from services.country_scope import AUSTRIA_VALIDATION_DOMAINS
+
+        domains = default_validation_domains_for("at")
+        self.assertEqual(domains, AUSTRIA_VALIDATION_DOMAINS)
+        self.assertIn("gmx.at", domains)
+        self.assertEqual(domains[0], "gmx.at")
+        self.assertIn("gmail.com", domains)
+
     def test_legacy_nl_still_all_countries_if_unset(self):
         self.assertIn("de", parse_enabled_ids(None))
         self.assertIn("nl", parse_enabled_ids(None))

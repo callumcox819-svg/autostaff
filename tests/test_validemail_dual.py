@@ -20,8 +20,12 @@ class HardValidationRoutingTests(unittest.TestCase):
             self.assertTrue(vk.is_hard_validation_domain("a@bluewin.ch"))
             self.assertTrue(vk.is_hard_validation_domain("b@sunrise.ch"))
             self.assertTrue(vk.is_hard_validation_domain("c@web.de"))
+            self.assertTrue(vk.is_hard_validation_domain("x@kpnmail.nl"))
+            self.assertTrue(vk.is_hard_validation_domain("y@gmx.at"))
+            self.assertTrue(vk.is_hard_validation_domain("z@hotmail.com"))
             self.assertFalse(vk.is_hard_validation_domain("x@gmail.com"))
             self.assertFalse(vk.is_hard_validation_domain("y@icloud.com"))
+            self.assertFalse(vk.is_hard_validation_domain("z@me.com"))
             self.assertEqual(vk.resolve_hard_api_keys(), ["sk-aaa", "sk-bbb"])
 
     def test_disabled_without_hard_url(self):
@@ -79,6 +83,23 @@ class DualSplitTests(unittest.IsolatedAsyncioTestCase):
         urls = {c[0] for c in calls}
         self.assertIn("validemail.co", next(u for u in urls if "validemail.co" in u))
         self.assertTrue(any("railway" in u for u in urls))
+
+
+class DualSpeedPlanTests(unittest.TestCase):
+    def test_eight_hard_keys_raise_seller_cap(self):
+        env = {
+            "VALIDEMAIL_HARD_URL": "https://validemail.co/api/v1/validate",
+            "VALIDEMAIL_HARD_API_KEYS": ",".join(f"k{i}" for i in range(8)),
+            "VALIDEMAIL_URL": "https://validator-production-7106.up.railway.app/api/v1/validate",
+        }
+        with patch.dict(os.environ, env, clear=False):
+            from importlib import reload
+            import services.validemail_keys as vk
+
+            reload(vk)
+            cap = vk.seller_parallel_cap_for_run(1, 8)
+            self.assertGreaterEqual(cap, 80)
+            self.assertEqual(vk.per_key_concurrency_limit(vk.hard_validation_url()) * 8, 80)
 
 
 if __name__ == "__main__":

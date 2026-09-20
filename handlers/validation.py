@@ -647,7 +647,13 @@ async def _run_validation_pipeline_inner(
 
     n_keys = len(api_keys)
     hard_keys = resolve_hard_api_keys() if hard_backend_enabled() else []
-    pool = validation_pool_size(n_keys)
+    from services.validemail_keys import hard_validation_url
+
+    pool_easy = validation_pool_size(n_keys)
+    pool_hard = 0
+    if hard_keys:
+        pool_hard = per_key_concurrency_limit(hard_validation_url()) * len(hard_keys)
+    pool = max(2, pool_easy, pool_hard)
     per_key_lim = per_key_concurrency_limit()
     cfg = ValidationConfig(
         validemail_api_keys=api_keys,

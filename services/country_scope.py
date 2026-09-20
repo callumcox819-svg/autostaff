@@ -37,6 +37,17 @@ SWITZERLAND_VALIDATION_DOMAINS: tuple[str, ...] = (
     "hotmail.ch",
 )
 
+AUSTRIA_VALIDATION_DOMAINS: tuple[str, ...] = (
+    "gmx.at",
+    "gmail.com",
+    "aon.at",
+    "icloud.com",
+    "outlook.at",
+    "hotmail.com",
+    "gmx.net",
+    "chello.at",
+)
+
 
 def scoped_setting_key(base: str, country: str) -> str:
     cc = normalize_country_id(country) or LEGACY_COUNTRY
@@ -163,6 +174,8 @@ def default_validation_domains_for(country: str) -> tuple[str, ...]:
         return GERMANY_VALIDATION_DOMAINS
     if cc == "ch":
         return SWITZERLAND_VALIDATION_DOMAINS
+    if cc == "at":
+        return AUSTRIA_VALIDATION_DOMAINS
     from region import DEFAULT_VALIDATION_DOMAINS
 
     return DEFAULT_VALIDATION_DOMAINS

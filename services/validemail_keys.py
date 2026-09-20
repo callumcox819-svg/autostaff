@@ -75,24 +75,16 @@ def hard_backend_enabled() -> bool:
     return bool(hard_validation_url() and resolve_hard_api_keys())
 
 
-def hard_validation_domains() -> frozenset[str]:
-    """Домены → hard API. Env дополняет дефолт (GMX + CH ISP)."""
+def easy_validation_domains() -> frozenset[str]:
+    """Лёгкие домены → наш mailcheck (все страны). Остальное при dual → validemail.co."""
     base = {
-        "gmx.de",
-        "gmx.net",
-        "gmx.at",
-        "gmx.ch",
-        "gmx.com",
-        "web.de",
-        "t-online.de",
-        "online.de",
-        "bluewin.ch",
-        "bluemail.ch",
-        "sunrise.ch",
-        "hispeed.ch",
-        "swisscom.ch",
+        "gmail.com",
+        "googlemail.com",
+        "icloud.com",
+        "me.com",
+        "mac.com",
     }
-    extra = (os.getenv("VALIDEMAIL_HARD_DOMAINS") or "").strip().lower()
+    extra = (os.getenv("VALIDEMAIL_EASY_DOMAINS") or "").strip().lower()
     if extra:
         for part in extra.replace(";", ",").split(","):
             d = part.strip().lstrip("@")
@@ -101,8 +93,27 @@ def hard_validation_domains() -> frozenset[str]:
     return frozenset(base)
 
 
+def hard_validation_domains() -> frozenset[str]:
+    """Явный список hard (дополняет правило «всё, что не easy»)."""
+    extra = (os.getenv("VALIDEMAIL_HARD_DOMAINS") or "").strip().lower()
+    out: set[str] = set()
+    if extra:
+        for part in extra.replace(";", ",").split(","):
+            d = part.strip().lstrip("@")
+            if d:
+                out.add(d)
+    return frozenset(out)
+
+
+def is_easy_validation_domain(domain_or_email: str) -> bool:
+    s = (domain_or_email or "").strip().lower()
+    if "@" in s:
+        s = s.rsplit("@", 1)[-1]
+    return bool(s) and s in easy_validation_domains()
+
+
 def is_hard_validation_domain(domain_or_email: str) -> bool:
-    """Сложный SMTP → validemail.co; gmail/icloud → наш mailcheck."""
+    """GMX/web/ISP и прочие не-gmail → validemail.co; gmail/icloud → mailcheck."""
     if not hard_backend_enabled():
         return False
     s = (domain_or_email or "").strip().lower()
@@ -110,10 +121,9 @@ def is_hard_validation_domain(domain_or_email: str) -> bool:
         s = s.rsplit("@", 1)[-1]
     if not s:
         return False
-    hard = hard_validation_domains()
-    if s in hard or s.startswith("gmx."):
-        return True
-    return False
+    if is_easy_validation_domain(s):
+        return False
+    return True
 
 
 def resolve_validemail_api_keys() -> list[str]:
@@ -290,11 +300,11 @@ def seller_parallel_cap_for_run(easy_keys: int, hard_keys: int = 0) -> int:
     per = seller_parallel_per_key()
     base = per * n_easy
     if n_hard:
-        # co: 10 RPS/key — держим больше продавцов в полёте
-        base = max(base, min(100, 12 * n_hard + per))
+        # co: 10 req/s на ключ × 8 ключей — больше продавцов в полёте
+        base = max(base, min(180, 10 * n_hard + per))
     if validation_fast_mode():
-        base = max(base, min(100, base + 8))
-    return max(1, min(120, base))
+        base = max(base, min(180, base + 16))
+    return max(1, min(180, base))
 
 
 def seller_validation_timeout_sec() -> float:

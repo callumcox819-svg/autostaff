@@ -1009,6 +1009,8 @@ async def _validate_emails_partitioned(
     cancel_event = asyncio.Event() if stop_on_first_ok else None
     merged: list[tuple[str, bool, dict] | None] = [None] * len(emails_list)
 
+    from services.validemail_keys import per_key_concurrency_limit
+
     async def _part(
         rows: list[tuple[int, str]],
         *,
@@ -1017,11 +1019,13 @@ async def _validate_emails_partitioned(
     ) -> None:
         if not rows:
             return
+        n = max(1, len(keys))
+        part_conc = max(int(concurrency or 0), per_key_concurrency_limit(url) * n)
         emails_only = [e for _, e in rows]
         out = await validate_emails_fast(
             emails_only,
             api_keys=keys,
-            concurrency=concurrency,
+            concurrency=part_conc,
             url=url,
             use_ssl_verify=use_ssl_verify,
             progress_cb=progress_cb,

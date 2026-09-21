@@ -55,8 +55,8 @@ IMAP_ACCOUNT_TIMEOUT_SEC = _imap_int_env("IMAP_ACCOUNT_TIMEOUT_SEC", "22", lo=10
 # Жёсткий потолок 40с — старый Railway 120с глотал ответы.
 IMAP_PER_ACCOUNT_INTERVAL_SEC = _imap_int_env(
     "IMAP_PER_ACCOUNT_INTERVAL_SEC",
-    _os.getenv("INCOMING_MAIL_POLL_SECONDS", "35") or "35",
-    lo=20,
+    _os.getenv("INCOMING_MAIL_POLL_SECONDS", "20") or "20",
+    lo=15,
     hi=40,
 )
 IMAP_CYCLE_SLEEP_SEC = _imap_int_env("IMAP_CYCLE_SLEEP_SEC", "2", lo=1, hi=5)
@@ -888,6 +888,33 @@ def _extract_text_from_msg(msg: email.message.Message) -> str:
     return ""
 
 
+def _parse_imap_uid_list(data) -> list[int]:
+    if not data or not data[0]:
+        return []
+    raw = data[0]
+    if isinstance(raw, bytes):
+        raw = raw.decode("ascii", "ignore")
+    return [int(x) for x in str(raw).split() if str(x).isdigit()]
+
+
+def _imap_status_uidnext(M: imaplib.IMAP4_SSL, mailbox: str = "INBOX") -> int | None:
+    """UIDNEXT без UID SEARCH ALL по всей куче писем."""
+    try:
+        typ, data = M.status(mailbox, "(UIDNEXT)")
+        if typ != "OK" or not data:
+            return None
+        raw = data[0]
+        if isinstance(raw, bytes):
+            raw = raw.decode("utf-8", "ignore")
+        m = re.search(r"UIDNEXT\s+(\d+)", str(raw), re.I)
+        if m:
+            n = int(m.group(1))
+            return n if n > 0 else None
+    except Exception:
+        return None
+    return None
+
+
 def _imap_fetch_new_sync_raw(
     *,
     host: str,
@@ -974,30 +1001,26 @@ def _imap_fetch_new_sync_raw(
     try:
         M = _imap_connect_and_select(host, port, email_addr, password)
 
-        # --- INBOX ---
-        typ, data = M.uid("search", None, "ALL")
-        if typ != "OK":
-            inbox_uids = []
-        else:
-            inbox_uids = []
-            if data and data[0]:
-                inbox_uids = [int(x) for x in data[0].split() if x.isdigit()]
-
+        # --- INBOX: только UID > last (не SEARCH ALL — Gmail с 10k писем таймаутит 22с) ---
         inbox_mails: list = []
         max_uid = last_uid
 
-        if inbox_uids:
-            max_uid = max(inbox_uids)
-
-            # first run: don't forward old inbox mails
-            if last_uid is None:
-                inbox_new_uids = []
-            else:
-                inbox_new_uids = [u for u in inbox_uids if u > int(last_uid)]
-                if inbox_new_uids:
-                    inbox_mails = _fetch_uids(sorted(inbox_new_uids)[-DEFAULT_MAX_PER_ACCOUNT:])
+        if last_uid is None:
+            nxt = _imap_status_uidnext(M, "INBOX")
+            if nxt and nxt > 1:
+                max_uid = nxt - 1
         else:
-            inbox_new_uids = []
+            lo = int(last_uid) + 1
+            typ, data = M.uid("search", None, "UID", f"{lo}:*")
+            inbox_uids = _parse_imap_uid_list(data) if typ == "OK" else []
+            inbox_uids = [u for u in inbox_uids if u > int(last_uid)]
+            if inbox_uids:
+                max_uid = max(int(last_uid), max(inbox_uids))
+                inbox_mails = _fetch_uids(sorted(inbox_uids)[-DEFAULT_MAX_PER_ACCOUNT:])
+            else:
+                nxt = _imap_status_uidnext(M, "INBOX")
+                if nxt and nxt - 1 > int(last_uid):
+                    max_uid = nxt - 1
 
         updated_last_uid: Optional[int] = int(max_uid) if max_uid is not None else last_uid
         if last_uid is None and max_uid is not None:
@@ -3368,7 +3391,7 @@ def incoming_mail_diag_snapshot() -> dict[str, Any]:
     }
 
 
-def start_incoming_mail_worker(bot: Bot, poll_seconds: int = 35) -> None:
+def start_incoming_mail_worker(bot: Bot, poll_seconds: int = 20) -> None:
     global _worker_task
     if _worker_task and not _worker_task.done():
         return

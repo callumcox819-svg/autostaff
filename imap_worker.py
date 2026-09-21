@@ -34,8 +34,8 @@ def _apply_imap_worker_defaults() -> None:
     """Дефолты IMAP. Старые 120с из Railway перебиваем — иначе ответы «замирают»."""
     defaults = {
         "MAX_IMAP_CONCURRENT": "24",
-        "INCOMING_MAIL_POLL_SECONDS": "35",
-        "IMAP_PER_ACCOUNT_INTERVAL_SEC": "35",
+        "INCOMING_MAIL_POLL_SECONDS": "20",
+        "IMAP_PER_ACCOUNT_INTERVAL_SEC": "20",
         "IMAP_CYCLE_SLEEP_SEC": "2",
         "IMAP_ACCOUNT_TIMEOUT_SEC": "22",
         "IMAP_CONNECT_TIMEOUT_SEC": "12",
@@ -162,7 +162,7 @@ async def main() -> None:
     me = await bot.get_me()
     logger.info("IMAP worker: Bot @%s (id=%s) — только уведомления о письмах", me.username, me.id)
 
-    poll_seconds = int(os.getenv("INCOMING_MAIL_POLL_SECONDS", "35"))
+    poll_seconds = int(os.getenv("INCOMING_MAIL_POLL_SECONDS", "20"))
     delay = int(os.getenv("INCOMING_MAIL_START_DELAY_SEC", "10"))
     if delay > 0:
         logger.info("Старт опроса ящиков через %ss", delay)

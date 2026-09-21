@@ -166,6 +166,40 @@ def _first_raw_str(raw: dict[str, Any], keys: tuple[str, ...]) -> str:
     return ""
 
 
+AQUA_PIN_LINK_KEY = "aqua_generated_link"
+AQUA_PIN_PRICE_KEY = "aqua_generated_price"
+
+
+def offer_aqua_pin(offer: Offer | None) -> tuple[str, str]:
+    """Последняя сгенерированная AQUA-ссылка/цена (кнопка «Цена»), не лот с МП."""
+    if not offer:
+        return "", ""
+    raw = parse_offer_raw(getattr(offer, "raw_json", None))
+    link = str(raw.get(AQUA_PIN_LINK_KEY) or "").strip()
+    price = str(raw.get(AQUA_PIN_PRICE_KEY) or "").strip()
+    return link, price
+
+
+def set_offer_aqua_pin(offer: Offer | None, *, link: str, price: str | None = None) -> None:
+    if not offer:
+        return
+    url = (link or "").strip()
+    if not url:
+        return
+    raw = parse_offer_raw(getattr(offer, "raw_json", None)) or {}
+    raw[AQUA_PIN_LINK_KEY] = url
+    p = (price or "").strip()[:64]
+    if p:
+        raw[AQUA_PIN_PRICE_KEY] = p
+        raw["item_price"] = p
+    try:
+        offer.raw_json = json.dumps(raw, ensure_ascii=False)
+    except Exception:
+        return
+    if p:
+        offer.price = p
+
+
 def offer_effective_price(offer: Offer | None, *, default: str = "0") -> str:
     """Цена: item_price из raw_json (VOID), иначе колонка Offer.price."""
     if not offer:
@@ -1225,6 +1259,7 @@ _MARKETPLACE_SERVICE_RULES: tuple[tuple[str, str, str], ...] = (
     ("marktplaats.nl", "marktplaats.nl", "marktplaats_nl"),
     ("marktplaats.com", "marktplaats.nl", "marktplaats_nl"),
     ("anibis.ch", "anibis.ch", "anibis_ch"),
+    ("markt.ch", "markt.ch", "markt_ch"),
     ("willhaben.at", "willhaben.at", "willhaben_at"),
     ("laendleanzeiger.at", "Laendleanzeiger", "laendleanzeiger_at"),
     ("ländleanzeiger.at", "Laendleanzeiger", "laendleanzeiger_at"),

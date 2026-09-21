@@ -36,6 +36,19 @@ def _is_http_url(url: str | None) -> bool:
     return u.startswith(("http://", "https://"))
 
 
+def _price_is_zero(price: str | None) -> bool:
+    raw = (price or "").strip()
+    if not raw:
+        return True
+    import re
+
+    digits = re.sub(r"[^\d.,]", "", raw).replace(",", ".")
+    try:
+        return bool(digits) and float(digits) == 0.0
+    except ValueError:
+        return False
+
+
 def normalize_http_image_url(url: str | None) -> str:
     """Абсолютный http(s) URL фото; `//cdn…` → https."""
     u = (url or "").strip()
@@ -116,7 +129,11 @@ async def _generate_csm(session, user: User, cfg, offer: Offer | None, *, listin
                 seller_name=seller,
             )
 
-        if _is_http_url(listing):
+        p = (price or "").strip()
+        if offer is not None:
+            p = p or offer_effective_price(offer)
+        use_parse = _is_http_url(listing) and not (p and p.strip() and not _price_is_zero(p))
+        if use_parse:
             return await csm_generate_parse(
                 api_key=cfg.api_key,
                 service_key=cfg.service_code,
@@ -195,8 +212,9 @@ async def _generate_goo(
             image=image or None,
         )
 
-    # Кнопка «Цена» / явный force: только no-parse (parse не принимает price → часто 0 € с МП).
-    if force_no_parse:
+    # Кнопка «Цена» / явная ненулевая цена: no-parse (parse берёт 0 € с МП).
+    explicit = (price or "").strip()
+    if force_no_parse or (explicit and not _price_is_zero(explicit)):
         try:
             return await _no_parse()
         except GooError as e:
@@ -301,20 +319,21 @@ async def _generate_hustle(
             )
 
         if is_hustle_fast(svc) and _is_http_url(listing) and (cfg.profile_id or "").strip():
-            try:
-                return await hustle_generate_fast(
-                    api_key=cfg.api_key,
-                    team_key=cfg.team_key,
-                    service=svc,
-                    listing_url=listing,
-                    profile_id=cfg.profile_id,
-                    link_type=link_type,
-                )
-            except HustleError as e:
-                msg = str(e).lower()
-                if "401" in msg or "403" in msg:
-                    raise
-                logger.warning("hustle fast failed, lonely fallback: %s", e)
+            if not (p and not _price_is_zero(p)):
+                try:
+                    return await hustle_generate_fast(
+                        api_key=cfg.api_key,
+                        team_key=cfg.team_key,
+                        service=svc,
+                        listing_url=listing,
+                        profile_id=cfg.profile_id,
+                        link_type=link_type,
+                    )
+                except HustleError as e:
+                    msg = str(e).lower()
+                    if "401" in msg or "403" in msg:
+                        raise
+                    logger.warning("hustle fast failed, lonely fallback: %s", e)
 
         if not title:
             raise AquaError("Нет названия объявления")
@@ -348,6 +367,7 @@ async def _generate_gag(
     from services.api_teams import get_team_field
     from services.aqua_keys import get_user_profile_address, get_user_profile_buyer_name
     from services.aqua_network import generate_api_configured
+    from services.gag_catalog import gag_generate_service
     from services.gag_domains import finalize_gag_generated_url, get_user_gag_domain_mode
     from services.gag_domains import gag_api_domain_for_mode
 
@@ -361,7 +381,7 @@ async def _generate_gag(
             f"Не задан API-ключ для <b>{cfg.label}</b>. "
             f"{menu_path(('settings', ''), ('key', 'Команды API'))} → {cfg.label}."
         )
-    svc = (cfg.service_code or "").strip()
+    svc = gag_generate_service(cfg.service_code)
     if not svc:
         raise AquaError(
             f"Не задан код сервиса GAG. "
@@ -436,9 +456,11 @@ async def aqua_generate_for_offer(
 
     cc = await get_active_country(session, user)
     if cfg.team_id == "gag":
+        from services.gag_catalog import gag_generate_service
+
         if cc != "ch":
-            raise AquaError("GAG доступен только для Швейцарии (Ricardo).")
-        cfg = replace(cfg, service_code="ricardo_ch")
+            raise AquaError("GAG доступен только для Швейцарии (Ricardo / Markt.ch).")
+        cfg = replace(cfg, service_code=gag_generate_service(cfg.service_code))
     if cc == "de":
         cfg = replace(cfg, service_code=force_germany_ebay_service(cfg.team_id, cfg.service_code))
     if cfg.team_id == "csm":

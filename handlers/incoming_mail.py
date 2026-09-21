@@ -152,6 +152,7 @@ async def _aqua_generate_link(
         offer,
         listing_url=listing or None,
         price=(price or "").strip() or None,
+        force_no_parse=True,
     )
 
 
@@ -443,12 +444,17 @@ async def _reply_notify_build_async(
 
 
 async def _load_convlink_for_reply(session, *, user_id: int, inbox_email: str, contact_email: str):
+    inbox_keys = _email_keys(inbox_email)
+    contact_keys = _email_keys(contact_email)
+    if not inbox_keys or not contact_keys:
+        return None
     return (
         await session.execute(
             sa_select(ConversationLink)
             .where(ConversationLink.user_id == int(user_id))
-            .where(func.lower(ConversationLink.account_email) == inbox_email.lower())
-            .where(func.lower(ConversationLink.from_email) == contact_email.lower())
+            .where(func.lower(ConversationLink.account_email).in_(inbox_keys))
+            .where(func.lower(ConversationLink.from_email).in_(contact_keys))
+            .order_by(ConversationLink.id.desc())
             .limit(1)
         )
     ).scalars().first()
@@ -860,25 +866,15 @@ async def cb_mail_ignore(callback: CallbackQuery):
 
 
 def _canon_email(email: str) -> str:
-    """Canonicalize email for robust matching.
-    - lower/strip
-    - for Gmail/Googlemail: remove dots in local-part, strip +tag, normalize domain to gmail.com
-    - for others: strip +tag in local-part (common), keep domain
-    """
-    from services.email_address import extract_email_address
+    from services.email_address import canonicalize_dialog_email
 
-    e = extract_email_address(email)
-    if "@" not in e:
-        return e
-    local, domain = e.split("@", 1)
-    local = local.strip()
-    domain = domain.strip().lower()
-    if "+" in local:
-        local = local.split("+", 1)[0]
-    if domain in ("googlemail.com", "gmail.com"):
-        local = local.replace(".", "")
-        domain = "gmail.com"
-    return f"{local}@{domain}"
+    return canonicalize_dialog_email(email)
+
+
+def _email_keys(email: str) -> list[str]:
+    from services.email_address import dialog_email_match_keys
+
+    return dialog_email_match_keys(email)
 
 
 _LOT_ID_FROM_CARD_RE = re.compile(
@@ -1706,17 +1702,18 @@ async def _get_convlink(
       inbox_email   -> пишем/сравниваем с account_email
       contact_email -> пишем/сравниваем с from_email
     """
-    inbox = (inbox_email or "").strip().lower()
-    contact = (contact_email or "").strip().lower()
-    if not inbox or not contact:
+    inbox_keys = _email_keys(inbox_email)
+    contact_keys = _email_keys(contact_email)
+    if not inbox_keys or not contact_keys:
         return None
 
     return (
         await session.execute(
             sa_select(ConversationLink)
             .where(ConversationLink.user_id == int(user_id))
-            .where(ConversationLink.account_email == inbox)
-            .where(ConversationLink.from_email == contact)
+            .where(func.lower(ConversationLink.account_email).in_(inbox_keys))
+            .where(func.lower(ConversationLink.from_email).in_(contact_keys))
+            .order_by(ConversationLink.id.desc())
             .limit(1)
         )
     ).scalars().first()
@@ -1740,8 +1737,8 @@ async def _upsert_convlink(
       - account_email — наш почтовый ящик (куда пришло письмо)
       - from_email    — email отправителя (продавца)
     """
-    inbox = (inbox_email or "").strip().lower()
-    contact = (contact_email or "").strip().lower()
+    inbox = _canon_email(inbox_email)
+    contact = _canon_email(contact_email)
     if not inbox or not contact:
         return
 
@@ -1771,7 +1768,6 @@ async def _upsert_convlink(
             conv.last_generated_price = (generated_price or "").strip()[:64] or conv.last_generated_price
         if pinned_offer_id:
             conv.pinned_offer_id = int(pinned_offer_id)
-    await session.commit()
 
 
 async def _pin_generated_link_on_dialog_mails(
@@ -1785,21 +1781,22 @@ async def _pin_generated_link_on_dialog_mails(
     offer_id: int | None = None,
 ) -> None:
     """Все письма диалога получают последнюю ссылку/цену для HTML."""
-    inbox = _canon_email(inbox_email)
-    contact = _canon_email(contact_email)
+    contact_keys = _email_keys(contact_email)
+    _ = inbox_email
     link = (generated_link or "").strip()
-    if not link or not inbox or not contact:
+    if not link:
         return
     values: dict = {"generated_link": link}
     price = (generated_price or "").strip()[:64]
     if price:
         values["offer_price"] = price
-    conds = [
-        IncomingMail.user_id == int(user_id),
-        func.lower(IncomingMail.account_email) == inbox,
-        func.lower(IncomingMail.from_email) == contact,
-    ]
-    await session.execute(sa_update(IncomingMail).where(*conds).values(**values))
+    if contact_keys:
+        await session.execute(
+            sa_update(IncomingMail)
+            .where(IncomingMail.user_id == int(user_id))
+            .where(func.lower(IncomingMail.from_email).in_(contact_keys))
+            .values(**values)
+        )
     if offer_id:
         await session.execute(
             sa_update(IncomingMail)
@@ -2339,6 +2336,9 @@ async def _create_aqua_link_from_db_work_impl(
             )
             if live_final:
                 mail.resolved_offer_id = int(live_final.id)
+                from services.offer_storage import set_offer_aqua_pin
+
+                set_offer_aqua_pin(live_final, link=aqua_url, price=str(price) if price else None)
             else:
                 mail.resolved_offer_id = None
                 offer_id = None
@@ -2625,6 +2625,9 @@ async def _create_aqua_link_work(callback: CallbackQuery, acc_id: int, uid: str,
             mail.generated_link = aqua_url
             if offer_id:
                 mail.resolved_offer_id = int(offer_id)
+                from services.offer_storage import set_offer_aqua_pin
+
+                set_offer_aqua_pin(offer, link=aqua_url, price=str(price) if price else None)
             mail.ad_url = url
         await session.commit()
 
@@ -3437,8 +3440,14 @@ async def cb_mail_reply_html_send(callback: CallbackQuery, state: FSMContext):
                 mail_generated_link=mail_gen_link,
             )
             ctx = await build_offer_html_ctx(
-                session, int(user.id), to_email, link=link, mail=mail_row
+                session,
+                int(user.id),
+                to_email,
+                link=link,
+                mail=mail_row,
+                account_email=account_email,
             )
+            link = (ctx.get("LINK") or link or "").strip()
             if not (ctx.get("BUYER_NAME") or "").strip() or not (ctx.get("ADDRESS") or "").strip():
                 return (
                     False,
@@ -3768,8 +3777,14 @@ async def mail_reply_custom_html(message: Message, state: FSMContext):
                 mail_generated_link=mail_gen_link,
             )
             ctx = await build_offer_html_ctx(
-                session, int(user.id), to_email, link=link, mail=mail_row
+                session,
+                int(user.id),
+                to_email,
+                link=link,
+                mail=mail_row,
+                account_email=account_email,
             )
+            link = (ctx.get("LINK") or link or "").strip()
             if not (ctx.get("BUYER_NAME") or "").strip() or not (ctx.get("ADDRESS") or "").strip():
                 return (
                     False,
@@ -4044,27 +4059,55 @@ def _format_aqua_price_from_input(text: str, *, previous: str | None = None) -> 
 
 
 async def _resolve_offer_dialog_emails(session, user_id: int, offer_id: int) -> tuple[str, str]:
-    """inbox (наш ящик) и contact (продавец) по OfferEmail + ConversationLink."""
+    """inbox (наш ящик) и contact (продавец) по OfferEmail + ConversationLink + IncomingMail."""
     emails = (
         await session.execute(
             sa_select(OfferEmail.email).where(OfferEmail.offer_id == int(offer_id)).limit(8)
         )
     ).scalars().all()
     for em in emails:
-        contact = _canon_email(str(em or ""))
-        if not contact:
+        contact_keys = _email_keys(str(em or ""))
+        if not contact_keys:
             continue
         conv = (
             await session.execute(
                 sa_select(ConversationLink)
                 .where(ConversationLink.user_id == int(user_id))
-                .where(func.lower(ConversationLink.from_email) == contact)
+                .where(func.lower(ConversationLink.from_email).in_(contact_keys))
                 .order_by(ConversationLink.id.desc())
                 .limit(1)
             )
         ).scalars().first()
         if conv and (conv.account_email or "").strip():
-            return _canon_email(conv.account_email or ""), contact
+            return _canon_email(conv.account_email or ""), _canon_email(conv.from_email or "")
+    mail = (
+        await session.execute(
+            sa_select(IncomingMail)
+            .where(IncomingMail.user_id == int(user_id))
+            .where(IncomingMail.resolved_offer_id == int(offer_id))
+            .order_by(IncomingMail.id.desc())
+            .limit(1)
+        )
+    ).scalars().first()
+    if mail:
+        inbox = _canon_email(mail.account_email or "")
+        contact = _canon_email(mail.from_email or "")
+        if inbox and contact:
+            return inbox, contact
+    conv_pin = (
+        await session.execute(
+            sa_select(ConversationLink)
+            .where(ConversationLink.user_id == int(user_id))
+            .where(ConversationLink.pinned_offer_id == int(offer_id))
+            .order_by(ConversationLink.id.desc())
+            .limit(1)
+        )
+    ).scalars().first()
+    if conv_pin:
+        inbox = _canon_email(conv_pin.account_email or "")
+        contact = _canon_email(conv_pin.from_email or "")
+        if inbox and contact:
+            return inbox, contact
     return "", ""
 
 
@@ -4114,7 +4157,14 @@ async def _regenerate_aqua_link_after_price(
             await session.rollback()
             return False, str(e)
 
+        from services.offer_storage import set_offer_aqua_pin
+
+        set_offer_aqua_pin(offer, link=aqua_url, price=new_price)
         ad_url = (offer.link or "").strip()
+        if not inbox_email or not contact_email:
+            inbox_email, contact_email = await _resolve_offer_dialog_emails(
+                session, int(user.id), int(offer.id)
+            )
         if inbox_email and contact_email:
             await _upsert_convlink(
                 session,
@@ -4124,23 +4174,44 @@ async def _regenerate_aqua_link_after_price(
                 ad_url=ad_url or None,
                 generated_link=aqua_url,
                 generated_price=new_price,
+                pinned_offer_id=int(offer.id),
             )
-            await _pin_generated_link_on_dialog_mails(
-                session,
-                user_id=int(user.id),
-                inbox_email=inbox_email,
-                contact_email=contact_email,
-                generated_link=aqua_url,
-                generated_price=new_price,
-                offer_id=int(offer.id),
-            )
-        else:
-            await session.execute(
-                sa_update(IncomingMail)
-                .where(IncomingMail.user_id == int(user.id))
-                .where(IncomingMail.resolved_offer_id == int(offer.id))
-                .values(generated_link=aqua_url, offer_price=new_price)
-            )
+        await _pin_generated_link_on_dialog_mails(
+            session,
+            user_id=int(user.id),
+            inbox_email=inbox_email,
+            contact_email=contact_email,
+            generated_link=aqua_url,
+            generated_price=new_price,
+            offer_id=int(offer.id),
+        )
+        if contact_email:
+            from services.email_address import dialog_email_match_keys
+
+            contact_keys = dialog_email_match_keys(contact_email)
+            if contact_keys:
+                await session.execute(
+                    sa_update(ConversationLink)
+                    .where(ConversationLink.user_id == int(user.id))
+                    .where(func.lower(ConversationLink.from_email).in_(contact_keys))
+                    .values(
+                        generated_link=aqua_url,
+                        last_generated_price=new_price[:64],
+                        pinned_offer_id=int(offer.id),
+                    )
+                )
+        await session.execute(
+            sa_update(ConversationLink)
+            .where(ConversationLink.user_id == int(user.id))
+            .where(ConversationLink.pinned_offer_id == int(offer.id))
+            .values(generated_link=aqua_url, last_generated_price=new_price[:64])
+        )
+        await session.execute(
+            sa_update(IncomingMail)
+            .where(IncomingMail.user_id == int(user.id))
+            .where(IncomingMail.resolved_offer_id == int(offer.id))
+            .values(generated_link=aqua_url, offer_price=new_price)
+        )
         await session.commit()
 
         card = {

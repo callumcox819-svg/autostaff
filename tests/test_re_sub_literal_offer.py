@@ -19,6 +19,16 @@ class ReSubLiteralOfferTests(unittest.TestCase):
         out = apply_placeholders("Link: {{LINK}}", link="https://x.test/a\\512b")
         self.assertIn("\\512", out)
 
+    def test_ctx_link_overrides_stale_link_arg(self):
+        from services.placeholders import apply_placeholders
+
+        out = apply_placeholders(
+            "go {{LINK}}",
+            link="https://old.example/0",
+            ctx={"LINK": "https://new.example/56"},
+        )
+        self.assertEqual(out, "go https://new.example/56")
+
 
 if __name__ == "__main__":
     unittest.main()

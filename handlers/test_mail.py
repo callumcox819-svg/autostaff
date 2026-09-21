@@ -549,7 +549,7 @@ def _is_valid_ad_link(url: str) -> bool:
     u = url.lower().strip()
     if not u.startswith(("http://", "https://")):
         return False
-    if "ricardo.ch" in u or "tutti.ch" in u:
+    if "ricardo.ch" in u or "tutti.ch" in u or "markt.ch" in u:
         return True
     return False
 

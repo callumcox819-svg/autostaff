@@ -38,3 +38,30 @@ def extract_email_address(raw: str) -> str:
 def is_valid_smtp_recipient(email: str) -> bool:
     em = extract_email_address(email)
     return bool(em) and "@" in em and "\n" not in em and "\r" not in em and len(em) <= 120
+
+
+def canonicalize_dialog_email(email: str) -> str:
+    """Ключ диалога: lower + Gmail без точек/+tag (как IMAP и HTML)."""
+    e = extract_email_address(email) or (email or "").strip().lower()
+    if "@" not in e:
+        return e
+    local, domain = e.split("@", 1)
+    local = local.strip()
+    domain = domain.strip().lower()
+    if "+" in local:
+        local = local.split("+", 1)[0]
+    if domain in ("googlemail.com", "gmail.com"):
+        local = local.replace(".", "")
+        domain = "gmail.com"
+    return f"{local}@{domain}"
+
+
+def dialog_email_match_keys(email: str) -> list[str]:
+    """Все формы адреса, которыми мог быть записан ConversationLink / IncomingMail."""
+    raw = (extract_email_address(email) or (email or "").strip().lower()).strip().lower()
+    canon = canonicalize_dialog_email(email)
+    keys: list[str] = []
+    for k in (raw, canon):
+        if k and k not in keys:
+            keys.append(k)
+    return keys

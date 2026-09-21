@@ -41,6 +41,14 @@ def test_marketplace_label_from_ricardo_link():
     assert marketplace_service_label_from_offer(off) == "ricardo.ch"
 
 
+def test_marketplace_label_from_markt_ch_link():
+    from services.offer_storage import marketplace_service_from_link
+
+    label, code = marketplace_service_from_link("https://www.markt.ch/de/inserat/123")
+    assert label == "markt.ch"
+    assert code == "markt_ch"
+
+
 def test_marketplace_label_from_stored_service_and_marktplaats_short_link():
     from services.offer_storage import (
         marketplace_service_from_link,

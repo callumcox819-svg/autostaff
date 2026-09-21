@@ -24,8 +24,13 @@ def apply_placeholders(text: str, link: str = "", ctx: Optional[dict[str, Any]] 
 
     out = text
 
-    if link:
-        out = re_sub_literal(LINK_PLACEHOLDER_RE, str(link), out)
+    link_final = ""
+    if ctx:
+        link_final = str(ctx.get("LINK") or "").strip()
+    if not link_final:
+        link_final = str(link or "").strip()
+    if link_final:
+        out = re_sub_literal(LINK_PLACEHOLDER_RE, link_final, out)
 
     if not ctx:
         return out

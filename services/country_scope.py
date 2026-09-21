@@ -130,24 +130,28 @@ def switzerland_html_service(team_id: str = "") -> str:
 
 
 def switzerland_html_service_for_code(service_code: str) -> str:
-    """ricardo / tutti / anibis / post → *_ch."""
+    """ricardo / tutti / anibis / post / markt.ch → HTML-папка *_ch (markt → post_ch)."""
     from services.csm_catalog import parse_service_key
 
     code = (service_code or "").strip().lower()
     if not code:
         return switzerland_html_service()
-    if code in {"ricardo_ch", "tutti_ch", "anibis_ch", "post_ch", "posta_ch"}:
-        return "post_ch" if code == "posta_ch" else code
+    if code in {"ricardo_ch", "tutti_ch", "anibis_ch", "post_ch"}:
+        return code
+    if code in {"posta_ch", "markt_ch"}:
+        return "post_ch"
     if code in {"ricardo", "tutti", "anibis"}:
         return f"{code}_ch"
     if code in {"post", "posta", "post.ch"}:
+        return "post_ch"
+    if code in {"markt", "markt.ch"}:
         return "post_ch"
     if "_" in code:
         platform, _cc = parse_service_key(code)
         plat = (platform or "").strip().lower()
         if plat in {"ricardo", "tutti", "anibis"}:
             return f"{plat}_ch"
-        if plat in {"post", "posta"}:
+        if plat in {"post", "posta", "markt"}:
             return "post_ch"
     return switzerland_html_service()
 
@@ -160,7 +164,9 @@ def force_switzerland_html_service(team_id: str, service_code: str) -> str:
     tid = (team_id or "").strip().lower()
     code = (service_code or "").strip()
     if tid == "gag":
-        return switzerland_html_service()
+        from services.gag_catalog import normalize_gag_service_code
+
+        return switzerland_html_service_for_code(normalize_gag_service_code(code))
     if tid == "csm" and is_verify_service(code):
         return code
     if tid == "hustle" and is_hustle_verify(code):

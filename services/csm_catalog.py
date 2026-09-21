@@ -31,6 +31,7 @@ CSM_PLATFORMS: tuple[tuple[str, str, str], ...] = (
     ("tutti", "Tutti", "hide"),
     ("ricardo", "Ricardo", "key"),
     ("anibis", "Anibis", "accounts"),
+    ("markt", "Markt.ch", "mail"),
 )
 
 # Страны: (id, русское название, emoji key)
@@ -58,7 +59,7 @@ CSM_COUNTRY_SERVICES: dict[str, tuple[str, ...]] = {
     "be": ("2dehands", "marktplaats", "vinted", "depop", "ebay", "facebook"),
     "de": ("kleinanzeigen", "ebay", "vinted", "depop", "facebook"),
     "at": ("willhaben", "laendleanzeiger", "ebay", "vinted", "depop", "facebook"),
-    "ch": ("tutti", "ricardo", "anibis", "ebay", "vinted", "depop"),
+    "ch": ("tutti", "ricardo", "anibis", "markt", "ebay", "vinted", "depop"),
     "fr": ("leboncoin", "vinted", "depop", "ebay", "facebook"),
     "it": ("subito", "vinted", "depop", "ebay", "facebook"),
     "es": ("wallapop", "vinted", "depop", "ebay", "facebook"),

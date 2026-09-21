@@ -43,11 +43,11 @@ class SellerDedupTests(unittest.TestCase):
         self.assertFalse(seller_name_eligible_for_validation("Auto"))
         self.assertFalse(seller_name_eligible_for_validation("Amersfoort"))
         self.assertFalse(seller_name_eligible_for_validation("KINDERSPEELGOED SPECIALIST"))
-        # Одиночные имена с AT/DE/NL JSON — в БД сохраняем, на валидацию не гоняем.
-        self.assertFalse(seller_name_eligible_for_validation("Irene"))
-        self.assertFalse(seller_name_eligible_for_validation("Claude"))
-        self.assertFalse(seller_name_eligible_for_validation("Frederih"))
-        self.assertFalse(seller_name_eligible_for_validation("Friedrich"))
+        # Одиночные имена — валидируем (Hans/Irene), бренды/города — нет.
+        self.assertTrue(seller_name_eligible_for_validation("Irene"))
+        self.assertTrue(seller_name_eligible_for_validation("Claude"))
+        self.assertTrue(seller_name_eligible_for_validation("Frederih"))
+        self.assertTrue(seller_name_eligible_for_validation("Friedrich"))
         # Ник площадки / никнейм — можно.
         self.assertTrue(seller_name_eligible_for_validation("Bregenznet"))
         self.assertTrue(seller_name_eligible_for_validation("mariasto"))
@@ -134,6 +134,22 @@ class SellerDedupTests(unittest.TestCase):
                 "Michi_gehrig", require_first_and_last=False, country="ch"
             ),
         )
+
+        vs_hyphen = _make_local_part_variants(
+            "Kenwoodcarhifi-Marine", require_first_and_last=False, country="ch"
+        )
+        self.assertIn("kenwoodcarhifi.marine", vs_hyphen)
+
+        vs_umlaut = _make_local_part_variants(
+            "Allgäu - TOM", require_first_and_last=False, country="ch"
+        )
+        self.assertIn("allgaeu.tom", vs_umlaut)
+        self.assertIn("allgau.tom", vs_umlaut)
+
+        vs_hyphen_nl = _make_local_part_variants(
+            "Kenwoodcarhifi-Marine", require_first_and_last=False
+        )
+        self.assertIn("kenwoodcarhifi.marine", vs_hyphen_nl)
         self.assertEqual(
             _make_local_part_variants("Jan", require_first_and_last=False, country="ch"),
             [],

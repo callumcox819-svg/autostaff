@@ -22,6 +22,8 @@ class AquaHtmlRoutingTests(unittest.TestCase):
             self.assertEqual(ak.normalize_aqua_service("tutti_ch"), "tutti_ch")
             self.assertEqual(ak.normalize_aqua_service("anibis_ch"), "anibis_ch")
             self.assertEqual(ak.normalize_aqua_service("post_ch"), "post_ch")
+            self.assertEqual(ak.html_dir_for_service("markt_ch"), "post_ch")
+            self.assertEqual(ak.html_dir_for_service("posta_ch"), "post_ch")
 
     def test_html_dir_auto_service(self):
         with patch.dict(os.environ, {"AQUA_SERVICES": "", "HTML_DATA_DIR": "HTML"}, clear=False):

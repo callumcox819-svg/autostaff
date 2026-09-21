@@ -136,18 +136,9 @@ def _normalize_subject(subject: str) -> str:
 
 
 def _canon_email(email: str) -> str:
-    e = (email or "").strip().lower()
-    if "@" not in e:
-        return e
-    local, domain = e.split("@", 1)
-    local = local.strip()
-    domain = domain.strip().lower()
-    if "+" in local:
-        local = local.split("+", 1)[0]
-    if domain in ("googlemail.com", "gmail.com"):
-        local = local.replace(".", "")
-        domain = "gmail.com"
-    return f"{local}@{domain}"
+    from services.email_address import canonicalize_dialog_email
+
+    return canonicalize_dialog_email(email)
 
 
 def _calc_backoff(streak: int) -> int:
@@ -199,7 +190,7 @@ def _looks_like_spam(from_email: str, from_name: str, subject: str, body: str) -
     if any(x in domain or x in f for x in marketing_domains):
         return True
     if "list-unsubscribe" in body_l or "utm_campaign=" in body_l:
-        if "ricardo.ch" not in body_l and "tutti.ch" not in body_l:
+        if "ricardo.ch" not in body_l and "tutti.ch" not in body_l and "markt.ch" not in body_l:
             return True
     if subj and any(
         p in subj
@@ -503,12 +494,16 @@ async def _upsert_convlink(
 
     try:
         async with _imap_db_session() as session:
+            from services.email_address import dialog_email_match_keys
+
+            inbox_keys = dialog_email_match_keys(inbox_email)
+            contact_keys = dialog_email_match_keys(contact_email)
             row = (await session.execute(
                 sa_select(ConversationLink).where(
                     ConversationLink.user_id == int(user_id),
-                    func.lower(ConversationLink.account_email) == inbox,
-                    func.lower(ConversationLink.from_email) == contact,
-                )
+                    func.lower(ConversationLink.account_email).in_(inbox_keys),
+                    func.lower(ConversationLink.from_email).in_(contact_keys),
+                ).order_by(ConversationLink.id.desc())
             )).scalars().first()
 
             if row is None:
@@ -556,12 +551,16 @@ async def _load_convlink(
         return None
     try:
         async with _imap_db_session() as session:
+            from services.email_address import dialog_email_match_keys
+
+            inbox_keys = dialog_email_match_keys(inbox_email)
+            contact_keys = dialog_email_match_keys(contact_email)
             row = (await session.execute(
                 sa_select(ConversationLink).where(
                     ConversationLink.user_id == int(user_id),
-                    func.lower(ConversationLink.account_email) == inbox,
-                    func.lower(ConversationLink.from_email) == contact,
-                )
+                    func.lower(ConversationLink.account_email).in_(inbox_keys),
+                    func.lower(ConversationLink.from_email).in_(contact_keys),
+                ).order_by(ConversationLink.id.desc())
             )).scalars().first()
             return row
     except Exception:

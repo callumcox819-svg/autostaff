@@ -305,6 +305,128 @@ class HtmlDialogPinTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("95", ctx["PRICE"])
         self.assertNotIn("EUR 0", ctx["PRICE"])
 
+    async def test_html_ctx_pin_overwrites_stale_zero_link(self):
+        session = AsyncMock()
+        session.get = AsyncMock(return_value=SimpleNamespace(id=1))
+        mail = SimpleNamespace(
+            resolved_offer_id=None,
+            product_title="Schemerlamp",
+            offer_price="0 €",
+            photo_url="",
+            account_email="sara.tonefeda38@gmail.com",
+        )
+        conv = SimpleNamespace(
+            generated_link="https://marktplaats.id/56",
+            last_generated_price="56.00 EUR",
+            pinned_offer_id=None,
+        )
+
+        async def _exec(_stmt):
+            out = MagicMock()
+            out.scalars.return_value.first.return_value = conv
+            return out
+
+        session.execute = AsyncMock(side_effect=_exec)
+        with (
+            patch(
+                "services.aqua_keys.resolve_html_buyer_profile",
+                new=AsyncMock(return_value=("Maria", "Amsterdam")),
+            ),
+            patch(
+                "services.html_reply.get_spoof_display_name",
+                new=AsyncMock(return_value=""),
+            ),
+            patch(
+                "services.enabled_countries.get_active_country",
+                new=AsyncMock(return_value="nl"),
+            ),
+        ):
+            ctx = await build_offer_html_ctx(
+                session,
+                1,
+                "anjalaan@gmail.com",
+                link="https://old.example/0",
+                mail=mail,
+                account_email="inbox@gmail.com",
+            )
+        self.assertIn("56", ctx["PRICE"])
+        self.assertEqual(ctx["LINK"], "https://marktplaats.id/56")
+
+    async def test_html_ctx_prefers_offer_aqua_pin_over_first_link(self):
+        session = AsyncMock()
+        session.get = AsyncMock(return_value=SimpleNamespace(id=1))
+        offer = SimpleNamespace(
+            id=10,
+            title="Cortina",
+            price="30.00 EUR",
+            photo="",
+            raw_json=(
+                '{"item_title":"Cortina","item_price":"0 €",'
+                '"aqua_generated_link":"https://marktplaats.id/new30",'
+                '"aqua_generated_price":"30.00 EUR"}'
+            ),
+            user_id=1,
+        )
+        mail = SimpleNamespace(
+            resolved_offer_id=10,
+            product_title="Cortina",
+            offer_price="0 €",
+            photo_url="",
+            account_email="inbox@gmail.com",
+            generated_link="https://marktplaats.id/first0",
+        )
+        conv = SimpleNamespace(
+            generated_link="https://marktplaats.id/first0",
+            last_generated_price="0 €",
+            pinned_offer_id=10,
+        )
+
+        async def _exec(_stmt):
+            out = MagicMock()
+            sql = str(_stmt)
+            if "conversation_links" in sql.lower() or "ConversationLink" in sql:
+                out.scalars.return_value.first.return_value = conv
+            else:
+                out.scalars.return_value.first.return_value = offer
+            return out
+
+        session.execute = AsyncMock(side_effect=_exec)
+        with (
+            patch(
+                "services.aqua_keys.resolve_html_buyer_profile",
+                new=AsyncMock(return_value=("Maria", "Amsterdam")),
+            ),
+            patch(
+                "services.html_reply.get_spoof_display_name",
+                new=AsyncMock(return_value=""),
+            ),
+            patch(
+                "services.enabled_countries.get_active_country",
+                new=AsyncMock(return_value="nl"),
+            ),
+        ):
+            ctx = await build_offer_html_ctx(
+                session,
+                1,
+                "seller@gmail.com",
+                link="https://marktplaats.id/first0",
+                mail=mail,
+            )
+        self.assertEqual(ctx["LINK"], "https://marktplaats.id/new30")
+        self.assertIn("30", ctx["PRICE"])
+
+
+class DialogEmailCanonTests(unittest.TestCase):
+    def test_gmail_dots_share_match_keys(self):
+        from services.email_address import dialog_email_match_keys, canonicalize_dialog_email
+
+        dotted = "sara.tonefeda38@gmail.com"
+        compact = "saratonefeda38@gmail.com"
+        self.assertEqual(canonicalize_dialog_email(dotted), compact)
+        keys = dialog_email_match_keys(dotted)
+        self.assertIn(compact, keys)
+        self.assertIn(dotted, keys)
+
 
 if __name__ == "__main__":
     unittest.main()

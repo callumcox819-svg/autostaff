@@ -73,6 +73,8 @@ class CountryScopeTests(unittest.TestCase):
         self.assertEqual(switzerland_html_service_for_code("tutti_ch"), "tutti_ch")
         self.assertEqual(force_switzerland_html_service("csm", "anibis"), "anibis_ch")
         self.assertEqual(force_switzerland_html_service("gag", "tutti"), "ricardo_ch")
+        self.assertEqual(switzerland_html_service_for_code("markt_ch"), "post_ch")
+        self.assertEqual(force_switzerland_html_service("gag", "markt_ch"), "post_ch")
         domains = default_validation_domains_for("ch")
         self.assertEqual(domains, SWITZERLAND_VALIDATION_DOMAINS)
         self.assertIn("gmx.ch", domains)

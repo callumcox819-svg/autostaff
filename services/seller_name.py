@@ -22,8 +22,9 @@ def seller_name_min_letters(country: str | None = None) -> int:
 
 
 def allow_single_first_name(country: str | None = None) -> bool:
-    """CH/Ricardo: одно имя ≥4 букв — ок; NL/DE — нет (SMTP шум)."""
-    return (country or "").strip().lower() == "ch"
+    """Одиночное имя/ник тоже валидируем (Hans, Irene, брендовый ник)."""
+    _ = country
+    return True
 
 
 def is_ch_name_policy(country: str | None = None) -> bool:
@@ -37,15 +38,13 @@ def ch_local_part_variants(name: str) -> list[str]:
     """
     if seller_name_too_short(name, min_letters=MIN_SELLER_LETTERS_CH):
         return []
-    raw = normalize_seller_name(strip_name_honorifics(name))
-    if not raw:
-        return []
 
     out: list[str] = []
     seen: set[str] = set()
 
     def _add(local: str) -> None:
         local = re.sub(r"[^a-z0-9._+\-_]", "", (local or "").lower())
+        local = local.replace("-", ".")
         local = re.sub(r"\.+", ".", local).strip("._")
         if not local or local in seen:
             return
@@ -56,27 +55,31 @@ def ch_local_part_variants(name: str) -> list[str]:
         seen.add(local)
         out.append(local)
 
-    # 1) ник целиком: jul_2f57, jessica13, flohmarkt77, y.flitz
-    compact = re.sub(r"[\s\-]+", "", raw)
-    cleaned = re.sub(r"[^A-Za-z0-9._]", "", compact)
-    _add(cleaned)
-    # hyphen → underscore (mary-ana → mary_ana)
-    _add(re.sub(r"[^A-Za-z0-9._]", "", re.sub(r"[\s\-]+", "_", raw)))
-    # underscore → dot (Michi_gehrig → michi.gehrig)
-    if "_" in cleaned:
-        _add(cleaned.replace("_", "."))
+    for raw in seller_name_ascii_forms(name):
+        if not raw:
+            continue
+        # hyphen/пробел → точка: Kenwoodcarhifi-Marine, Allgae - TOM
+        _add(re.sub(r"[\s\-]+", ".", raw))
+        compact = re.sub(r"[\s\-]+", "", raw)
+        cleaned = re.sub(r"[^A-Za-z0-9._]", "", compact)
+        _add(cleaned)
+        _add(re.sub(r"[^A-Za-z0-9._]", "", re.sub(r"[\s\-]+", "_", raw)))
+        if "_" in cleaned:
+            _add(cleaned.replace("_", "."))
 
-    parts = [p for p in re.split(r"[\s\-_]+", raw) if p.strip()]
-    alpha_parts = []
-    for p in parts:
-        core = re.sub(r"[^A-Za-z0-9]", "", p)
-        if core and sum(1 for c in core if c.isalpha()) >= 2:
-            alpha_parts.append(core.lower())
-    if len(alpha_parts) >= 2:
-        first, last = alpha_parts[0], alpha_parts[-1]
-        _add(f"{first}.{last}")
-        _add(f"{first}{last}")
-        _add(f"{first}_{last}")
+        parts = [p for p in re.split(r"[\s\-_]+", raw) if p.strip()]
+        alpha_parts = []
+        for p in parts:
+            core = re.sub(r"[^A-Za-z0-9]", "", p)
+            if core and sum(1 for c in core if c.isalpha()) >= 2:
+                alpha_parts.append(core.lower())
+        if len(alpha_parts) >= 2:
+            first, last = alpha_parts[0], alpha_parts[-1]
+            _add(f"{first}.{last}")
+            _add(f"{first}{last}")
+            _add(f"{first}_{last}")
+        elif len(alpha_parts) == 1:
+            _add(alpha_parts[0])
 
     return out
 
@@ -698,15 +701,15 @@ def _strip_accents(text: str) -> str:
     return "".join(ch for ch in normalized if unicodedata.category(ch) != "Mn")
 
 
-# ö → o, ä → a и т.д. (для local-part и ValidEmail)
+# ö → oe, ä → ae, ü → ue; плюс короткие o/a/u в seller_name_ascii_forms
 _LATIN_FOLD = str.maketrans(
     {
-        "ö": "o",
-        "Ö": "O",
-        "ä": "a",
-        "Ä": "A",
-        "ü": "u",
-        "Ü": "U",
+        "ö": "oe",
+        "Ö": "Oe",
+        "ä": "ae",
+        "Ä": "Ae",
+        "ü": "ue",
+        "Ü": "Ue",
         "ë": "e",
         "Ë": "E",
         "é": "e",
@@ -814,16 +817,84 @@ def strip_name_honorifics(raw: str) -> str:
     return " ".join(kept).strip() or s
 
 
-def normalize_seller_name(raw: str) -> str:
-    if not raw:
+_LATIN_FOLD_SHORT = str.maketrans(
+    {
+        "ö": "o",
+        "Ö": "O",
+        "ä": "a",
+        "Ä": "A",
+        "ü": "u",
+        "Ü": "U",
+        "ë": "e",
+        "Ë": "E",
+        "é": "e",
+        "è": "e",
+        "ê": "e",
+        "á": "a",
+        "à": "a",
+        "â": "a",
+        "í": "i",
+        "ì": "i",
+        "î": "i",
+        "ó": "o",
+        "ò": "o",
+        "ô": "o",
+        "ú": "u",
+        "ù": "u",
+        "û": "u",
+        "ñ": "n",
+        "ç": "c",
+        "ø": "o",
+        "Ø": "O",
+        "å": "a",
+        "Å": "A",
+        "æ": "ae",
+        "Æ": "AE",
+        "œ": "oe",
+        "Œ": "OE",
+        "ß": "ss",
+        "ẞ": "SS",
+        "ș": "s",
+        "Ș": "S",
+        "ş": "s",
+        "Ş": "S",
+        "ț": "t",
+        "Ț": "T",
+        "ţ": "t",
+        "Ţ": "T",
+        "ă": "a",
+        "Ă": "A",
+    }
+)
+
+
+def _ascii_fold_name(raw: str, table: dict | str) -> str:
+    s = " ".join(str(raw or "").strip().split())
+    if not s:
         return ""
-    s = " ".join(str(raw).strip().split())
-    s = s.translate(_LATIN_FOLD)
+    s = s.translate(table)
     s = _strip_accents(s)
-    # Остаточные не-ascii буквы → ближайшая латиница (NFKD + drop marks)
     s = unicodedata.normalize("NFKD", s)
     s = "".join(ch for ch in s if unicodedata.category(ch) != "Mn")
     return s.replace("'", "'").replace("`", "'")
+
+
+def seller_name_ascii_forms(raw: str) -> list[str]:
+    """ascii-формы имени: Allgäu → Allgae и Allgau."""
+    base = strip_name_honorifics(raw)
+    out: list[str] = []
+    seen: set[str] = set()
+    for table in (_LATIN_FOLD, _LATIN_FOLD_SHORT):
+        s = _ascii_fold_name(base, table)
+        if s and s not in seen:
+            seen.add(s)
+            out.append(s)
+    return out
+
+
+def normalize_seller_name(raw: str) -> str:
+    forms = seller_name_ascii_forms(raw)
+    return forms[0] if forms else ""
 
 
 def pick_name_tokens_for_email(name: str) -> list[str]:

@@ -170,6 +170,7 @@ def _make_local_part_variants(
 
     def _add(local: str) -> None:
         local = re.sub(r"[^a-z0-9._+\-_]", "", (local or "").lower())
+        local = local.replace("-", ".")
         local = re.sub(r"\.+", ".", local).strip(".")
         if not local or local in seen:
             return
@@ -189,6 +190,13 @@ def _make_local_part_variants(
     handles = pick_handle_locals(
         name, min_letters=min_letters, allow_common_first=allow_cf
     )
+    from services.seller_name import seller_name_ascii_forms
+
+    for form in seller_name_ascii_forms(name):
+        dotted = re.sub(r"[\s\-]+", ".", form)
+        if "." in dotted:
+            _add(dotted)
+
     if handles and len(parts) <= 1:
         for h in handles:
             _add(h)

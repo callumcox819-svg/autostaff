@@ -73,7 +73,7 @@ def _countries_text(active: str) -> str:
         extra = (
             "\nШвейцария: свои пресеты/темы/домены; валидация "
             "<code>gmx.ch</code>, <code>bluewin.ch</code> и др.; "
-            "HTML/GAG — <code>ricardo_ch</code> / <code>tutti_ch</code>."
+            "HTML/GAG — Ricardo / Markt.ch (<code>posta_ch</code> на генерации)."
         )
     return (
         f"{html_emoji('compass')} <b>Страны</b>\n\n"

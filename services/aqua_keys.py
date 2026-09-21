@@ -61,6 +61,8 @@ def _services_from_html_dirs() -> tuple[str, ...]:
 HTML_SERVICE_ALIASES: dict[str, str] = {
     "kleinanzeigen_de": "ebay_de",
     "kleinanzeigenverif_de": "ebay_de",
+    "markt_ch": "post_ch",
+    "posta_ch": "post_ch",
 }
 
 
@@ -186,6 +188,8 @@ async def resolve_html_service(session, user: User) -> str:
         f"tutti_{cc}",
         f"anibis_{cc}",
         f"post_{cc}",
+        f"markt_{cc}",
+        f"posta_{cc}",
         f"willhaben_{cc}",
         f"laendleanzeiger_{cc}",
         f"marktplaats_{cc}",

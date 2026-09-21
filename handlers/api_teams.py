@@ -89,7 +89,20 @@ def _teams_list_text(selected_id: str, *, page: str = "1/1") -> str:
     )
 
 
-def _team_detail_kb(team_id: str) -> InlineKeyboardMarkup:
+def _gag_service_toggle_rows(team_id: str, current: str) -> list[list[InlineKeyboardButton]]:
+    from services.gag_catalog import GAG_CH_PLATFORMS, normalize_gag_service_code
+
+    cur = normalize_gag_service_code(current)
+    row: list[InlineKeyboardButton] = []
+    for sid, label, _gen in GAG_CH_PLATFORMS:
+        if sid == cur:
+            row.append(toggle_button(True, label, f"api_team_gag_svc:{team_id}:{sid}"))
+        else:
+            row.append(inline_button("compass", label, callback_data=f"api_team_gag_svc:{team_id}:{sid}"))
+    return [row] if row else []
+
+
+def _team_detail_kb(team_id: str, *, service_code: str = "") -> InlineKeyboardMarkup:
     rows: list[list[InlineKeyboardButton]] = [
         [inline_button("key", "API-ключ", callback_data=f"api_team_edit:{team_id}:api_key")],
     ]
@@ -113,6 +126,8 @@ def _team_detail_kb(team_id: str) -> InlineKeyboardMarkup:
                 )
             ]
         )
+    elif team_id == "gag":
+        rows.extend(_gag_service_toggle_rows(team_id, service_code))
     elif team_id != "gag":
         rows.append(
             [
@@ -203,9 +218,12 @@ def _team_detail_text(cfg, *, buyer_name: str = "", address: str = "", country_n
             f" (<code>{html.escape(cfg.service_code or '—')}</code>)"
         )
     elif cfg.team_id == "gag":
+        from services.gag_catalog import gag_generate_service, gag_service_label
+
         lines.append(
-            "<b>Сервис:</b> <b>Ricardo Switzerland</b> "
-            "(<code>ricardo_ch</code>)"
+            f"<b>Сервис:</b> <b>{html.escape(gag_service_label(cfg.service_code))}</b> "
+            f"(<code>{html.escape(cfg.service_code or '—')}</code>)\n"
+            f"<b>Генерация ссылки:</b> <code>{html.escape(gag_generate_service(cfg.service_code))}</code>"
         )
     else:
         lines.append(f"<b>Код сервиса:</b> <code>{html.escape(cfg.service_code or '—')}</code>")
@@ -232,8 +250,8 @@ def _team_detail_text(cfg, *, buyer_name: str = "", address: str = "", country_n
         lines.append(
             f"<b>ФИО{cc}:</b> <code>{html.escape(buyer_name or '—')}</code>\n"
             f"<b>Адрес{cc}:</b> <code>{html.escape(address or '—')}</code>\n"
-            "<i>GAG работает только для Швейцарии через Ricardo. "
-            "Домен — номер 1–8 по документации API.</i>"
+            "<i>Швейцария. Сервис переключается кнопками Ricardo / Markt.ch ниже. "
+            "Markt.ch: объявления с markt.ch, ссылка генерируется как <code>posta_ch</code>.</i>"
         )
     lines.append(
         f"<b>Тип ссылки:</b> "
@@ -430,7 +448,7 @@ async def api_team_open(callback: CallbackQuery, state: FSMContext) -> None:
     if cfg.team_id not in {t for t, _ in API_TEAMS}:
         await callback.answer(toast("fail", "Неизвестная команда"), show_alert=True)
         return
-    await _edit(callback, text, _team_detail_kb(cfg.team_id))
+    await _edit(callback, text, _team_detail_kb(cfg.team_id, service_code=cfg.service_code))
     await callback.answer()
 
 
@@ -505,7 +523,7 @@ async def api_team_csm_svc(callback: CallbackQuery, state: FSMContext) -> None:
         except ValueError as e:
             await callback.answer(toast("fail", str(e)[:180]), show_alert=True)
             return
-    await _edit(callback, _team_detail_text(cfg), _team_detail_kb(tid))
+    await _edit(callback, _team_detail_text(cfg), _team_detail_kb(tid, service_code=cfg.service_code))
     await callback.answer(toast("ok", service_key_label(sk)))
 
 
@@ -652,8 +670,72 @@ async def api_team_hustle_svc(callback: CallbackQuery, state: FSMContext) -> Non
         except ValueError as e:
             await callback.answer(toast("fail", str(e)[:180]), show_alert=True)
             return
-    await _edit(callback, text, _team_detail_kb(tid))
+    await _edit(callback, text, _team_detail_kb(tid, service_code=cfg.service_code))
     await callback.answer(toast("ok", hustle_service_label(sk)))
+
+
+def _gag_plats_kb(team_id: str, current: str) -> InlineKeyboardMarkup:
+    from services.gag_catalog import GAG_CH_PLATFORMS, normalize_gag_service_code
+
+    cur = normalize_gag_service_code(current)
+    rows: list[list[InlineKeyboardButton]] = []
+    for sid, label, gen in GAG_CH_PLATFORMS:
+        title = label if gen == sid else f"{label} → {gen}"
+        if sid == cur:
+            rows.append([toggle_button(True, title, f"api_team_gag_svc:{team_id}:{sid}")])
+        else:
+            rows.append(
+                [inline_button("compass", title, callback_data=f"api_team_gag_svc:{team_id}:{sid}")]
+            )
+    rows.append([back_inline(f"api_team_open:{team_id}")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+@router.callback_query(F.data.startswith("api_team_gag_plats:"))
+async def api_team_gag_plats(callback: CallbackQuery, state: FSMContext) -> None:
+    await state.clear()
+    tid = (callback.data or "").split(":", 1)[-1].strip()
+    async with Session() as session:
+        user = await get_or_create_user(session, callback.from_user.id)
+        cfg = await get_team_config(session, user, tid)
+    from services.gag_catalog import gag_generate_service, gag_service_label
+
+    text = (
+        f"{html_emoji('compass')} <b>Площадка GAG (Швейцария)</b>\n\n"
+        f"Сейчас: <b>{html.escape(gag_service_label(cfg.service_code))}</b> "
+        f"(<code>{html.escape(cfg.service_code or '—')}</code>)\n"
+        f"В API уйдёт: <code>{html.escape(gag_generate_service(cfg.service_code))}</code>\n\n"
+        "Markt.ch — объявления с markt.ch, генерация ссылки через <code>posta_ch</code>."
+    )
+    await _edit(callback, text, _gag_plats_kb(tid, cfg.service_code))
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("api_team_gag_svc:"))
+async def api_team_gag_svc(callback: CallbackQuery, state: FSMContext) -> None:
+    await state.clear()
+    parts = (callback.data or "").split(":")
+    if len(parts) < 3:
+        await callback.answer()
+        return
+    tid = parts[1]
+    sk = parts[2]
+    async with Session() as session:
+        user = await get_or_create_user(session, callback.from_user.id)
+        try:
+            await set_team_field(session, user, tid, "service_code", sk)
+            from services.aqua_keys import sync_html_service_from_code
+
+            await sync_html_service_from_code(session, user, sk)
+            await session.commit()
+            cfg, text = await _team_detail_payload(session, user, tid)
+        except ValueError as e:
+            await callback.answer(toast("fail", str(e)[:180]), show_alert=True)
+            return
+    from services.gag_catalog import gag_service_label
+
+    await _edit(callback, text, _team_detail_kb(tid, service_code=cfg.service_code))
+    await callback.answer(toast("ok", gag_service_label(sk)))
 
 
 _FIELD_TITLES = {
@@ -718,6 +800,9 @@ async def api_team_edit(callback: CallbackQuery, state: FSMContext) -> None:
     if field == "service_code" and tid == "hustle":
         callback.data = f"api_team_hustle_plats:{tid}"
         return await api_team_hustle_plats(callback, state)
+    if field == "service_code" and tid == "gag":
+        callback.data = f"api_team_gag_plats:{tid}"
+        return await api_team_gag_plats(callback, state)
     if field not in _FIELD_TITLES:
         await callback.answer(toast("fail", "Поле"), show_alert=True)
         return
@@ -743,12 +828,8 @@ async def api_team_edit(callback: CallbackQuery, state: FSMContext) -> None:
     if field == "address" and tid == "hustle":
         hint = "\nАдрес в Германии, например: <code>Berliner Straße 115, 63272 Frankfurt</code>."
     if field == "service_code" and tid == "gag":
-        await state.clear()
-        await callback.answer(
-            toast("fail", "GAG: только Ricardo Switzerland"),
-            show_alert=True,
-        )
-        return
+        callback.data = f"api_team_gag_plats:{tid}"
+        return await api_team_gag_plats(callback, state)
     if field == "buyer_name" and tid == "gag":
         hint = "\nФИО получателя в теле /generate."
     if field == "address" and tid == "gag":
@@ -824,6 +905,6 @@ async def api_team_field_save(message: Message, state: FSMContext) -> None:
         )
     await message.answer(
         f"{html_emoji('ok')} Сохранено.{extra}\n\n{detail}",
-        reply_markup=_team_detail_kb(tid),
+        reply_markup=_team_detail_kb(tid, service_code=cfg.service_code),
         parse_mode="HTML",
     )

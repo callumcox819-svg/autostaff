@@ -90,7 +90,9 @@ def default_service_for_team(team_id: str) -> str:
     if team_id == "hustle":
         return "kleinanzeigen_de"
     if team_id == "gag":
-        return "ricardo_ch"
+        from services.gag_catalog import normalize_gag_service_code
+
+        return normalize_gag_service_code("ricardo_ch")
     return ""
 
 
@@ -141,7 +143,11 @@ async def set_team_field(session, user: User, team_id: str, field: str, value: s
     if field == "team_key":
         raise ValueError("Team-ключ задаётся только на сервере")
     if tid == "gag" and field == "service_code":
-        raise ValueError("GAG работает только с Ricardo Switzerland (ricardo_ch)")
+        from services.gag_catalog import is_gag_service_code, normalize_gag_service_code
+
+        if not is_gag_service_code(value):
+            raise ValueError("GAG: только Ricardo (ricardo_ch) или Markt.ch (markt_ch)")
+        value = normalize_gag_service_code(value)
     if field == "api_key":
         value = clean_secret(value)
     elif field == "link_type":
@@ -185,7 +191,9 @@ async def get_team_config(session, user: User, team_id: str) -> ApiTeamConfig:
 
         api_key = (await get_user_aqua_user_key_async(session, user) or "").strip()
     if tid == "gag":
-        service_code = "ricardo_ch"
+        from services.gag_catalog import normalize_gag_service_code
+
+        service_code = normalize_gag_service_code(service_code)
     link_type = await get_team_field(session, user, tid, "link_type") or "lk"
     if tid == "gag" and link_type not in _GAG_LINK_TYPE_IDS:
         link_type = "lk"

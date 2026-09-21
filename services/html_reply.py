@@ -60,7 +60,9 @@ async def prepare_html_body(html: str, session, user: User) -> str:
 
 
 def _canon_email(email: str) -> str:
-    return (email or "").strip().lower()
+    from services.email_address import canonicalize_dialog_email
+
+    return canonicalize_dialog_email(email)
 
 
 def _html_currency_for_country(country: str) -> str:
@@ -123,17 +125,19 @@ async def build_offer_html_ctx(
     link: str = "",
     offer=None,
     mail=None,
+    account_email: str = "",
 ) -> dict[str, str]:
     """Контекст для HTML: лот (title/price/photo) + покупатель (поля HTML Evoleum) + ссылка."""
     from datetime import datetime
 
-    from sqlalchemy import select
+    from sqlalchemy import func, select
 
     from models import Offer, OfferEmail, User
     from services.aqua_keys import resolve_html_buyer_profile
     from services.aqua_link import normalize_http_image_url, resolve_aqua_image_url
     from services.enabled_countries import get_active_country
     from services.offer_storage import (
+        offer_aqua_pin,
         offer_effective_photo,
         offer_effective_price,
         offer_effective_title,
@@ -156,17 +160,20 @@ async def build_offer_html_ctx(
                     )
                 ).scalars().first()
         if off is None:
-            canon = _canon_email(seller_email)
-            off = (
-                await session.execute(
-                    select(Offer)
-                    .join(OfferEmail, OfferEmail.offer_id == Offer.id)
-                    .where(Offer.user_id == int(user_id))
-                    .where(OfferEmail.email == canon)
-                    .order_by(Offer.id.desc())
-                    .limit(1)
-                )
-            ).scalars().first()
+            from services.email_address import dialog_email_match_keys
+
+            seller_keys = dialog_email_match_keys(seller_email)
+            if seller_keys:
+                off = (
+                    await session.execute(
+                        select(Offer)
+                        .join(OfferEmail, OfferEmail.offer_id == Offer.id)
+                        .where(Offer.user_id == int(user_id))
+                        .where(func.lower(OfferEmail.email).in_(seller_keys))
+                        .order_by(Offer.id.desc())
+                        .limit(1)
+                    )
+                ).scalars().first()
         if off:
             title = (offer_effective_title(off) or "").strip()
             photo = normalize_http_image_url(offer_effective_photo(off))
@@ -214,12 +221,54 @@ async def build_offer_html_ctx(
 
     pin_price = ""
     try:
-        inbox = (getattr(mail, "account_email", None) or "").strip() if mail is not None else ""
-        pin_link, pin_price = await load_dialog_html_pin(
+        inbox = (account_email or "").strip()
+        if not inbox and mail is not None:
+            inbox = (getattr(mail, "account_email", None) or "").strip()
+        pin_link, pin_price, pin_offer_id = await load_dialog_html_pin(
             session, int(user_id), inbox_email=inbox, seller_email=seller_email
         )
-        if pin_link and not (link or "").strip():
+        if off is None and pin_offer_id:
+            off = (
+                await session.execute(
+                    select(Offer)
+                    .where(Offer.id == int(pin_offer_id))
+                    .where(Offer.user_id == int(user_id))
+                    .limit(1)
+                )
+            ).scalars().first()
+            if off:
+                title = title or (offer_effective_title(off) or "").strip()
+                photo = photo or normalize_http_image_url(offer_effective_photo(off))
+                offer_price_raw = (offer_effective_price(off, default="") or "").strip() or (
+                    getattr(off, "price", None) or ""
+                ).strip()
+        offer_link, offer_pin_price = "", ""
+        if off is not None:
+            offer_link, offer_pin_price = offer_aqua_pin(off)
+        if not offer_link:
+            offer_link, offer_pin_price, pin_off = await _latest_offer_aqua_pin_for_seller(
+                session, int(user_id), seller_email
+            )
+            if pin_off is not None and off is None:
+                off = pin_off
+                title = title or (offer_effective_title(off) or "").strip()
+                photo = photo or normalize_http_image_url(offer_effective_photo(off))
+                offer_price_raw = (offer_effective_price(off, default="") or "").strip() or (
+                    getattr(off, "price", None) or ""
+                ).strip()
+        mail_pin_link, mail_pin_price, mail_pin_oid = await _latest_mail_aqua_pin(
+            session, int(user_id), seller_email
+        )
+        pin_price = offer_pin_price or pin_price or mail_pin_price
+        # Только последняя сгенерированная ссылка (пин лота / свежее письмо).
+        # Аргумент link / stale conv / первая parse-ссылка не имеют приоритета.
+        if offer_link:
+            link = offer_link
+        elif mail_pin_link:
+            link = mail_pin_link
+        elif pin_link:
             link = pin_link
+        _ = mail_pin_oid
     except Exception:
         pin_price = ""
 
@@ -250,24 +299,81 @@ async def build_offer_html_ctx(
 
 
 async def _get_conversation_link(session, user_id: int, inbox_email: str, seller_email: str):
-    from sqlalchemy import func, select
+    from sqlalchemy import case, func, select
 
     from models import ConversationLink
+    from services.email_address import dialog_email_match_keys
 
-    inbox = _canon_email(inbox_email)
-    seller = _canon_email(seller_email)
-    if not inbox or not seller:
+    seller_keys = dialog_email_match_keys(seller_email)
+    if not seller_keys:
         return None
-    return (
-        await session.execute(
-            select(ConversationLink)
-            .where(ConversationLink.user_id == int(user_id))
-            .where(func.lower(ConversationLink.account_email) == inbox)
-            .where(func.lower(ConversationLink.from_email) == seller)
-            .order_by(ConversationLink.id.desc())
-            .limit(1)
+    inbox_keys = dialog_email_match_keys(inbox_email)
+    q = (
+        select(ConversationLink)
+        .where(ConversationLink.user_id == int(user_id))
+        .where(func.lower(ConversationLink.from_email).in_(seller_keys))
+        .order_by(
+            case(
+                (
+                    (ConversationLink.generated_link.isnot(None))
+                    & (func.length(ConversationLink.generated_link) > 0),
+                    0,
+                ),
+                else_=1,
+            ),
+            ConversationLink.id.desc(),
         )
-    ).scalars().first()
+    )
+    if inbox_keys:
+        exact = (
+            await session.execute(
+                q.where(func.lower(ConversationLink.account_email).in_(inbox_keys)).limit(1)
+            )
+        ).scalars().first()
+        if exact:
+            return exact
+    return (await session.execute(q.limit(1))).scalars().first()
+
+
+async def _latest_offer_aqua_pin_for_seller(
+    session, user_id: int, seller_email: str
+) -> tuple[str, str, object | None]:
+    from sqlalchemy import func, select
+
+    from models import Offer, OfferEmail
+    from services.email_address import dialog_email_match_keys
+    from services.offer_storage import AQUA_PIN_LINK_KEY, offer_aqua_pin
+
+    seller_keys = dialog_email_match_keys(seller_email)
+    if seller_keys:
+        rows = (
+            await session.execute(
+                select(Offer)
+                .join(OfferEmail, OfferEmail.offer_id == Offer.id)
+                .where(Offer.user_id == int(user_id))
+                .where(func.lower(OfferEmail.email).in_(seller_keys))
+                .order_by(Offer.id.desc())
+                .limit(8)
+            )
+        ).scalars().all()
+        for off in rows:
+            ol, op = offer_aqua_pin(off)
+            if ol:
+                return ol, op, off
+    rows = (
+        await session.execute(
+            select(Offer)
+            .where(Offer.user_id == int(user_id))
+            .where(Offer.raw_json.contains(AQUA_PIN_LINK_KEY))
+            .order_by(Offer.id.desc())
+            .limit(8)
+        )
+    ).scalars().all()
+    for off in rows:
+        ol, op = offer_aqua_pin(off)
+        if ol:
+            return ol, op, off
+    return "", "", None
 
 
 async def load_dialog_html_pin(
@@ -276,14 +382,62 @@ async def load_dialog_html_pin(
     *,
     inbox_email: str,
     seller_email: str,
-) -> tuple[str, str]:
+) -> tuple[str, str, int | None]:
     """Последняя AQUA-ссылка и цена диалога (после «Создать ссылку» / смены цены)."""
     conv = await _get_conversation_link(session, user_id, inbox_email, seller_email)
-    if not conv:
-        return "", ""
-    link = (getattr(conv, "generated_link", None) or "").strip()
-    price = (getattr(conv, "last_generated_price", None) or "").strip()
-    return link, price
+    link = ""
+    price = ""
+    oid_i = None
+    if conv:
+        link = (getattr(conv, "generated_link", None) or "").strip()
+        price = (getattr(conv, "last_generated_price", None) or "").strip()
+        oid = getattr(conv, "pinned_offer_id", None)
+        try:
+            oid_i = int(oid) if oid else None
+        except (TypeError, ValueError):
+            oid_i = None
+    if not link:
+        mail_link, mail_price, mail_oid = await _latest_mail_aqua_pin(
+            session, user_id, seller_email
+        )
+        link = link or mail_link
+        price = price or mail_price
+        oid_i = oid_i or mail_oid
+    return link, price, oid_i
+
+
+async def _latest_mail_aqua_pin(session, user_id: int, seller_email: str) -> tuple[str, str, int | None]:
+    from sqlalchemy import func, select
+
+    from models import IncomingMail
+    from services.email_address import dialog_email_match_keys
+
+    seller_keys = dialog_email_match_keys(seller_email)
+    if not seller_keys:
+        return "", "", None
+    row = (
+        await session.execute(
+            select(IncomingMail)
+            .where(IncomingMail.user_id == int(user_id))
+            .where(func.lower(IncomingMail.from_email).in_(seller_keys))
+            .where(IncomingMail.generated_link.isnot(None))
+            .where(func.length(IncomingMail.generated_link) > 0)
+            .order_by(IncomingMail.id.desc())
+            .limit(1)
+        )
+    ).scalars().first()
+    if not row:
+        return "", "", None
+    oid = getattr(row, "resolved_offer_id", None)
+    try:
+        oid_i = int(oid) if oid else None
+    except (TypeError, ValueError):
+        oid_i = None
+    return (
+        (getattr(row, "generated_link", None) or "").strip(),
+        (getattr(row, "offer_price", None) or "").strip(),
+        oid_i,
+    )
 
 
 async def resolve_aqua_link_for_reply(
@@ -294,10 +448,17 @@ async def resolve_aqua_link_for_reply(
     seller_email: str,
     mail_generated_link: str | None = None,
 ) -> str:
-    """AQUA-ссылка: сначала последняя на диалоге, иначе с конкретного письма."""
-    pin_link, _ = await load_dialog_html_pin(
+    """AQUA-ссылка: пин лота после смены цены, иначе диалог, иначе письмо."""
+    pin_link, _, pin_oid = await load_dialog_html_pin(
         session, int(user_id), inbox_email=account_email, seller_email=seller_email
     )
+    if pin_oid:
+        from services.offer_storage import offer_aqua_pin, live_user_offer
+
+        off = await live_user_offer(session, user_id=int(user_id), offer_id=int(pin_oid))
+        ol, _ = offer_aqua_pin(off)
+        if ol:
+            return ol
     if pin_link:
         return pin_link
     return (mail_generated_link or "").strip()

@@ -310,7 +310,7 @@ def _normalize_person_name(raw_name: str) -> str:
     if not s:
         return ""
     compact = re.sub(r"\s+", "", s)
-    if " " not in s and re.fullmatch(r"[A-Za-z0-9_]+", compact):
+    if " " not in s and re.fullmatch(r"[A-Za-z0-9_\-]+", compact):
         return s.strip()
     # Dr. Michael Raufeisen → Michael Raufeisen (не Dr + фамилия)
     cleaned = strip_name_honorifics(s)
@@ -336,36 +336,47 @@ def _normalize_items(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """
     out: List[Dict[str, Any]] = []
     for x in items or []:
-        raw_name = str(
-            x.get("person_name")
-            or x.get("name")
-            or x.get("item_person_name")
-            or ""
-        ).strip()
+        from services.offer_storage import _title_from_item_dict, fields_from_item
+
+        y = dict(x)
+        fields = fields_from_item(y)
+        raw_name = seller_name_from_item(y)
 
         norm = _normalize_person_name(raw_name)
-        y = dict(x)
-
         if norm:
             y["name"] = norm
             y["person_name"] = norm
-            # Оригинал из JSON не теряем (Irene / Bregenznet / Имя Фамилия).
+            # Оригинал из JSON не теряем (Irene / Bregenznet / seller_name).
             if not str(y.get("item_person_name") or "").strip():
                 y["item_person_name"] = raw_name or norm
+            if not str(y.get("seller_name") or "").strip():
+                y["seller_name"] = raw_name or norm
 
-        # подстрахуем поля под наш pipeline (VOID: item_title / title / вложенный void)
-        from services.offer_storage import _title_from_item_dict
-
-        t = _title_from_item_dict(x)
+        t = fields["title"] or _title_from_item_dict(x)
         if t:
             y["item_title"] = t
             y["title"] = t
         elif "title" not in y and isinstance(x.get("item_title"), str):
             y["title"] = x["item_title"]
-        if "link" not in y and isinstance(x.get("item_link"), str):
+        link = fields["link"]
+        if link:
+            y["item_link"] = link
+            y["link"] = link
+        elif "link" not in y and isinstance(x.get("item_link"), str):
             y["link"] = x["item_link"]
-        if "price" not in y and isinstance(x.get("item_price"), (str, int, float)):
+        price = fields["price"]
+        currency = str(x.get("currency") or "").strip()
+        if price:
+            if currency and currency.upper() not in price.upper():
+                price = f"{price} {currency}"
+            y["item_price"] = price
+            y["price"] = price
+        elif "price" not in y and isinstance(x.get("item_price"), (str, int, float)):
             y["price"] = str(x["item_price"])
+        photo = fields["photo"]
+        if photo:
+            y["item_photo"] = photo
+            y["photo"] = photo
 
         out.append(y)
     return out
@@ -385,7 +396,10 @@ def _extract_items(data: Any) -> List[Dict[str, Any]]:
                 if isinstance(nested, list):
                     return [x for x in nested if isinstance(x, dict)]
         # одиночный лот
-        if any(k in data for k in ("item_link", "item_title", "link", "title")):
+        if any(
+            k in data
+            for k in ("item_link", "item_title", "link", "title", "url", "seller_name")
+        ):
             return [data]
     return []
 

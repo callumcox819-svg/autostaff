@@ -103,7 +103,13 @@ def offer_fingerprint(item: dict[str, Any]) -> str:
     if lk:
         return f"link:{lk}"
     title = str(item.get("item_title") or item.get("title") or "").strip().lower()[:120]
-    name = str(item.get("item_person_name") or item.get("person_name") or item.get("name") or "").strip().lower()[:80]
+    name = str(
+        item.get("item_person_name")
+        or item.get("seller_name")
+        or item.get("person_name")
+        or item.get("name")
+        or ""
+    ).strip().lower()[:80]
     return f"t:{title}|n:{name}"
 
 
@@ -143,7 +149,12 @@ def fields_from_item(item: dict[str, Any]) -> dict[str, str]:
         "price": str(item.get("item_price") or item.get("price") or "").strip(),
         "link": str(item.get("item_link") or item.get("link") or item.get("url") or "").strip(),
         "photo": str(
-            item.get("item_photo") or item.get("photo") or item.get("image") or item.get("img") or ""
+            item.get("item_photo")
+            or item.get("photo")
+            or item.get("main_image")
+            or item.get("image")
+            or item.get("img")
+            or ""
         ).strip(),
     }
 
@@ -1643,6 +1654,7 @@ async def save_all_offers_from_import(
             "item_person_name",
             str(
                 it.get("item_person_name")
+                or it.get("seller_name")
                 or it.get("person_name")
                 or it.get("name")
                 or ""

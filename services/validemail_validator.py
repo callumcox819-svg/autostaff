@@ -790,6 +790,7 @@ async def _validate_offers_old(
 
     if stats is not None:
         stats["validemail_keys"] = n_keys
+        stats["validemail_hard_keys"] = hard_n
         stats["validemail_per_key"] = per_key_limit
         stats["validemail_threads"] = n_keys
         stats["validemail_pool"] = parallel_pool
@@ -869,7 +870,15 @@ async def _validate_offers_old(
             except Exception:
                 pass
 
-        use_keys = [api_key]
+        from services.validemail_keys import (
+            hard_backend_enabled,
+            resolve_validemail_api_keys,
+        )
+
+        if hard_backend_enabled():
+            use_keys = resolve_validemail_api_keys() or [api_key]
+        else:
+            use_keys = [api_key]
         use_stop = bool(stop_on_first_ok) and len(batch_emails) >= 2
         return await validate_emails_fast(
             batch_emails,
@@ -1336,7 +1345,12 @@ async def _validate_offers_old(
             "price": str(it.get("item_price") or it.get("price") or "").strip(),
             "link": str(it.get("item_link") or it.get("link") or it.get("url") or "").strip(),
             "photo": str(
-                it.get("item_photo") or it.get("photo") or it.get("image") or it.get("img") or ""
+                it.get("item_photo")
+                or it.get("photo")
+                or it.get("main_image")
+                or it.get("image")
+                or it.get("img")
+                or ""
             ).strip(),
             "emails": list(found),
         })

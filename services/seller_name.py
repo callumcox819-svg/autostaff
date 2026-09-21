@@ -682,16 +682,35 @@ def person_tokens_for_email(name: str) -> list[str]:
     return out
 
 
+_MARKT_PROFILE_RENAME_RE = re.compile(
+    r"(?:Neu)?Das Mitglied hat vor kurzem den Profilnamen geändert\.?\s*$",
+    re.IGNORECASE,
+)
+
+
+def clean_parser_seller_name(raw: str) -> str:
+    """Убрать хвост markt.ch про смену профильного имени."""
+    s = (raw or "").strip()
+    if not s:
+        return ""
+    s = _MARKT_PROFILE_RENAME_RE.sub("", s).strip()
+    return s
+
+
 def seller_name_from_item(item: dict[str, Any]) -> str:
     if not isinstance(item, dict):
         return ""
-    return str(
-        item.get("item_person_name")
-        or item.get("person_name")
-        or item.get("name")
-        or item.get("seller")
-        or ""
-    ).strip()
+    for key in (
+        "item_person_name",
+        "seller_name",
+        "person_name",
+        "seller",
+        "name",
+    ):
+        v = clean_parser_seller_name(str(item.get(key) or ""))
+        if v:
+            return v
+    return ""
 
 
 def _strip_accents(text: str) -> str:

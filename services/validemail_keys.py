@@ -11,6 +11,28 @@ MAILCHECK_DEFAULT_URL = (
     "https://validator-production-7106.up.railway.app/api/v1/validate"
 )
 MAILCHECK_DUMMY_KEY = "mailcheck"
+VALIDEMAIL_HARD_URL_DEFAULT = "https://validemail.co/api/v1/validate"
+
+_DUMMY_KEYS = frozenset({"mailcheck", "none", "dummy"})
+
+# CH/DE ISP: всегда validemail.co, даже если кто-то добавил их в EASY_DOMAINS.
+_ALWAYS_HARD_DOMAINS = frozenset(
+    {
+        "gmx.ch",
+        "gmx.de",
+        "gmx.net",
+        "gmx.at",
+        "gmx.com",
+        "web.de",
+        "t-online.de",
+        "online.de",
+        "bluewin.ch",
+        "bluemail.ch",
+        "sunrise.ch",
+        "hispeed.ch",
+        "swisscom.ch",
+    }
+)
 
 
 def is_mailcheck_style_url(url: str | None = None) -> bool:
@@ -47,18 +69,27 @@ def _parse_key_list(raw: str) -> list[str]:
 
 
 def hard_validation_url() -> str:
-    """validemail.co (или другой) только для сложных доменов. Пусто = dual выкл."""
-    return (os.getenv("VALIDEMAIL_HARD_URL") or "").strip()
+    """validemail.co для сложных доменов. Пусто только если нет hard-ключей."""
+    explicit = (os.getenv("VALIDEMAIL_HARD_URL") or "").strip()
+    if explicit:
+        return explicit
+    if _hard_keys_raw():
+        return VALIDEMAIL_HARD_URL_DEFAULT
+    return ""
 
 
-def resolve_hard_api_keys() -> list[str]:
-    """5–6 ключей validemail.co для GMX/web.de/bluewin/sunrise и т.п."""
+def _is_dummy_key(k: str) -> bool:
+    return (k or "").strip().lower() in _DUMMY_KEYS
+
+
+def _hard_keys_raw() -> list[str]:
+    """8 ключей validemail.co: HARD_* или настоящие VALIDEMAIL_API_KEYS (не mailcheck)."""
     out: list[str] = []
     seen: set[str] = set()
 
     def add(k: str) -> None:
         s = (k or "").strip()
-        if not s or s.lower() in {"mailcheck", "none", "dummy"} or s in seen:
+        if not s or _is_dummy_key(s) or s in seen:
             return
         seen.add(s)
         out.append(s)
@@ -68,7 +99,17 @@ def resolve_hard_api_keys() -> list[str]:
     add(os.getenv("VALIDEMAIL_HARD_API_KEY") or "")
     for i in range(1, 33):
         add(os.getenv(f"VALIDEMAIL_HARD_API_KEY_{i}") or "")
+    if out:
+        return out
+    # В боте часто кладут 8 co-ключей в VALIDEMAIL_API_KEYS — их нельзя скармливать mailcheck.
+    for k in keys_from_config():
+        add(k)
     return out
+
+
+def resolve_hard_api_keys() -> list[str]:
+    """Ключи validemail.co для GMX/bluewin/sunrise и прочих hard-доменов."""
+    return _hard_keys_raw()
 
 
 def hard_backend_enabled() -> bool:
@@ -113,7 +154,7 @@ def is_easy_validation_domain(domain_or_email: str) -> bool:
 
 
 def is_hard_validation_domain(domain_or_email: str) -> bool:
-    """GMX/web/ISP и прочие не-gmail → validemail.co; gmail/icloud → mailcheck."""
+    """GMX/bluewin/sunrise и прочие не-gmail → validemail.co; gmail/icloud → mailcheck."""
     if not hard_backend_enabled():
         return False
     s = (domain_or_email or "").strip().lower()
@@ -121,24 +162,22 @@ def is_hard_validation_domain(domain_or_email: str) -> bool:
         s = s.rsplit("@", 1)[-1]
     if not s:
         return False
+    if s in _ALWAYS_HARD_DOMAINS or s.startswith("gmx."):
+        return True
+    extra_hard = hard_validation_domains()
+    if s in extra_hard:
+        return True
     if is_easy_validation_domain(s):
         return False
     return True
 
 
 def resolve_validemail_api_keys() -> list[str]:
-    """Ключи «лёгкого» бэкенда (mailcheck / VALIDEMAIL_URL)."""
+    """Ключи «лёгкого» бэкенда. При dual всегда mailcheck, не ключи validemail.co."""
     keys = keys_from_config()
-    # Не путать hard co-ключи с mailcheck: если в VALIDEMAIL_API_KEYS только
-    # настоящие ключи, а URL — mailcheck и включён hard — оставляем dummy.
-    if hard_backend_enabled() and is_mailcheck_style_url():
+    if hard_backend_enabled():
         easy = [k for k in keys if k.lower() in {"mailcheck", "none", "dummy"}]
-        if easy:
-            return easy
-        if not keys:
-            return [MAILCHECK_DUMMY_KEY]
-        # Явно заданы чужие ключи при mailcheck URL — всё равно mailcheck dummy.
-        return [MAILCHECK_DUMMY_KEY]
+        return easy or [MAILCHECK_DUMMY_KEY]
     if keys:
         return keys
     if is_mailcheck_style_url():

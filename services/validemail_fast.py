@@ -1114,10 +1114,11 @@ async def validate_emails_fast(
         except Exception:
             pass
         if hard_url and hard_keys:
+            easy_url = MAILCHECK_DEFAULT_URL
             return await _validate_emails_partitioned(
                 emails_list,
                 easy_keys=easy_keys,
-                easy_url=url,
+                easy_url=easy_url,
                 hard_keys=hard_keys,
                 hard_url=hard_url,
                 concurrency=concurrency,

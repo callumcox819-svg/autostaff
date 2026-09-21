@@ -21,20 +21,26 @@ def apply_offer_to_text(text: str, offer_title: str) -> str:
     return re_sub_literal(_OFFER_TOKEN_RE, title, txt)
 
 
-def ensure_item_title_in_body(body: str, offer_title: str) -> str:
-    """
-    Если в теле нет названия товара — дописать строку на DE.
-    Иначе Gmail видит «массовый шаблон»: subject = товар, body без названия.
-    """
+def ensure_item_title_in_body(body: str, offer_title: str, *, country: str | None = None) -> str:
+    """Если в теле нет названия товара — дописать строку на языке страны."""
     b = (body or "").strip()
     t = (offer_title or "").strip()
     if not b or not t or len(t) < 3:
         return body
     if t.lower() in b.lower():
         return body
-    return f"{b}\n\nEs geht um Ihr Inserat: {t}."
+    cc = (country or "").strip().lower()
+    if cc in {"de", "at", "ch"}:
+        line = f"Es geht um Ihr Inserat: {t}."
+    elif cc == "nl":
+        line = f"Het gaat om uw advertentie: {t}."
+    elif cc == "pt":
+        line = f"Trata-se do seu anúncio: {t}."
+    else:
+        line = f"This is about your listing: {t}."
+    return f"{b}\n\n{line}"
 
 
-def finalize_mailing_body(body: str, offer_title: str) -> str:
+def finalize_mailing_body(body: str, offer_title: str, *, country: str | None = None) -> str:
     out = apply_offer_to_text(body or "", offer_title or "")
-    return ensure_item_title_in_body(out, offer_title or "")
+    return ensure_item_title_in_body(out, offer_title or "", country=country)

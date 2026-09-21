@@ -375,12 +375,7 @@ async def user_profile_fields_complete(session, user: User) -> bool:
 
 
 async def get_user_aqua_profile_display(session, user: User) -> str:
-    """Подпись профиля для карточки ссылки.
-
-    Для Evoleum ФИО на лендинге берётся из Profile ID в GOO, не из локального
-    кэша. Локальные title/name показываем только если они привязаны к тому же
-    Profile ID — иначе не светим чужое имя (типа старой Anna).
-    """
+    """Подпись профиля для карточки ссылки."""
     try:
         from services.api_teams import get_selected_team_config, get_team_field
 
@@ -398,6 +393,18 @@ async def get_user_aqua_profile_display(session, user: User) -> str:
                 return title or name
             if pid:
                 return pid
+        if cfg.team_id == "csm":
+            pid = (cfg.profile_id or "").strip()
+            name, _addr = await resolve_html_buyer_profile(session, user)
+            name = (name or "").strip()
+            if name and pid:
+                return f"{name} · {pid}"
+            return name or pid
+        if cfg.team_id in {"hustle", "gag"}:
+            name, _addr = await resolve_html_buyer_profile(session, user)
+            name = (name or "").strip()
+            if name:
+                return name
     except Exception:
         pass
     title = await get_user_profile_title(session, user)

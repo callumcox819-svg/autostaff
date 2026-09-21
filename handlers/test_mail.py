@@ -310,7 +310,7 @@ async def _build_test_message(
     body = apply_placeholders(base_text, link=link, ctx=ctx)
     from services.offer_text import finalize_mailing_body
 
-    body = finalize_mailing_body(body, item_title)
+    body = finalize_mailing_body(body, item_title, country=country)
     subject, body = finalize_inbox_mail(
         subject,
         body,

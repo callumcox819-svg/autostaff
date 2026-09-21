@@ -136,12 +136,22 @@ def _mail_country(country: str | None) -> str:
     return (country or "nl").strip().lower()
 
 
+_PORTUGUESE_SUCCESS_BODIES: tuple[str, ...] = (
+    "Olá, o anúncio ainda está disponível?",
+    "Bom dia, o artigo ainda está à venda?",
+    "Olá, isto ainda está atual?",
+    "Olá, o artigo já foi vendido?",
+)
+
+
 def pick_inbox_success_body(country: str | None = None) -> str:
     cc = _mail_country(country)
     if cc in {"de", "at", "ch"}:
         return random.choice(_GERMAN_SUCCESS_BODIES)
     if cc == "nl":
         return random.choice(INBOX_SUCCESS_BODIES)
+    if cc == "pt":
+        return random.choice(_PORTUGUESE_SUCCESS_BODIES)
     return random.choice(_ENGLISH_SUCCESS_BODIES)
 
 
@@ -323,6 +333,9 @@ def add_inbox_body_variation(
     elif cc == "nl":
         openers = _INBOX_OPENERS
         closings = _INBOX_CLOSINGS
+    elif cc == "pt":
+        openers = ("", "Olá,\n\n", "Bom dia,\n\n")
+        closings = ("Com os melhores cumprimentos", "Atenciosamente", "Obrigado")
     else:
         openers = ("", "Hello,\n\n", "Hi,\n\n")
         closings = ("Kind regards", "Best regards", "Thank you")
@@ -368,6 +381,8 @@ def apply_mailing_body_policy(
             closing = "Freundliche Grüße"
         elif cc == "nl":
             closing = "Met vriendelijke groet"
+        elif cc == "pt":
+            closing = "Com os melhores cumprimentos"
         else:
             closing = "Kind regards"
         out = f"{out.rstrip()}\n\n{closing}\n{name}"

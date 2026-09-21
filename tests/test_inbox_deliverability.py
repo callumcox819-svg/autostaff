@@ -106,6 +106,19 @@ class InboxDeliverabilityTests(unittest.TestCase):
         )
         self.assertTrue(body.endswith("Freundliche Grüße\nAnna Gremlis"))
 
+    def test_pt_fallback_is_portuguese(self):
+        from services.mailing_deliverability import pick_inbox_success_body
+        from services.offer_text import finalize_mailing_body
+
+        body = pick_inbox_success_body("pt")
+        self.assertTrue(
+            any(w in body.lower() for w in ("olá", "anúncio", "artigo", "venda"))
+        )
+        self.assertNotIn("still for sale", body.lower())
+        out = finalize_mailing_body("Olá, ainda disponível?", "Bicicleta", country="pt")
+        self.assertIn("anúncio: Bicicleta", out)
+        self.assertNotIn("Inserat", out)
+
 
 if __name__ == "__main__":
     unittest.main()

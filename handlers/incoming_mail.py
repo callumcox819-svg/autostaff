@@ -1460,19 +1460,38 @@ def _clean(v: str | None) -> str:
 
 
 def _service_label_for_card(service_code: str) -> str:
-    """Human-readable service label for the link card.
-
-    IMPORTANT: used only for UI rendering (per TZ).
-    """
-    sc = (service_code or "").strip().lower()
-
-    # CH marketplace labels removed
-
-    # FB (inbox)
-    if sc in {"facebook", "facebook.com"}:
+    """Human-readable service label for the link card."""
+    sc = (service_code or "").strip()
+    low = sc.lower()
+    if low in {"facebook", "facebook.com"}:
         return "facebook.com"
+    if low in {"olx_pt", "olx.pt"}:
+        return "OLX.pt"
+    if "_" in low and low.split("_", 1)[0] == "olx":
+        cc = low.split("_", 1)[-1]
+        return f"OLX.{cc}" if cc and cc != "pt" else "OLX.pt"
+    return sc or "—"
 
-    return service_code or "—"
+
+def _generate_card_service_label(*, team_id: str, service_code: str, offer) -> str:
+    """На карточке ссылки — площадка генерации (OLX), не домен лота (marktplaats)."""
+    tid = (team_id or "").strip().lower()
+    sc = (service_code or "").strip()
+    if tid == "csm" and sc:
+        from services.csm_catalog import parse_service_key, platform_label
+
+        plat, cc = parse_service_key(sc)
+        if plat == "olx":
+            return "OLX.pt" if cc == "pt" else f"OLX.{cc or 'pt'}"
+        if plat:
+            host = f"{platform_label(plat)}"
+            if cc:
+                return f"{host} ({cc.upper()})"
+            return host
+        return _service_label_for_card(sc)
+    from services.offer_storage import marketplace_service_label_from_offer
+
+    return marketplace_service_label_from_offer(offer) or _service_label_for_card(sc)
 
 
 async def _send_generated_link_card_to_chat(
@@ -2361,10 +2380,13 @@ async def _create_aqua_link_from_db_work_impl(
         prof_display = (
             await get_user_aqua_profile_display(session, tg_user) or ""
         ).strip() or "—"
-        from services.offer_storage import marketplace_service_label_from_offer
+        from services.api_teams import get_selected_team_config
 
-        display_service = marketplace_service_label_from_offer(offer) or _service_label_for_card(
-            service
+        team_cfg = await get_selected_team_config(session, tg_user)
+        display_service = _generate_card_service_label(
+            team_id=team_cfg.team_id,
+            service_code=team_cfg.service_code or service,
+            offer=offer,
         )
 
         await _send_generated_link_card(
@@ -2580,10 +2602,13 @@ async def _create_aqua_link_work(callback: CallbackQuery, acc_id: int, uid: str,
         prof_display = (
             await get_user_aqua_profile_display(session, user) or ""
         ).strip() or "—"
-        from services.offer_storage import marketplace_service_label_from_offer
+        from services.api_teams import get_selected_team_config
 
-        display_service = marketplace_service_label_from_offer(offer) or _service_label_for_card(
-            service
+        team_cfg = await get_selected_team_config(session, user)
+        display_service = _generate_card_service_label(
+            team_id=team_cfg.team_id,
+            service_code=team_cfg.service_code or service,
+            offer=offer,
         )
 
         try:

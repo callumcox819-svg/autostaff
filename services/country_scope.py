@@ -48,6 +48,22 @@ AUSTRIA_VALIDATION_DOMAINS: tuple[str, ...] = (
     "chello.at",
 )
 
+# PT: OLX.pt — sapo/meo, потом gmail/icloud.
+PORTUGAL_VALIDATION_DOMAINS: tuple[str, ...] = (
+    "sapo.pt",
+    "gmail.com",
+    "icloud.com",
+    "hotmail.com",
+    "outlook.pt",
+    "outlook.com",
+    "meo.pt",
+    "clix.pt",
+    "netcabo.pt",
+    "live.com.pt",
+    "yahoo.pt",
+    "me.com",
+)
+
 
 def scoped_setting_key(base: str, country: str) -> str:
     cc = normalize_country_id(country) or LEGACY_COUNTRY
@@ -156,6 +172,65 @@ def switzerland_html_service_for_code(service_code: str) -> str:
     return switzerland_html_service()
 
 
+def portugal_html_service(team_id: str = "") -> str:
+    """Дефолт Португалии: OLX.pt."""
+    _ = team_id
+    return "olx_pt"
+
+
+def portugal_html_service_for_code(service_code: str) -> str:
+    """olx → olx_pt; остальные PT-площадки как {platform}_pt, иначе OLX."""
+    from services.csm_catalog import parse_service_key
+
+    code = (service_code or "").strip().lower()
+    if not code:
+        return portugal_html_service()
+    if code in {"olx_pt", "olx", "olx.pt"}:
+        return "olx_pt"
+    if "_" in code:
+        platform, cc = parse_service_key(code)
+        plat = (platform or "").strip().lower()
+        if plat == "olx":
+            return "olx_pt"
+        if cc == "pt" and plat:
+            return f"{plat}_pt"
+    if code.startswith("olx"):
+        return "olx_pt"
+    return portugal_html_service()
+
+
+def force_portugal_html_service(team_id: str, service_code: str) -> str:
+    from services.csm_catalog import is_verify_service
+    from services.hustle_catalog import is_hustle_verify
+
+    tid = (team_id or "").strip().lower()
+    code = (service_code or "").strip()
+    if tid == "csm" and is_verify_service(code):
+        return code
+    if tid == "hustle" and is_hustle_verify(code):
+        return code
+    return portugal_html_service_for_code(code)
+
+
+def force_portugal_olx_service(team_id: str, service_code: str) -> str:
+    """CSM на PT → olx_pt (Verify не трогаем)."""
+    from services.csm_catalog import is_verify_service, make_service_key, parse_service_key
+
+    tid = (team_id or "").strip().lower()
+    code = (service_code or "").strip()
+    if tid == "csm" and is_verify_service(code):
+        return code
+    if tid != "csm":
+        return portugal_html_service_for_code(code)
+    platform, cc = parse_service_key(code)
+    plat = (platform or "").strip().lower()
+    if plat == "olx":
+        return "olx_pt"
+    if cc == "pt" and plat in {"wallapop", "vinted", "depop", "ebay"}:
+        return make_service_key(plat, "pt")
+    return "olx_pt"
+
+
 def force_switzerland_html_service(team_id: str, service_code: str) -> str:
     """Verify оставляем; HTML/GAG CH по ricardo / tutti / anibis / post."""
     from services.csm_catalog import is_verify_service
@@ -182,6 +257,8 @@ def default_validation_domains_for(country: str) -> tuple[str, ...]:
         return SWITZERLAND_VALIDATION_DOMAINS
     if cc == "at":
         return AUSTRIA_VALIDATION_DOMAINS
+    if cc == "pt":
+        return PORTUGAL_VALIDATION_DOMAINS
     from region import DEFAULT_VALIDATION_DOMAINS
 
     return DEFAULT_VALIDATION_DOMAINS

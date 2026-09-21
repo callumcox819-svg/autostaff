@@ -1271,6 +1271,8 @@ _MARKETPLACE_SERVICE_RULES: tuple[tuple[str, str, str], ...] = (
     ("marktplaats.com", "marktplaats.nl", "marktplaats_nl"),
     ("anibis.ch", "anibis.ch", "anibis_ch"),
     ("markt.ch", "markt.ch", "markt_ch"),
+    ("olx.pt", "OLX.pt", "olx_pt"),
+    ("olx.com.pt", "OLX.pt", "olx_pt"),
     ("willhaben.at", "willhaben.at", "willhaben_at"),
     ("laendleanzeiger.at", "Laendleanzeiger", "laendleanzeiger_at"),
     ("ländleanzeiger.at", "Laendleanzeiger", "laendleanzeiger_at"),

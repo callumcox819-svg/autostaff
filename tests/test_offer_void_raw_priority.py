@@ -66,6 +66,12 @@ def test_marketplace_label_from_stored_service_and_marktplaats_short_link():
     assert label_at == "Laendleanzeiger"
     assert code_at == "laendleanzeiger_at"
 
+    label_pt, code_pt = marketplace_service_from_link(
+        "https://www.olx.pt/d/anuncio/sofa-ID123.html"
+    )
+    assert label_pt == "OLX.pt"
+    assert code_pt == "olx_pt"
+
     payload = stamp_marketplace_service_on_payload(
         {"item_link": "https://link.marktplaats.nl/m2440712344", "item_title": "X"}
     )

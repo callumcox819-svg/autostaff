@@ -7,12 +7,15 @@ from unittest.mock import AsyncMock, patch
 from services.api_teams import ApiTeamConfig
 from services.country_scope import (
     GERMANY_VALIDATION_DOMAINS,
+    PORTUGAL_VALIDATION_DOMAINS,
     SWITZERLAND_VALIDATION_DOMAINS,
     austria_html_service,
     austria_html_service_for_code,
     default_validation_domains_for,
     force_austria_html_service,
     force_germany_ebay_service,
+    force_portugal_html_service,
+    force_portugal_olx_service,
     force_switzerland_html_service,
     germany_generate_service,
     scoped_blob_key,
@@ -82,6 +85,19 @@ class CountryScopeTests(unittest.TestCase):
         self.assertEqual(domains[0], "gmx.ch")
         self.assertLess(domains.index("gmx.ch"), domains.index("gmail.com"))
         self.assertNotEqual(domains, GERMANY_VALIDATION_DOMAINS)
+
+    def test_portugal_olx_html_and_domains(self):
+        self.assertEqual(force_portugal_olx_service("csm", "marktplaats_nl"), "olx_pt")
+        self.assertEqual(force_portugal_olx_service("csm", "olx_pt"), "olx_pt")
+        self.assertEqual(force_portugal_olx_service("csm", "olx"), "olx_pt")
+        self.assertEqual(force_portugal_olx_service("csm", "wallapop_pt"), "wallapop_pt")
+        self.assertEqual(force_portugal_olx_service("csm", "depop_verify_all"), "depop_verify_all")
+        self.assertEqual(force_portugal_html_service("csm", "olx"), "olx_pt")
+        self.assertEqual(force_portugal_html_service("csm", "marktplaats_nl"), "olx_pt")
+        domains = default_validation_domains_for("pt")
+        self.assertEqual(domains, PORTUGAL_VALIDATION_DOMAINS)
+        self.assertEqual(domains[0], "sapo.pt")
+        self.assertIn("gmail.com", domains)
 
     def test_austria_default_domains(self):
         from services.country_scope import AUSTRIA_VALIDATION_DOMAINS

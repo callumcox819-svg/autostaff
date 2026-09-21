@@ -33,6 +33,13 @@ class CsmCatalogTests(unittest.TestCase):
         self.assertTrue(service_key_label("laendleanzeiger_at").startswith("Австрия"))
         self.assertEqual(make_service_key("laendleanzeiger", "at"), "laendleanzeiger_at")
 
+    def test_portugal_olx(self):
+        pt = [p for p, _, _ in platforms_for_country("pt")]
+        self.assertEqual(pt[0], "olx")
+        self.assertEqual(make_service_key("olx", "pt"), "olx_pt")
+        self.assertTrue(service_key_label("olx_pt").startswith("Португалия"))
+        self.assertEqual(parse_service_key("olx_pt"), ("olx", "pt"))
+
 
 if __name__ == "__main__":
     unittest.main()

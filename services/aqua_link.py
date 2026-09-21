@@ -451,7 +451,7 @@ async def aqua_generate_for_offer(
     cfg = await get_selected_team_config(session, user)
     from dataclasses import replace
 
-    from services.country_scope import force_germany_ebay_service
+    from services.country_scope import force_germany_ebay_service, force_portugal_olx_service
     from services.enabled_countries import get_active_country
 
     cc = await get_active_country(session, user)
@@ -463,6 +463,8 @@ async def aqua_generate_for_offer(
         cfg = replace(cfg, service_code=gag_generate_service(cfg.service_code))
     if cc == "de":
         cfg = replace(cfg, service_code=force_germany_ebay_service(cfg.team_id, cfg.service_code))
+    if cc == "pt":
+        cfg = replace(cfg, service_code=force_portugal_olx_service(cfg.team_id, cfg.service_code))
     if cfg.team_id == "csm":
         return await _generate_csm(session, user, cfg, offer, listing_url=listing_url, price=price)
     if cfg.team_id == "hustle":

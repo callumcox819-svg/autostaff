@@ -63,6 +63,8 @@ HTML_SERVICE_ALIASES: dict[str, str] = {
     "kleinanzeigenverif_de": "ebay_de",
     "markt_ch": "post_ch",
     "posta_ch": "post_ch",
+    "olx": "olx_pt",
+    "olx.pt": "olx_pt",
 }
 
 
@@ -145,6 +147,7 @@ async def resolve_html_service(session, user: User) -> str:
     from services.country_scope import (
         force_austria_html_service,
         force_germany_ebay_service,
+        force_portugal_html_service,
         force_switzerland_html_service,
     )
     from services.enabled_countries import get_active_country
@@ -167,6 +170,8 @@ async def resolve_html_service(session, user: User) -> str:
             sc = force_austria_html_service(cfg.team_id, sc)
         elif cc == "ch" and sc and not is_verify_service(sc):
             sc = force_switzerland_html_service(cfg.team_id, sc)
+        elif cc == "pt" and sc and not is_verify_service(sc):
+            sc = force_portugal_html_service(cfg.team_id, sc)
         svc = sc
     except Exception:
         pass
@@ -178,6 +183,8 @@ async def resolve_html_service(session, user: User) -> str:
         candidates.append("ricardo_ch")
     if cc == "de" and not svc:
         candidates.append("kleinanzeigen_de")
+    if cc == "pt" and not svc:
+        candidates.append("olx_pt")
     if cc == "nl" and not svc:
         candidates.append("marktplaats_nl")
     for raw in (
@@ -193,10 +200,12 @@ async def resolve_html_service(session, user: User) -> str:
         f"willhaben_{cc}",
         f"laendleanzeiger_{cc}",
         f"marktplaats_{cc}",
+        f"olx_{cc}",
         cc,
         "kleinanzeigen_de" if cc == "de" else "",
         "ebay_de" if cc == "de" else "",
         "marktplaats_nl" if cc == "nl" else "",
+        "olx_pt" if cc == "pt" else "",
         "ricardo_ch" if cc == "ch" else "",
     ):
         code = (raw or "").strip().lower()
@@ -220,6 +229,8 @@ async def resolve_html_service(session, user: User) -> str:
         return "kleinanzeigen_de"
     if cc == "nl":
         return "marktplaats_nl"
+    if cc == "pt":
+        return "olx_pt"
     return cc
 
 
@@ -233,6 +244,7 @@ async def sync_html_service_from_code(session, user: User, service_code: str | N
         from services.country_scope import (
             austria_html_service_for_code,
             force_germany_ebay_service,
+            force_portugal_html_service,
             force_switzerland_html_service,
         )
         from services.enabled_countries import get_active_country
@@ -252,6 +264,8 @@ async def sync_html_service_from_code(session, user: User, service_code: str | N
             sc = force_germany_ebay_service(team_id, sc)
         elif cc == "ch":
             sc = force_switzerland_html_service(team_id, sc)
+        elif cc == "pt":
+            sc = force_portugal_html_service(team_id, sc)
     except Exception:
         pass
     n = normalize_aqua_service(sc)

@@ -140,7 +140,7 @@ async def _aqua_generate_link(
     if offer is None:
         offer = SimpleNamespace(
             title=(title or "").strip() or "Item",
-            price=(price or "").strip() or "0",
+            price=(price or "").strip() or None,
             photo=(image or "").strip() or None,
             link=listing or None,
             item_link=listing or None,

@@ -375,38 +375,37 @@ async def user_profile_fields_complete(session, user: User) -> bool:
 
 
 async def get_user_aqua_profile_display(session, user: User) -> str:
-    """Подпись профиля для карточки ссылки."""
-    try:
-        from services.api_teams import get_selected_team_config, get_team_field
+    """Подпись профиля на карточке — только поля выбранной команды, без чужих."""
+    from services.api_teams import get_selected_team_config, get_team_field
 
+    try:
         cfg = await get_selected_team_config(session, user)
-        if cfg.team_id == "evoleum":
-            pid = (cfg.profile_id or "").strip()
-            label = (await get_team_field(session, user, "evoleum", "profile_label") or "").strip()
-            if label:
-                return label
-            title = await get_user_profile_title(session, user)
-            name = await get_user_profile_buyer_name(session, user)
-            if title or name:
-                if title and name:
-                    return f"{title} · {name}"
-                return title or name
-            if pid:
-                return pid
-        if cfg.team_id == "csm":
-            pid = (cfg.profile_id or "").strip()
-            name, _addr = await resolve_html_buyer_profile(session, user)
-            name = (name or "").strip()
-            if name and pid:
-                return f"{name} · {pid}"
-            return name or pid
-        if cfg.team_id in {"hustle", "gag"}:
-            name, _addr = await resolve_html_buyer_profile(session, user)
-            name = (name or "").strip()
-            if name:
-                return name
     except Exception:
-        pass
+        cfg = None
+    tid = (getattr(cfg, "team_id", None) or "").strip().lower()
+
+    if tid == "csm":
+        pid = (cfg.profile_id or "").strip() if cfg else ""
+        name = (await get_team_field(session, user, "csm", "buyer_name") or "").strip()
+        if name and pid:
+            return f"{name} · {pid}"
+        return name or pid
+
+    if tid == "evoleum":
+        pid = (cfg.profile_id or "").strip() if cfg else ""
+        label = (await get_team_field(session, user, "evoleum", "profile_label") or "").strip()
+        if label:
+            return label
+        name = (await get_team_field(session, user, "evoleum", "buyer_name") or "").strip()
+        title = await get_user_profile_title(session, user)
+        html_name = await get_user_profile_buyer_name(session, user)
+        shown = name or (f"{title} · {html_name}" if title and html_name else (title or html_name))
+        return shown or pid
+
+    if tid in {"hustle", "gag"}:
+        name = (await get_team_field(session, user, tid, "buyer_name") or "").strip()
+        return name
+
     title = await get_user_profile_title(session, user)
     name = await get_user_profile_buyer_name(session, user)
     if title and name:
@@ -426,7 +425,7 @@ async def resolve_html_buyer_profile(session, user: User) -> tuple[str, str]:
     except Exception:
         cfg = None
 
-    if cfg and cfg.team_id in {"hustle", "gag"}:
+    if cfg and cfg.team_id in {"hustle", "gag", "csm"}:
         team_id = cfg.team_id
         name = (await get_team_field(session, user, team_id, "buyer_name") or "").strip()
         address = (await get_team_field(session, user, team_id, "address") or "").strip()

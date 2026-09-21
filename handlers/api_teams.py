@@ -161,7 +161,7 @@ def _team_detail_kb(team_id: str, *, service_code: str = "") -> InlineKeyboardMa
                 ],
             ]
         )
-    if team_id in {"hustle", "gag"}:
+    if team_id in {"hustle", "gag", "csm"}:
         rows.extend(
             [
                 [
@@ -229,6 +229,14 @@ def _team_detail_text(cfg, *, buyer_name: str = "", address: str = "", country_n
         lines.append(f"<b>Код сервиса:</b> <code>{html.escape(cfg.service_code or '—')}</code>")
     if cfg.team_id != "gag":
         lines.append(f"<b>Profile ID:</b> <code>{html.escape(cfg.profile_id or '—')}</code>")
+    if cfg.team_id == "csm":
+        cc = f" ({html.escape(country_name)})" if country_name else ""
+        lines.append(
+            f"<b>ФИО{cc}:</b> <code>{html.escape(buyer_name or '—')}</code>\n"
+            f"<b>Адрес{cc}:</b> <code>{html.escape(address or '—')}</code>\n"
+            "<i>Только CSM, не Evoleum. На лендинге Meow — Profile ID; "
+            "ФИО на карточке в боте — эти поля.</i>"
+        )
     if cfg.team_id == "evoleum":
         cc = f" ({html.escape(country_name)})" if country_name else ""
         lines.append(
@@ -421,16 +429,11 @@ async def _team_detail_payload(session, user, tid: str) -> tuple[object, str]:
     cc_name = country_display_name(await get_active_country(session, user))
     if cfg.team_id == "evoleum":
         buyer, addr = await _evoleum_html_profile_fields(session, user)
-    elif cfg.team_id in {"hustle", "gag"}:
+    elif cfg.team_id in {"hustle", "gag", "csm"}:
         from services.api_teams import get_team_field
 
         buyer = await get_team_field(session, user, cfg.team_id, "buyer_name")
         addr = await get_team_field(session, user, cfg.team_id, "address")
-        if cfg.team_id == "gag" and (not buyer or not addr):
-            from services.aqua_keys import get_user_profile_address, get_user_profile_buyer_name
-
-            buyer = buyer or (await get_user_profile_buyer_name(session, user) or "")
-            addr = addr or (await get_user_profile_address(session, user) or "")
     return cfg, _team_detail_text(cfg, buyer_name=buyer, address=addr, country_name=cc_name)
 
 

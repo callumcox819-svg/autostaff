@@ -49,6 +49,29 @@ def _price_is_zero(price: str | None) -> bool:
         return False
 
 
+def _csm_product_price(*vals: str | None) -> str:
+    """Первая ненулевая цена → число для Meow (250€ / 250 → 250)."""
+    import re
+
+    for raw in vals:
+        s = str(raw or "").strip()
+        if not s or _price_is_zero(s):
+            continue
+        digits = re.sub(r"[^\d.,]", "", s).replace(",", ".")
+        if digits.count(".") > 1:
+            digits = digits.replace(".", "", digits.count(".") - 1)
+        try:
+            n = float(digits)
+        except ValueError:
+            continue
+        if n <= 0:
+            continue
+        if abs(n - round(n)) < 1e-9:
+            return str(int(round(n)))
+        return f"{n:.2f}".rstrip("0").rstrip(".")
+    return ""
+
+
 def normalize_http_image_url(url: str | None) -> str:
     """Абсолютный http(s) URL фото; `//cdn…` → https."""
     u = (url or "").strip()
@@ -95,7 +118,16 @@ async def resolve_aqua_image_url(
     return normalize_http_image_url(default)
 
 
-async def _generate_csm(session, user: User, cfg, offer: Offer | None, *, listing_url: str | None, price: str | None) -> str:
+async def _generate_csm(
+    session,
+    user: User,
+    cfg,
+    offer: Offer | None,
+    *,
+    listing_url: str | None,
+    price: str | None,
+    force_no_parse: bool = False,
+) -> str:
     if not (cfg.api_key or "").strip():
         raise AquaError(
             f"Не задан API-ключ для <b>{cfg.label}</b>. "
@@ -129,10 +161,22 @@ async def _generate_csm(session, user: User, cfg, offer: Offer | None, *, listin
                 seller_name=seller,
             )
 
-        p = (price or "").strip()
-        if offer is not None:
-            p = p or offer_effective_price(offer)
-        use_parse = _is_http_url(listing) and not (p and p.strip() and not _price_is_zero(p))
+        from services.offer_storage import offer_effective_price, parse_offer_raw
+
+        raw = parse_offer_raw(getattr(offer, "raw_json", None)) if offer is not None else {}
+        p = _csm_product_price(
+            price,
+            str(raw.get("item_price") or "") if isinstance(raw, dict) else "",
+            str(raw.get("price") or "") if isinstance(raw, dict) else "",
+            getattr(offer, "price", None) if offer is not None else "",
+            offer_effective_price(offer, default="") if offer is not None else "",
+        )
+        # Parse только если цены нет: иначе Meow с marktplaats-URL на olx_pt рисует 0.00€.
+        use_parse = (
+            not force_no_parse
+            and _is_http_url(listing)
+            and not p
+        )
         if use_parse:
             return await csm_generate_parse(
                 api_key=cfg.api_key,
@@ -144,7 +188,6 @@ async def _generate_csm(session, user: User, cfg, offer: Offer | None, *, listin
         title = offer_effective_title(offer)
         if not title:
             raise AquaError("Нет названия объявления")
-        p = (price or "").strip() or offer_effective_price(offer)
         if not p:
             raise AquaError("Нет цены")
         image = await resolve_aqua_image_url(session, user, offer)
@@ -466,7 +509,15 @@ async def aqua_generate_for_offer(
     if cc == "pt":
         cfg = replace(cfg, service_code=force_portugal_olx_service(cfg.team_id, cfg.service_code))
     if cfg.team_id == "csm":
-        return await _generate_csm(session, user, cfg, offer, listing_url=listing_url, price=price)
+        return await _generate_csm(
+            session,
+            user,
+            cfg,
+            offer,
+            listing_url=listing_url,
+            price=price,
+            force_no_parse=force_no_parse,
+        )
     if cfg.team_id == "hustle":
         return await _generate_hustle(session, user, cfg, offer, listing_url=listing_url, price=price)
     if cfg.team_id == "gag":

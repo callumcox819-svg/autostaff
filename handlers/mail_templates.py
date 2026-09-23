@@ -300,6 +300,24 @@ async def mail_tmpl_send(callback: CallbackQuery, state: FSMContext):
             ).scalars().first()
             if not user:
                 return False, "Пользователь не найден", None
+            from services.html_reply import live_account_sender_display_name
+            from services.placeholders import apply_placeholders
+            from services.sender_identity import (
+                load_sender_name_history,
+                strip_stale_sender_names,
+            )
+
+            sender_name = await live_account_sender_display_name(session, user)
+            hist = await load_sender_name_history(session, user)
+            body_copy = apply_placeholders(
+                body,
+                ctx={"SENDER_NAME": sender_name or ""},
+            )
+            body_copy = strip_stale_sender_names(
+                body_copy,
+                current_name=sender_name or "",
+                previous_names=hist,
+            )
             # Тема только Re: исходного треда — иначе Gmail рвёт диалог.
             out_subject = subject
             from handlers.incoming_mail import (
@@ -308,7 +326,6 @@ async def mail_tmpl_send(callback: CallbackQuery, state: FSMContext):
                 _reply_thread_kwargs,
                 compose_threaded_reply_body,
             )
-            from services.html_reply import live_account_sender_display_name
             from services.incoming_mail_worker import FULL_BODIES
 
             mid = mail_id or meta.get("_mail_id")
@@ -336,7 +353,7 @@ async def mail_tmpl_send(callback: CallbackQuery, state: FSMContext):
                 user_id=int(user.id),
                 to_email=to_email,
                 inbox_email=inbox_em,
-                reply_text=body,
+                reply_text=body_copy,
                 parent_from_name=meta.get("from_name"),
                 parent_from_email=to_email,
                 parent_date_str=meta.get("date_str"),

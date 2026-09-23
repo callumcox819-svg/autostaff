@@ -206,7 +206,7 @@ async def _send_pair(
             to_email=to_addr,
             subject=subject,
             body=body,
-            sender_name=live_from or sender_name,
+            sender_name=live_from,
             sticky_proxy_id=sticky_proxy_id,
             per_letter_timeout_sec=per_letter_timeout_sec,
         )

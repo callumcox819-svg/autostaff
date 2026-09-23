@@ -460,8 +460,12 @@ async def sender_name_set_save(message: Message, state: FSMContext) -> None:
         value = raw
     async with Session() as session:
         user = await get_or_create_user(session, message.from_user.id)
+        from services.sender_identity import record_sender_name_change
+
+        await record_sender_name_change(session, user, value)
         user.sender_name = value or None
         await session.commit()
+        session.expire(user, ["sender_name"])
     await state.clear()
     shown = html.escape(value) if value else "—"
     await message.answer(

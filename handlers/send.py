@@ -227,6 +227,9 @@ async def _build_message_for_target(
     from services.users import load_live_sender_name
 
     sender_name = await load_live_sender_name(session, telegram_id=tg_user_id)
+    from services.sender_identity import load_sender_name_history
+
+    previous_sender_names = await load_sender_name_history(session, user)
     country = await get_active_country(session, user)
 
     from services.mailing_deliverability import (
@@ -273,6 +276,7 @@ async def _build_message_for_target(
         offer_title=item_title,
         country=country,
         sender_name=sender_name,
+        previous_sender_names=previous_sender_names,
         # Пользовательский пресет применяем как задано, без чужой NL/EN подписи.
         vary_body=not has_user_preset,
     )
@@ -634,7 +638,7 @@ async def _burst_sending_loop(*, bot: Bot, chat_id: int, tg_user_id: int) -> Non
             async with db_session() as session:
                 user = await get_or_create_user(session, tg_user_id)
                 db_user_id = int(user.id)
-                sender_name = getattr(user, "sender_name", None)
+                sender_name = await load_live_sender_name(session, telegram_id=tg_user_id)
                 accounts = await _get_active_accounts(session, db_user_id)
                 targets = await _get_targets(session, db_user_id)
                 pending_count = len(targets)

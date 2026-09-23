@@ -286,6 +286,9 @@ async def _build_test_message(
     from services.users import load_live_sender_name
 
     sender_name = await load_live_sender_name(session, telegram_id=tg_id)
+    from services.sender_identity import load_sender_name_history
+
+    previous_sender_names = await load_sender_name_history(session, user)
     country = await get_active_country(session, user)
 
     ctx = {
@@ -317,6 +320,7 @@ async def _build_test_message(
         offer_title=item_title,
         country=country,
         sender_name=sender_name,
+        previous_sender_names=previous_sender_names,
         vary_body=not has_user_preset,
     )
     return _test_subject(subject), body, item_title

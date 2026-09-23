@@ -11,6 +11,7 @@ import os
 import random
 import re
 from html import unescape
+from typing import Iterable
 
 LINK_RE = re.compile(r"https?://[^\s<>\"']+", re.I)
 LINK_PLACEHOLDER_RE = re.compile(r"\{\{\s*LINK\s*\}\}", re.I)
@@ -380,11 +381,19 @@ def apply_mailing_body_policy(
     *,
     country: str | None = None,
     sender_name: str = "",
+    previous_sender_names: Iterable[str] | None = None,
     vary_body: bool = True,
 ) -> str:
+    from services.sender_identity import strip_stale_sender_names
+
     out = sanitize_body_for_inbox(body)
     if mailing_strip_link():
         out = strip_links_from_body(out)
+    out = strip_stale_sender_names(
+        out,
+        current_name=sender_name,
+        previous_names=previous_sender_names or (),
+    )
     if vary_body:
         out = add_inbox_body_variation(
             out,
@@ -400,6 +409,8 @@ def apply_mailing_body_policy(
             closing = "Met vriendelijke groet"
         elif cc == "pt":
             closing = "Com os melhores cumprimentos"
+        elif cc == "hu":
+            closing = "Üdvözlettel"
         else:
             closing = "Kind regards"
         out = f"{out.rstrip()}\n\n{closing}\n{name}"
@@ -413,6 +424,7 @@ def finalize_inbox_mail(
     offer_title: str = "",
     country: str | None = None,
     sender_name: str = "",
+    previous_sender_names: Iterable[str] | None = None,
     vary_body: bool = True,
 ) -> tuple[str, str]:
     subj = sanitize_subject_for_inbox(subject)
@@ -420,6 +432,7 @@ def finalize_inbox_mail(
         body,
         country=country,
         sender_name=sender_name,
+        previous_sender_names=previous_sender_names,
         vary_body=vary_body,
     )
     subj, b = _scrub_offer_leaks(subj, b, offer_title)

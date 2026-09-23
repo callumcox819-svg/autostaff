@@ -69,28 +69,66 @@ def _html_currency_for_country(country: str) -> str:
     cc = (country or "").strip().lower()
     if cc == "ch":
         return "CHF"
+    if cc == "hu":
+        return "HUF"
     return "EUR"
+
+
+def _collapse_price_thousands(price: str) -> str:
+    """155 000 Ft / 155\u00a0000 → 155000 Ft."""
+    s = (price or "").replace("\u00a0", " ").replace("\u202f", " ")
+    while True:
+        nxt = re.sub(r"(\d)[ ](\d{3})\b", r"\1\2", s)
+        if nxt == s:
+            return s
+        s = nxt
+
+
+def _format_huf_amount(num: float) -> str:
+    n = int(round(float(num)))
+    grouped = f"{n:,}".replace(",", " ")
+    return f"{grouped} Ft"
+
+
+def _detect_html_currency(price: str, fallback: str) -> str:
+    raw = price or ""
+    up = raw.upper()
+    if "HUF" in up or re.search(r"(?i)(?:^|[^A-Z])FT(?:\b|$)", raw):
+        return "HUF"
+    return (fallback or "EUR").strip().upper() or "EUR"
 
 
 def _format_html_price(price: str, *, currency: str = "EUR") -> str:
     p = (price or "").strip()
     if not p:
         return ""
-    cur = (currency or "EUR").strip().upper() or "EUR"
+    compact = _collapse_price_thousands(p)
+    cur = _detect_html_currency(compact, currency)
     # «0» / «0 €» / «EUR 0» — для HTML считаем пустым (часто мусор после parse).
-    digits = re.sub(r"[^\d.,]", "", p).replace(",", ".")
+    digits = re.sub(r"[^\d.,]", "", compact).replace(",", ".")
     try:
         if digits and float(digits) == 0:
             return ""
     except ValueError:
         pass
-    m = re.search(r"([\d]+(?:[.,]\d+)?)", p)
+    m = re.search(r"([\d]+(?:[.,]\d+)?)", compact)
     if not m:
-        return f"{cur} {p}"
+        return f"{cur} {p}" if cur != "HUF" else p
     num_raw = m.group(1)
-    swiss_dot = ".-" in p[m.start() :]
-    up = p.upper()
-    has_money_token = any(tok in up for tok in ("EUR", "CHF", "USD")) or "€" in p or "FR." in up
+    swiss_dot = ".-" in compact[m.start() :]
+    up = compact.upper()
+    has_money_token = (
+        any(tok in up for tok in ("EUR", "CHF", "USD", "HUF"))
+        or "€" in compact
+        or "FR." in up
+        or bool(re.search(r"(?i)(?:^|[^A-Z])FT(?:\b|$)", compact))
+    )
+    if cur == "HUF":
+        try:
+            num = float(num_raw.replace(",", "."))
+        except ValueError:
+            return compact
+        return _format_huf_amount(num)
     if has_money_token or "," in num_raw or "." in num_raw:
         num = num_raw.replace(",", ".")
         try:
@@ -110,8 +148,21 @@ def _format_eur_price(price: str) -> str:
 
 
 def _pick_non_zero_price(*candidates: str, currency: str = "EUR") -> str:
-    for c in candidates:
-        formatted = _format_html_price((c or "").strip(), currency=currency)
+    cur = (currency or "EUR").strip().upper() or "EUR"
+    ordered = list(candidates)
+    if cur == "HUF":
+        preferred: list[str] = []
+        rest: list[str] = []
+        for c in candidates:
+            raw = (c or "").strip()
+            up = raw.upper()
+            if "FT" in up or "HUF" in up or re.search(r"\d[ \u00a0]\d{3}", raw):
+                preferred.append(raw)
+            else:
+                rest.append(raw)
+        ordered = preferred + rest
+    for c in ordered:
+        formatted = _format_html_price((c or "").strip(), currency=cur)
         if formatted:
             return formatted
     return ""

@@ -27,6 +27,18 @@ class HtmlPriceFormatTests(unittest.TestCase):
         self.assertEqual(_format_html_price("40 .-", currency="CHF"), "CHF 40.-")
         self.assertEqual(_format_html_price("EUR 40", currency="CHF"), "CHF 40.00")
 
+    def test_hu_price_is_forint(self):
+        from services.html_reply import _html_currency_for_country
+
+        self.assertEqual(_html_currency_for_country("hu"), "HUF")
+        self.assertEqual(_format_html_price("155 000 Ft", currency="HUF"), "155 000 Ft")
+        self.assertEqual(_format_html_price("155000", currency="HUF"), "155 000 Ft")
+        self.assertEqual(_format_html_price("155 000 Ft", currency="EUR"), "155 000 Ft")
+        self.assertEqual(
+            _pick_non_zero_price("EUR 155", "155 000 Ft", currency="HUF"),
+            "155 000 Ft",
+        )
+
     def test_pick_prefers_nonzero(self):
         self.assertEqual(_pick_non_zero_price("0 €", "55.00 EUR"), "EUR 55.00")
         self.assertEqual(

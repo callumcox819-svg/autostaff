@@ -22,7 +22,7 @@ from models import EmailAccount, OfferEmail, Offer, User, Proxy
 
 from services.burst_mailer import run_burst_mailing
 from services.mailing_send import MAIL_VERIFY_SENT
-from services.users import get_or_create_user
+from services.users import get_or_create_user, load_live_sender_name
 from services.placeholders import apply_placeholders
 
 from handlers.status import tg_answer_safe
@@ -557,6 +557,10 @@ async def _notify_sending_finished(*, bot: Bot, chat_id: int, tg_user_id: int) -
 
         who = f"\nПоследний: <code>{state.last_failed_to}</code>" if state.last_failed_to else ""
         text += f"\n\n{_humanize_send_error(normalize_send_error(state.last_error))}{who}"
+    elif pending > 0 and (state.last_error or "").strip() not in ("", "-"):
+        from handlers.status import _humanize_send_error
+
+        text += f"\n\n{_humanize_send_error(normalize_send_error(state.last_error))}"
 
     try:
         await bot.send_message(
@@ -702,14 +706,17 @@ async def _burst_sending_loop(*, bot: Bot, chat_id: int, tg_user_id: int) -> Non
         else:
             state.last_error = normalize_send_error(str(e))
         state.is_running = False
+        state.last_status = "ERROR"
         set_sending_state(tg_user_id, state=state)
     except TelegramNetworkError:
         state.is_running = False
         state.last_error = "TG_ERROR|network|Telegram network error"
+        state.last_status = "ERROR"
         set_sending_state(tg_user_id, state=state)
     except Exception as e:
         state.is_running = False
         state.last_error = normalize_send_error(str(e))
+        state.last_status = "ERROR"
         set_sending_state(tg_user_id, state=state)
         logger.exception("burst sending failed user=%s", tg_user_id)
     finally:

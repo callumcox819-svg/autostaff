@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, patch
 from services.api_teams import ApiTeamConfig
 from services.country_scope import (
     GERMANY_VALIDATION_DOMAINS,
+    HUNGARY_VALIDATION_DOMAINS,
     PORTUGAL_VALIDATION_DOMAINS,
     SWITZERLAND_VALIDATION_DOMAINS,
     austria_html_service,
@@ -14,6 +15,8 @@ from services.country_scope import (
     default_validation_domains_for,
     force_austria_html_service,
     force_germany_ebay_service,
+    force_hungary_html_service,
+    force_hungary_jofogas_service,
     force_portugal_html_service,
     force_portugal_olx_service,
     force_switzerland_html_service,
@@ -98,6 +101,19 @@ class CountryScopeTests(unittest.TestCase):
         self.assertEqual(domains, PORTUGAL_VALIDATION_DOMAINS)
         self.assertEqual(domains[0], "sapo.pt")
         self.assertIn("gmail.com", domains)
+
+    def test_hungary_jofogas_html_and_domains(self):
+        self.assertEqual(force_hungary_jofogas_service("csm", "marktplaats_nl"), "jofogas_hu")
+        self.assertEqual(force_hungary_jofogas_service("csm", "jofogas_hu"), "jofogas_hu")
+        self.assertEqual(force_hungary_jofogas_service("bastard", ""), "jofogas_hu")
+        self.assertEqual(force_hungary_jofogas_service("bastard", "facebook_hu"), "facebook_hu")
+        self.assertEqual(force_hungary_jofogas_service("csm", "depop_verify_all"), "depop_verify_all")
+        self.assertEqual(force_hungary_html_service("csm", "jofogas"), "jofogas_hu")
+        self.assertEqual(force_hungary_html_service("csm", "marktplaats_nl"), "jofogas_hu")
+        domains = default_validation_domains_for("hu")
+        self.assertEqual(domains, HUNGARY_VALIDATION_DOMAINS)
+        self.assertEqual(domains[0], "freemail.hu")
+        self.assertIn("citromail.hu", domains)
 
     def test_austria_default_domains(self):
         from services.country_scope import AUSTRIA_VALIDATION_DOMAINS

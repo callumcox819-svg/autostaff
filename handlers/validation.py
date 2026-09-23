@@ -295,7 +295,7 @@ async def _load_text_from_telegram_doc(message: Message) -> str:
 
 # ===================== PARSERS =====================
 
-_WORD_RE = re.compile(r"[A-Za-zÀ-ÿ0-9]+")
+_WORD_RE = re.compile(r"[^\W\d_]+", re.UNICODE)
 
 
 def _normalize_person_name(raw_name: str) -> str:
@@ -312,7 +312,6 @@ def _normalize_person_name(raw_name: str) -> str:
     compact = re.sub(r"\s+", "", s)
     if " " not in s and re.fullmatch(r"[A-Za-z0-9_\-]+", compact):
         return s.strip()
-    # Dr. Michael Raufeisen → Michael Raufeisen (не Dr + фамилия)
     cleaned = strip_name_honorifics(s)
     folded = normalize_seller_name(cleaned)
     words = _WORD_RE.findall(folded)
@@ -341,16 +340,25 @@ def _normalize_items(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         y = dict(x)
         fields = fields_from_item(y)
         raw_name = seller_name_from_item(y)
-
-        norm = _normalize_person_name(raw_name)
-        if norm:
-            y["name"] = norm
-            y["person_name"] = norm
-            # Оригинал из JSON не теряем (Irene / Bregenznet / seller_name).
+        original_name = str(
+            y.get("item_person_name")
+            or y.get("seller_name")
+            or y.get("person_name")
+            or y.get("name")
+            or ""
+        ).strip()
+        # В JSON оставляем оригинал парсера; для email — clean (без «Частное лицо»).
+        keep_name = original_name or raw_name
+        if keep_name:
             if not str(y.get("item_person_name") or "").strip():
-                y["item_person_name"] = raw_name or norm
+                y["item_person_name"] = keep_name
             if not str(y.get("seller_name") or "").strip():
-                y["seller_name"] = raw_name or norm
+                y["seller_name"] = raw_name or keep_name
+            if raw_name:
+                y["name"] = y.get("name") or raw_name
+                y["person_name"] = y.get("person_name") or raw_name
+            elif not str(y.get("person_name") or "").strip():
+                y["person_name"] = keep_name
 
         t = fields["title"] or _title_from_item_dict(x)
         if t:

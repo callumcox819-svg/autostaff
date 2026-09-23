@@ -22,6 +22,7 @@ class HustleCatalogTests(unittest.TestCase):
         self.assertIn("eBay", hustle_service_label("ebay_de"))
         self.assertEqual(parse_hustle_service("kleinanzeigen_de"), ("kleinanzeigen_de", "de"))
         self.assertEqual(normalize_team_id("hustle_castle"), "hustle")
+        self.assertEqual(normalize_team_id("bastard"), "bastard")
         self.assertEqual(normalize_team_id("evoleum"), "evoleum")
         self.assertEqual(normalize_team_id("csm"), "csm")
 

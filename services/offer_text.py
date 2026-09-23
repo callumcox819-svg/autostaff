@@ -36,6 +36,8 @@ def ensure_item_title_in_body(body: str, offer_title: str, *, country: str | Non
         line = f"Het gaat om uw advertentie: {t}."
     elif cc == "pt":
         line = f"Trata-se do seu anúncio: {t}."
+    elif cc == "hu":
+        line = f"A hirdetéséről van szó: {t}."
     else:
         line = f"This is about your listing: {t}."
     return f"{b}\n\n{line}"

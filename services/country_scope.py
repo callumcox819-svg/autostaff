@@ -64,6 +64,21 @@ PORTUGAL_VALIDATION_DOMAINS: tuple[str, ...] = (
     "me.com",
 )
 
+# HU: Jófogás — freemail/citromail, потом gmail/icloud.
+HUNGARY_VALIDATION_DOMAINS: tuple[str, ...] = (
+    "freemail.hu",
+    "gmail.com",
+    "citromail.hu",
+    "icloud.com",
+    "indamail.hu",
+    "vipmail.hu",
+    "outlook.com",
+    "hotmail.com",
+    "t-online.hu",
+    "yahoo.com",
+    "me.com",
+)
+
 
 def scoped_setting_key(base: str, country: str) -> str:
     cc = normalize_country_id(country) or LEGACY_COUNTRY
@@ -231,6 +246,67 @@ def force_portugal_olx_service(team_id: str, service_code: str) -> str:
     return "olx_pt"
 
 
+def hungary_html_service(team_id: str = "") -> str:
+    """Дефолт Венгрии: Jófogás."""
+    _ = team_id
+    return "jofogas_hu"
+
+
+def hungary_html_service_for_code(service_code: str) -> str:
+    from services.csm_catalog import parse_service_key
+
+    code = (service_code or "").strip().lower()
+    if not code:
+        return hungary_html_service()
+    if code in {"jofogas_hu", "jofogas", "jofogas.hu"}:
+        return "jofogas_hu"
+    if "_" in code:
+        platform, cc = parse_service_key(code)
+        plat = (platform or "").strip().lower()
+        if plat in {"jofogas", "jofogás"}:
+            return "jofogas_hu"
+        if cc == "hu" and plat:
+            return f"{plat}_hu"
+    if code.startswith("jofogas"):
+        return "jofogas_hu"
+    return hungary_html_service()
+
+
+def force_hungary_html_service(team_id: str, service_code: str) -> str:
+    from services.csm_catalog import is_verify_service
+    from services.hustle_catalog import is_hustle_verify
+
+    tid = (team_id or "").strip().lower()
+    code = (service_code or "").strip()
+    if tid == "csm" and is_verify_service(code):
+        return code
+    if tid == "hustle" and is_hustle_verify(code):
+        return code
+    return hungary_html_service_for_code(code)
+
+
+def force_hungary_jofogas_service(team_id: str, service_code: str) -> str:
+    """BASTARD/CSM на HU → jofogas_hu (Verify не трогаем)."""
+    from services.csm_catalog import is_verify_service, make_service_key, parse_service_key
+    from services.bastard_catalog import BASTARD_DEFAULT_SERVICE
+
+    tid = (team_id or "").strip().lower()
+    code = (service_code or "").strip()
+    if tid == "csm" and is_verify_service(code):
+        return code
+    if tid == "bastard":
+        return code or BASTARD_DEFAULT_SERVICE
+    if tid != "csm":
+        return hungary_html_service_for_code(code)
+    platform, cc = parse_service_key(code)
+    plat = (platform or "").strip().lower()
+    if plat == "jofogas":
+        return "jofogas_hu"
+    if cc == "hu" and plat in {"vinted", "depop", "ebay", "facebook"}:
+        return make_service_key(plat, "hu")
+    return "jofogas_hu"
+
+
 def force_switzerland_html_service(team_id: str, service_code: str) -> str:
     """Verify оставляем; HTML/GAG CH по ricardo / tutti / anibis / post."""
     from services.csm_catalog import is_verify_service
@@ -259,6 +335,8 @@ def default_validation_domains_for(country: str) -> tuple[str, ...]:
         return AUSTRIA_VALIDATION_DOMAINS
     if cc == "pt":
         return PORTUGAL_VALIDATION_DOMAINS
+    if cc == "hu":
+        return HUNGARY_VALIDATION_DOMAINS
     from region import DEFAULT_VALIDATION_DOMAINS
 
     return DEFAULT_VALIDATION_DOMAINS

@@ -117,6 +117,16 @@ class InboxDeliverabilityTests(unittest.TestCase):
         self.assertNotIn("still for sale", body.lower())
         out = finalize_mailing_body("Olá, ainda disponível?", "Bicicleta", country="pt")
         self.assertIn("anúncio: Bicicleta", out)
+
+    def test_hu_fallback_is_hungarian(self):
+        from services.mailing_deliverability import pick_inbox_success_body
+        from services.offer_text import finalize_mailing_body
+
+        body = pick_inbox_success_body("hu")
+        self.assertTrue(any(w in body.lower() for w in ("szia", "hirdetés", "termék", "ajánlat")))
+        self.assertNotIn("still for sale", body.lower())
+        out = finalize_mailing_body("Szia, elérhető még?", "iPhone", country="hu")
+        self.assertIn("hirdetéséről van szó: iPhone", out)
         self.assertNotIn("Inserat", out)
 
 

@@ -72,6 +72,12 @@ def test_marketplace_label_from_stored_service_and_marktplaats_short_link():
     assert label_pt == "OLX.pt"
     assert code_pt == "olx_pt"
 
+    label_hu, code_hu = marketplace_service_from_link(
+        "https://www.jofogas.hu/budapest/iPhone-ID123"
+    )
+    assert label_hu == "Jófogás"
+    assert code_hu == "jofogas_hu"
+
     payload = stamp_marketplace_service_on_payload(
         {"item_link": "https://link.marktplaats.nl/m2440712344", "item_title": "X"}
     )

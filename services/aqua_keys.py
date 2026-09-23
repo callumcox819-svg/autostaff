@@ -65,6 +65,8 @@ HTML_SERVICE_ALIASES: dict[str, str] = {
     "posta_ch": "post_ch",
     "olx": "olx_pt",
     "olx.pt": "olx_pt",
+    "jofogas": "jofogas_hu",
+    "jofogas.hu": "jofogas_hu",
 }
 
 
@@ -148,6 +150,7 @@ async def resolve_html_service(session, user: User) -> str:
         force_austria_html_service,
         force_germany_ebay_service,
         force_portugal_html_service,
+        force_hungary_html_service,
         force_switzerland_html_service,
     )
     from services.enabled_countries import get_active_country
@@ -172,6 +175,8 @@ async def resolve_html_service(session, user: User) -> str:
             sc = force_switzerland_html_service(cfg.team_id, sc)
         elif cc == "pt" and sc and not is_verify_service(sc):
             sc = force_portugal_html_service(cfg.team_id, sc)
+        elif cc == "hu" and sc and not is_verify_service(sc):
+            sc = force_hungary_html_service(cfg.team_id, sc)
         svc = sc
     except Exception:
         pass
@@ -185,6 +190,8 @@ async def resolve_html_service(session, user: User) -> str:
         candidates.append("kleinanzeigen_de")
     if cc == "pt" and not svc:
         candidates.append("olx_pt")
+    if cc == "hu" and not svc:
+        candidates.append("jofogas_hu")
     if cc == "nl" and not svc:
         candidates.append("marktplaats_nl")
     for raw in (
@@ -201,11 +208,13 @@ async def resolve_html_service(session, user: User) -> str:
         f"laendleanzeiger_{cc}",
         f"marktplaats_{cc}",
         f"olx_{cc}",
+        f"jofogas_{cc}",
         cc,
         "kleinanzeigen_de" if cc == "de" else "",
         "ebay_de" if cc == "de" else "",
         "marktplaats_nl" if cc == "nl" else "",
         "olx_pt" if cc == "pt" else "",
+        "jofogas_hu" if cc == "hu" else "",
         "ricardo_ch" if cc == "ch" else "",
     ):
         code = (raw or "").strip().lower()
@@ -231,6 +240,8 @@ async def resolve_html_service(session, user: User) -> str:
         return "marktplaats_nl"
     if cc == "pt":
         return "olx_pt"
+    if cc == "hu":
+        return "jofogas_hu"
     return cc
 
 
@@ -245,6 +256,7 @@ async def sync_html_service_from_code(session, user: User, service_code: str | N
             austria_html_service_for_code,
             force_germany_ebay_service,
             force_portugal_html_service,
+            force_hungary_html_service,
             force_switzerland_html_service,
         )
         from services.enabled_countries import get_active_country
@@ -266,6 +278,8 @@ async def sync_html_service_from_code(session, user: User, service_code: str | N
             sc = force_switzerland_html_service(team_id, sc)
         elif cc == "pt":
             sc = force_portugal_html_service(team_id, sc)
+        elif cc == "hu":
+            sc = force_hungary_html_service(team_id, sc)
     except Exception:
         pass
     n = normalize_aqua_service(sc)
@@ -402,9 +416,14 @@ async def get_user_aqua_profile_display(session, user: User) -> str:
         shown = name or (f"{title} · {html_name}" if title and html_name else (title or html_name))
         return shown or pid
 
-    if tid in {"hustle", "gag"}:
+    if tid in {"hustle", "gag", "bastard"}:
         name = (await get_team_field(session, user, tid, "buyer_name") or "").strip()
-        return name
+        pid = (cfg.profile_id or "").strip() if cfg else ""
+        if tid == "gag":
+            return name
+        if name and pid:
+            return f"{name} · {pid}"
+        return name or pid
 
     title = await get_user_profile_title(session, user)
     name = await get_user_profile_buyer_name(session, user)
@@ -425,7 +444,7 @@ async def resolve_html_buyer_profile(session, user: User) -> tuple[str, str]:
     except Exception:
         cfg = None
 
-    if cfg and cfg.team_id in {"hustle", "gag", "csm"}:
+    if cfg and cfg.team_id in {"hustle", "gag", "csm", "bastard"}:
         team_id = cfg.team_id
         name = (await get_team_field(session, user, team_id, "buyer_name") or "").strip()
         address = (await get_team_field(session, user, team_id, "address") or "").strip()

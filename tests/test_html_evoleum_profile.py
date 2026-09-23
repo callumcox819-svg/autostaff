@@ -202,6 +202,30 @@ class HtmlCtxBuyerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(name, "Anna Gremlis")
         self.assertIn("Berlin", addr)
 
+    async def test_bastard_html_uses_team_name_address(self):
+        from services.aqua_keys import resolve_html_buyer_profile
+
+        session = AsyncMock()
+        user = SimpleNamespace(id=1)
+        cfg = SimpleNamespace(team_id="bastard", profile_id="")
+
+        async def _field(_s, _u, _tid, field):
+            return {"buyer_name": "Kiss Anna", "address": "Andrássy út 12, Budapest"}.get(field, "")
+
+        with (
+            patch(
+                "services.api_teams.get_selected_team_config",
+                new=AsyncMock(return_value=cfg),
+            ),
+            patch(
+                "services.api_teams.get_team_field",
+                new=_field,
+            ),
+        ):
+            name, addr = await resolve_html_buyer_profile(session, user)
+        self.assertEqual(name, "Kiss Anna")
+        self.assertIn("Budapest", addr)
+
     async def test_gag_html_uses_gag_name_address(self):
         from services.aqua_keys import resolve_html_buyer_profile
 

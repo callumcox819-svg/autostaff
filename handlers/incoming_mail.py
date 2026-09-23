@@ -1467,6 +1467,8 @@ def _service_label_for_card(service_code: str) -> str:
         return "facebook.com"
     if low in {"olx_pt", "olx.pt"}:
         return "OLX.pt"
+    if low in {"jofogas_hu", "jofogas.hu", "jofogas"}:
+        return "Jófogás"
     if "_" in low and low.split("_", 1)[0] == "olx":
         cc = low.split("_", 1)[-1]
         return f"OLX.{cc}" if cc and cc != "pt" else "OLX.pt"
@@ -1483,12 +1485,22 @@ def _generate_card_service_label(*, team_id: str, service_code: str, offer) -> s
         plat, cc = parse_service_key(sc)
         if plat == "olx":
             return "OLX.pt" if cc == "pt" else f"OLX.{cc or 'pt'}"
+        if plat == "jofogas":
+            return "Jófogás"
         if plat:
             host = f"{platform_label(plat)}"
             if cc:
                 return f"{host} ({cc.upper()})"
             return host
         return _service_label_for_card(sc)
+    if tid in {"hustle", "bastard"} and sc:
+        if tid == "bastard":
+            from services.bastard_catalog import bastard_service_label
+
+            return bastard_service_label(sc)
+        from services.hustle_catalog import hustle_service_label
+
+        return hustle_service_label(sc)
     from services.offer_storage import marketplace_service_label_from_offer
 
     return marketplace_service_label_from_offer(offer) or _service_label_for_card(sc)

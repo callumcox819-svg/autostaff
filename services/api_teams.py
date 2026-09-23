@@ -1,4 +1,4 @@
-"""Команды API: CSM / Evoleum / Hustle Castle — выбор и поля для генерации."""
+"""Команды API: CSM / Evoleum / Hustle Castle / BASTARD / GAG."""
 
 from __future__ import annotations
 
@@ -15,6 +15,7 @@ API_TEAMS: tuple[tuple[str, str], ...] = (
     ("csm", "CSM"),
     ("evoleum", "Evoleum"),
     ("hustle", "Hustle Castle"),
+    ("bastard", "BASTARD"),
     ("gag", "GAG"),
 )
 
@@ -73,6 +74,8 @@ def normalize_team_id(raw: str | None) -> str | None:
         return "evoleum"
     if s in {"hustle_castle", "hustlecastle", "incore", "inc-core", "inc_core", "inccore"}:
         return "hustle"
+    if s in {"bastard_team", "bastards"}:
+        return "bastard"
     if s in {"gag_bot", "aqua", "generate"}:
         return "gag"
     return None
@@ -89,6 +92,8 @@ def default_service_for_team(team_id: str) -> str:
         return "marktplaats_nl"
     if team_id == "hustle":
         return "kleinanzeigen_de"
+    if team_id == "bastard":
+        return "jofogas_hu"
     if team_id == "gag":
         from services.gag_catalog import normalize_gag_service_code
 
@@ -175,6 +180,10 @@ def _team_key_for(team_id: str) -> str:
         from services.hustle_network import hustle_team_key
 
         return hustle_team_key()
+    if team_id == "bastard":
+        from services.hustle_network import bastard_team_key
+
+        return bastard_team_key()
     if team_id == "gag":
         # GAG использует личный apikey; инфраструктурный URL скрыт от пользователя.
         return ""

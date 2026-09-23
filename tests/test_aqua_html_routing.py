@@ -62,6 +62,13 @@ class AquaHtmlRoutingTests(unittest.TestCase):
             self.assertTrue(ht.html_template_path("olx_pt", "push.html"))
             self.assertTrue(ht.html_template_path("olx_pt", "confirmation_new.html"))
             self.assertIn("olx_pt", ak.AQUA_SERVICE_CHOICES)
+            self.assertEqual(ak.normalize_aqua_service("jofogas_hu"), "jofogas_hu")
+            self.assertEqual(ht.html_subdir_for_service("jofogas_hu"), "jofogas_hu")
+            self.assertTrue(ht.html_template_path("jofogas_hu", "confirmation.html"))
+            self.assertTrue(ht.html_template_path("jofogas_hu", "back.html"))
+            self.assertTrue(ht.html_template_path("jofogas_hu", "push.html"))
+            self.assertTrue(ht.html_template_path("jofogas_hu", "confirmation_new.html"))
+            self.assertIn("jofogas_hu", ak.AQUA_SERVICE_CHOICES)
 
     def test_env_services_and_html_dir(self):
         with patch.dict(os.environ, {"AQUA_SERVICES": "demo_mkt", "HTML_DATA_DIR": "HTML"}, clear=False):

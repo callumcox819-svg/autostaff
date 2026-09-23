@@ -30,6 +30,13 @@ from services.csm_catalog import (
     platforms_for_country,
     service_key_label,
 )
+from services.bastard_catalog import (
+    bastard_country_label,
+    bastard_service_label,
+    list_bastard_countries,
+    parse_bastard_service,
+    platforms_for_bastard_country,
+)
 from services.hustle_catalog import (
     hustle_country_label,
     hustle_service_label,
@@ -69,7 +76,15 @@ def _teams_list_kb(selected_id: str) -> InlineKeyboardMarkup:
                 inline_button(
                     "key"
                     if tid == "csm"
-                    else ("pin" if tid == "hustle" else ("burst" if tid == "gag" else "link")),
+                    else (
+                        "pin"
+                        if tid == "hustle"
+                        else (
+                            "burst"
+                            if tid == "gag"
+                            else ("status" if tid == "bastard" else "link")
+                        )
+                    ),
                     label,
                     callback_data=f"api_team_open:{tid}",
                 ),
@@ -126,6 +141,16 @@ def _team_detail_kb(team_id: str, *, service_code: str = "") -> InlineKeyboardMa
                 )
             ]
         )
+    elif team_id == "bastard":
+        rows.append(
+            [
+                inline_button(
+                    "compass",
+                    "Страна / площадка",
+                    callback_data=f"api_team_bastard_plats:{team_id}",
+                )
+            ]
+        )
     elif team_id == "gag":
         rows.extend(_gag_service_toggle_rows(team_id, service_code))
     elif team_id != "gag":
@@ -161,7 +186,7 @@ def _team_detail_kb(team_id: str, *, service_code: str = "") -> InlineKeyboardMa
                 ],
             ]
         )
-    if team_id in {"hustle", "gag", "csm"}:
+    if team_id in {"hustle", "gag", "csm", "bastard"}:
         rows.extend(
             [
                 [
@@ -217,6 +242,11 @@ def _team_detail_text(cfg, *, buyer_name: str = "", address: str = "", country_n
             f"<b>Площадка:</b> <b>{html.escape(hustle_service_label(cfg.service_code))}</b>"
             f" (<code>{html.escape(cfg.service_code or '—')}</code>)"
         )
+    elif cfg.team_id == "bastard":
+        lines.append(
+            f"<b>Площадка:</b> <b>{html.escape(bastard_service_label(cfg.service_code))}</b>"
+            f" (<code>{html.escape(cfg.service_code or '—')}</code>)"
+        )
     elif cfg.team_id == "gag":
         from services.gag_catalog import gag_generate_service, gag_service_label
 
@@ -252,6 +282,14 @@ def _team_detail_text(cfg, *, buyer_name: str = "", address: str = "", country_n
             f"<b>Адрес{cc}:</b> <code>{html.escape(address or '—')}</code>\n"
             "<i>Те же поля для генерации ссылки и для HTML этой страны. "
             "Team-ключ — только на сервере: <code>HUSTLE_TEAM_KEY</code>.</i>"
+        )
+    if cfg.team_id == "bastard":
+        cc = f" ({html.escape(country_name)})" if country_name else ""
+        lines.append(
+            f"<b>ФИО{cc}:</b> <code>{html.escape(buyer_name or '—')}</code>\n"
+            f"<b>Адрес{cc}:</b> <code>{html.escape(address or '—')}</code>\n"
+            "<i>INC-CORE как у Hustle. Венгрия, площадка <b>Jófogás</b> "
+            "(<code>jofogas_hu</code> FAST). Team-ключ: <code>BASTARD_TEAM_KEY</code>.</i>"
         )
     if cfg.team_id == "gag":
         cc = f" ({html.escape(country_name)})" if country_name else ""
@@ -429,7 +467,7 @@ async def _team_detail_payload(session, user, tid: str) -> tuple[object, str]:
     cc_name = country_display_name(await get_active_country(session, user))
     if cfg.team_id == "evoleum":
         buyer, addr = await _evoleum_html_profile_fields(session, user)
-    elif cfg.team_id in {"hustle", "gag", "csm"}:
+    elif cfg.team_id in {"hustle", "gag", "csm", "bastard"}:
         from services.api_teams import get_team_field
 
         buyer = await get_team_field(session, user, cfg.team_id, "buyer_name")
@@ -677,6 +715,123 @@ async def api_team_hustle_svc(callback: CallbackQuery, state: FSMContext) -> Non
     await callback.answer(toast("ok", hustle_service_label(sk)))
 
 
+def _bastard_countries_kb(
+    team_id: str,
+    current_service: str,
+    enabled: set[str] | None = None,
+) -> InlineKeyboardMarkup:
+    _ = enabled
+    _, cur_cc = parse_bastard_service(current_service)
+    rows: list[list[InlineKeyboardButton]] = []
+    for cid, label, emoji_key in list_bastard_countries():
+        on = cid == cur_cc
+        btn = (
+            toggle_button(True, label, f"api_team_bastard_country:{team_id}:{cid}")
+            if on
+            else inline_button(
+                emoji_key, label, callback_data=f"api_team_bastard_country:{team_id}:{cid}"
+            )
+        )
+        rows.append([btn])
+    rows.append([back_inline(f"api_team_open:{team_id}")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def _bastard_services_kb(team_id: str, country: str, current_service: str) -> InlineKeyboardMarkup:
+    cur, _cc = parse_bastard_service(current_service)
+    rows: list[list[InlineKeyboardButton]] = []
+    row: list[InlineKeyboardButton] = []
+    for sid, label, emoji_key, _mode in platforms_for_bastard_country(country):
+        on = sid == cur
+        btn = (
+            toggle_button(True, label, f"api_team_bastard_svc:{team_id}:{sid}")
+            if on
+            else inline_button(
+                emoji_key, label, callback_data=f"api_team_bastard_svc:{team_id}:{sid}"
+            )
+        )
+        row.append(btn)
+        if len(row) == 2:
+            rows.append(row)
+            row = []
+    if row:
+        rows.append(row)
+    rows.append([back_inline(f"api_team_bastard_plats:{team_id}")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+@router.callback_query(F.data.startswith("api_team_bastard_plats:"))
+async def api_team_bastard_plats(callback: CallbackQuery, state: FSMContext) -> None:
+    await state.clear()
+    tid = (callback.data or "").split(":", 1)[-1].strip()
+    async with Session() as session:
+        user = await get_or_create_user(session, callback.from_user.id)
+        cfg = await get_team_config(session, user, tid)
+        from services.enabled_countries import get_enabled_country_ids
+
+        enabled = await get_enabled_country_ids(session, user)
+    text = (
+        f"{html_emoji('compass')} <b>Страна BASTARD</b>\n"
+        f"Сейчас: <b>{html.escape(bastard_service_label(cfg.service_code))}</b>\n\n"
+        f"Выбери страну:"
+    )
+    await _edit(
+        callback,
+        text,
+        _bastard_countries_kb(tid, cfg.service_code or "jofogas_hu", enabled),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("api_team_bastard_country:"))
+async def api_team_bastard_country(callback: CallbackQuery, state: FSMContext) -> None:
+    await state.clear()
+    parts = (callback.data or "").split(":")
+    if len(parts) != 3:
+        await callback.answer()
+        return
+    _, tid, country = parts
+    async with Session() as session:
+        user = await get_or_create_user(session, callback.from_user.id)
+        cfg = await get_team_config(session, user, tid)
+    text = (
+        f"{html_emoji('compass')} <b>{html.escape(bastard_country_label(country))}</b>\n"
+        f"Сейчас: <b>{html.escape(bastard_service_label(cfg.service_code))}</b>\n\n"
+        f"Выбери сервис:"
+    )
+    await _edit(
+        callback,
+        text,
+        _bastard_services_kb(tid, country, cfg.service_code or "jofogas_hu"),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("api_team_bastard_svc:"))
+async def api_team_bastard_svc(callback: CallbackQuery, state: FSMContext) -> None:
+    await state.clear()
+    parts = (callback.data or "").split(":")
+    if len(parts) < 3:
+        await callback.answer()
+        return
+    tid = parts[1]
+    sk = parts[2]
+    async with Session() as session:
+        user = await get_or_create_user(session, callback.from_user.id)
+        try:
+            await set_team_field(session, user, tid, "service_code", sk)
+            from services.aqua_keys import sync_html_service_from_code
+
+            await sync_html_service_from_code(session, user, sk)
+            await session.commit()
+            cfg, text = await _team_detail_payload(session, user, tid)
+        except ValueError as e:
+            await callback.answer(toast("fail", str(e)[:180]), show_alert=True)
+            return
+    await _edit(callback, text, _team_detail_kb(tid, service_code=cfg.service_code))
+    await callback.answer(toast("ok", bastard_service_label(sk)))
+
+
 def _gag_plats_kb(team_id: str, current: str) -> InlineKeyboardMarkup:
     from services.gag_catalog import GAG_CH_PLATFORMS, normalize_gag_service_code
 
@@ -803,6 +958,9 @@ async def api_team_edit(callback: CallbackQuery, state: FSMContext) -> None:
     if field == "service_code" and tid == "hustle":
         callback.data = f"api_team_hustle_plats:{tid}"
         return await api_team_hustle_plats(callback, state)
+    if field == "service_code" and tid == "bastard":
+        callback.data = f"api_team_bastard_plats:{tid}"
+        return await api_team_bastard_plats(callback, state)
     if field == "service_code" and tid == "gag":
         callback.data = f"api_team_gag_plats:{tid}"
         return await api_team_gag_plats(callback, state)
@@ -830,6 +988,12 @@ async def api_team_edit(callback: CallbackQuery, state: FSMContext) -> None:
         hint = "\nФИО покупателя для генерации (lonely / eBay)."
     if field == "address" and tid == "hustle":
         hint = "\nАдрес в Германии, например: <code>Berliner Straße 115, 63272 Frankfurt</code>."
+    if field == "profile_id" and tid == "bastard":
+        hint = "\nProfile ID из INC-CORE. Нужен для FAST (Jófogás по ссылке объявления)."
+    if field == "buyer_name" and tid == "bastard":
+        hint = "\nФИО покупателя для генерации (lonely) и HTML Jófogás."
+    if field == "address" and tid == "bastard":
+        hint = "\nАдрес в Венгрии, например: <code>Andrássy út 12, 1061 Budapest</code>."
     if field == "service_code" and tid == "gag":
         callback.data = f"api_team_gag_plats:{tid}"
         return await api_team_gag_plats(callback, state)

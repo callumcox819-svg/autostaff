@@ -27,10 +27,13 @@ from services.validemail_fast import (
 _TRANSIENT_API_REASONS = frozenset({"connection_error", "timeout"})
 from utils.ui_emoji import html_emoji
 from services.seller_name import (
+    MIN_FIRST_NAME_LEN,
     MIN_NAME_TOKEN_LEN,
     MIN_SELLER_LETTERS,
+    MIN_SELLER_LETTERS_CH,
     allow_single_first_name,
     ch_local_part_variants,
+    first_name_long_enough,
     is_business_token,
     is_ch_name_policy,
     is_usable_single_local,
@@ -161,6 +164,11 @@ def _make_local_part_variants(
     if is_ch_name_policy(country) and not require_first_and_last:
         return ch_local_part_variants(name)
 
+    from services.seller_name import is_company_seller_name, is_parser_placeholder_name
+
+    if is_parser_placeholder_name(name) or is_company_seller_name(name):
+        return []
+
     out: list[str] = []
     seen: set[str] = set()
     norm = _normalize_name(name)
@@ -194,8 +202,13 @@ def _make_local_part_variants(
 
     for form in seller_name_ascii_forms(name):
         dotted = re.sub(r"[\s\-]+", ".", form)
-        if "." in dotted:
-            _add(dotted)
+        if "." not in dotted:
+            continue
+        first_chunk = re.sub(r"[^a-z]", "", dotted.split(".", 1)[0].lower())
+        need = MIN_SELLER_LETTERS_CH if is_ch_name_policy(country) else MIN_FIRST_NAME_LEN
+        if len(first_chunk) < need:
+            continue
+        _add(dotted)
 
     if handles and len(parts) <= 1:
         for h in handles:
@@ -208,6 +221,11 @@ def _make_local_part_variants(
             _add(h)
         return out
     if not tokens:
+        for h in handles:
+            _add(h)
+        return out
+
+    if len(tokens) >= 2 and not first_name_long_enough(tokens, country=country):
         for h in handles:
             _add(h)
         return out

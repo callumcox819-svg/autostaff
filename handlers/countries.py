@@ -80,6 +80,11 @@ def _countries_text(active: str) -> str:
             "\nПортугалия: CSM MeowSavings, площадка <b>OLX.pt</b> "
             "(<code>olx_pt</code> create / create-parse), HTML <code>olx_pt</code>."
         )
+    elif active == "hu":
+        extra = (
+            "\nВенгрия: команда <b>BASTARD</b> (INC-CORE как Hustle), "
+            "площадка <b>Jófogás</b> (<code>jofogas_hu</code> FAST), HTML <code>jofogas_hu</code>."
+        )
     return (
         f"{html_emoji('compass')} <b>Страны</b>\n\n"
         f"Рабочая: <b>{html.escape(active_name)}</b>\n"

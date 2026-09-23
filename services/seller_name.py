@@ -7,9 +7,11 @@ import unicodedata
 from typing import Any
 
 # Слова короче 4 букв не участвуют в first.last.
-# NL/DE: ник с цифрой ≥5 букв; одно слово без цифр ≥8 (mariasto), частые имена — нет.
+# Имя для first.last / генерации: ≥5 букв (не Jan/Hans как first).
+# NL/DE/HU: ник с цифрой ≥5 букв; одно слово без цифр ≥8 (mariasto), частые имена — нет.
 # CH (Ricardo): ≥4 буквы, одиночное имя (Irene/Hans) — валидируем.
 MIN_NAME_TOKEN_LEN = 4
+MIN_FIRST_NAME_LEN = 5
 MIN_SELLER_LETTERS = 5
 MIN_SELLER_LETTERS_CH = 4
 MIN_SINGLE_LOCAL_NO_DIGIT = 8
@@ -213,6 +215,12 @@ _BLOCKED_SINGLE_LOCALS = frozenset(
         "emmen",
         "deventer",
         "borne",
+        # HU / Jófogás юрлица
+        "kft",
+        "zrt",
+        "nyrt",
+        "bt",
+        "kftzrt",
     }
 )
 
@@ -672,6 +680,54 @@ def is_usable_single_local(
     return True
 
 
+_PARSER_PLACEHOLDER_NAMES = frozenset(
+    {
+        "частное лицо",
+        "частное",
+        "maganszemely",
+        "magánszemély",
+        "magan szemely",
+        "private person",
+        "private",
+        "particulier",
+        "anonim",
+        "anonymous",
+        "unknown",
+        "n/a",
+        "na",
+        "-",
+        ".",
+    }
+)
+
+_COMPANY_NAME_RE = re.compile(
+    r"(?i)(?:\b(?:kft|zrt|nyrt|bt|gmbh|ltd|llc|srl|sro)\b|s\.?\s*r\.?\s*o\.?|www\.|https?://)",
+)
+
+
+def is_parser_placeholder_name(raw: str) -> bool:
+    s = " ".join(str(raw or "").strip().lower().split())
+    if not s:
+        return True
+    folded = normalize_seller_name(s).strip().lower()
+    compact = re.sub(r"[^a-zа-яё]+", "", folded or s, flags=re.IGNORECASE)
+    if s in _PARSER_PLACEHOLDER_NAMES or folded in _PARSER_PLACEHOLDER_NAMES:
+        return True
+    if compact in {"частноелицо", "maganszemely", "privateperson"}:
+        return True
+    return False
+
+
+def is_company_seller_name(raw: str) -> bool:
+    s = str(raw or "").strip()
+    if not s:
+        return False
+    if _COMPANY_NAME_RE.search(s):
+        return True
+    folded = normalize_seller_name(s)
+    return bool(folded and _COMPANY_NAME_RE.search(folded))
+
+
 def person_tokens_for_email(name: str) -> list[str]:
     """Токены похожие на имя/фамилию (без shop/city/business)."""
     out: list[str] = []
@@ -682,6 +738,15 @@ def person_tokens_for_email(name: str) -> list[str]:
     return out
 
 
+def first_name_long_enough(tokens: list[str], *, country: str | None = None) -> bool:
+    """First token for first.last: CH ≥4, иначе ≥5 букв."""
+    if not tokens:
+        return False
+    need = MIN_SELLER_LETTERS_CH if is_ch_name_policy(country) else MIN_FIRST_NAME_LEN
+    first = re.sub(r"[^a-z]", "", (tokens[0] or "").lower())
+    return len(first) >= need
+
+
 _MARKT_PROFILE_RENAME_RE = re.compile(
     r"(?:Neu)?Das Mitglied hat vor kurzem den Profilnamen geändert\.?\s*$",
     re.IGNORECASE,
@@ -689,11 +754,13 @@ _MARKT_PROFILE_RENAME_RE = re.compile(
 
 
 def clean_parser_seller_name(raw: str) -> str:
-    """Убрать хвост markt.ch про смену профильного имени."""
+    """Убрать хвост markt.ch и заглушки парсера («Частное лицо»)."""
     s = (raw or "").strip()
     if not s:
         return ""
     s = _MARKT_PROFILE_RENAME_RE.sub("", s).strip()
+    if is_parser_placeholder_name(s):
+        return ""
     return s
 
 
@@ -769,6 +836,10 @@ _LATIN_FOLD = str.maketrans(
         "Ţ": "T",
         "ă": "a",
         "Ă": "A",
+        "ő": "o",
+        "Ő": "O",
+        "ű": "u",
+        "Ű": "U",
     }
 )
 
@@ -883,6 +954,10 @@ _LATIN_FOLD_SHORT = str.maketrans(
         "Ţ": "T",
         "ă": "a",
         "Ă": "A",
+        "ő": "o",
+        "Ő": "O",
+        "ű": "u",
+        "Ű": "U",
     }
 )
 
@@ -1026,6 +1101,8 @@ def seller_name_eligible_for_validation(
     if is_ch_name_policy(country):
         return not seller_name_too_short(name, min_letters=MIN_SELLER_LETTERS_CH)
 
+    if is_parser_placeholder_name(name) or is_company_seller_name(name):
+        return False
     min_letters = seller_name_min_letters(country)
     allow_cf = allow_single_first_name(country)
     if seller_name_too_short(name, min_letters=min_letters):
@@ -1034,7 +1111,7 @@ def seller_name_eligible_for_validation(
         return True
     person = person_tokens_for_email(name)
     if len(person) >= 2:
-        return True
+        return first_name_long_enough(person, country=country)
     if len(person) == 1 and is_usable_single_local(
         person[0], min_letters=min_letters, allow_common_first=allow_cf
     ):

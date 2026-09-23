@@ -1,4 +1,4 @@
-"""Генерация ссылок для оффера / входящих (CSM / Evoleum / Hustle Castle / GAG)."""
+"""Генерация ссылок для оффера / входящих (CSM / Evoleum / Hustle / BASTARD / GAG)."""
 
 from __future__ import annotations
 
@@ -301,21 +301,28 @@ async def _generate_hustle(
             f"Не задан API-ключ для <b>{cfg.label}</b>. "
             f"{menu_path(('settings', ''), ('key', 'Команды API'))} → {cfg.label}."
         )
+    team_id = (cfg.team_id or "hustle").strip().lower()
+    env_key = "BASTARD_TEAM_KEY" if team_id == "bastard" else "HUSTLE_TEAM_KEY"
     if not (cfg.team_key or "").strip():
         raise AquaError(
-            "Генерация Hustle Castle недоступна: на сервере не задан "
-            "<code>HUSTLE_TEAM_KEY</code>. Напишите админу."
+            f"Генерация {cfg.label} недоступна: на сервере не задан "
+            f"<code>{env_key}</code>. Напишите админу."
         )
     if not (cfg.service_code or "").strip():
         raise AquaError(
-            f"Не выбрана площадка Hustle Castle. "
-            f"{menu_path(('settings', ''), ('key', 'Команды API'))} → Hustle Castle → Страна / площадка."
+            f"Не выбрана площадка {cfg.label}. "
+            f"{menu_path(('settings', ''), ('key', 'Команды API'))} → {cfg.label} → Страна / площадка."
         )
 
     from services.api_teams import get_team_field
+    from services.bastard_catalog import (
+        is_bastard_custom,
+        is_bastard_fast,
+        is_bastard_verify,
+    )
 
-    buyer = (await get_team_field(session, user, "hustle", "buyer_name") or "").strip()
-    address = (await get_team_field(session, user, "hustle", "address") or "").strip()
+    buyer = (await get_team_field(session, user, team_id, "buyer_name") or "").strip()
+    address = (await get_team_field(session, user, team_id, "address") or "").strip()
     listing = (listing_url or "").strip()
     if not listing and offer is not None:
         listing = (getattr(offer, "link", None) or getattr(offer, "item_link", None) or "").strip()
@@ -327,8 +334,19 @@ async def _generate_hustle(
     link_type = (cfg.link_type or "lk").strip() or "lk"
     svc = (cfg.service_code or "").strip()
 
+    if team_id == "bastard":
+        verify = is_bastard_verify(svc)
+        custom = is_bastard_custom(svc)
+        fast = is_bastard_fast(svc)
+        default_addr = "Budapest"
+    else:
+        verify = is_hustle_verify(svc)
+        custom = is_hustle_custom(svc)
+        fast = is_hustle_fast(svc)
+        default_addr = "Deutschland"
+
     try:
-        if is_hustle_verify(svc):
+        if verify:
             seller = title
             if not seller:
                 raise AquaError("Для Verify нужно имя продавца / название")
@@ -339,12 +357,12 @@ async def _generate_hustle(
                 name=seller,
                 price=p or "0",
                 user=buyer or seller,
-                address=address or "Deutschland",
+                address=address or default_addr,
                 photo=image or "https://upload.wikimedia.org/wikipedia/commons/thumb/1/1b/EBay_logo.svg/256px-EBay_logo.svg.png",
                 link_type=link_type,
             )
 
-        if is_hustle_custom(svc):
+        if custom:
             if not title:
                 raise AquaError("Нет названия объявления")
             if not p:
@@ -361,7 +379,7 @@ async def _generate_hustle(
                 link_type=link_type,
             )
 
-        if is_hustle_fast(svc) and _is_http_url(listing) and (cfg.profile_id or "").strip():
+        if fast and _is_http_url(listing) and (cfg.profile_id or "").strip():
             if not (p and not _price_is_zero(p)):
                 try:
                     return await hustle_generate_fast(
@@ -494,7 +512,11 @@ async def aqua_generate_for_offer(
     cfg = await get_selected_team_config(session, user)
     from dataclasses import replace
 
-    from services.country_scope import force_germany_ebay_service, force_portugal_olx_service
+    from services.country_scope import (
+        force_germany_ebay_service,
+        force_hungary_jofogas_service,
+        force_portugal_olx_service,
+    )
     from services.enabled_countries import get_active_country
 
     cc = await get_active_country(session, user)
@@ -508,6 +530,8 @@ async def aqua_generate_for_offer(
         cfg = replace(cfg, service_code=force_germany_ebay_service(cfg.team_id, cfg.service_code))
     if cc == "pt":
         cfg = replace(cfg, service_code=force_portugal_olx_service(cfg.team_id, cfg.service_code))
+    if cc == "hu":
+        cfg = replace(cfg, service_code=force_hungary_jofogas_service(cfg.team_id, cfg.service_code))
     if cfg.team_id == "csm":
         return await _generate_csm(
             session,
@@ -518,7 +542,7 @@ async def aqua_generate_for_offer(
             price=price,
             force_no_parse=force_no_parse,
         )
-    if cfg.team_id == "hustle":
+    if cfg.team_id in {"hustle", "bastard"}:
         return await _generate_hustle(session, user, cfg, offer, listing_url=listing_url, price=price)
     if cfg.team_id == "gag":
         return await _generate_gag(session, user, cfg, offer, listing_url=listing_url, price=price)

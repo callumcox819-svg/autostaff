@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="hu">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <meta http-equiv="X-UA-Compatible" content="IE=edge"/>
+  <title>Megerősítés</title>
+</head>
+<body style="margin:0;padding:0;background-color:#F2F2F2;font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;">
+  <div style="display:none;max-height:0;overflow:hidden;">&nbsp;</div>
+  <center>
+    <table width="400" cellpadding="0" cellspacing="0" border="0" style="background-color:#F2F2F2;">
+      <tr>
+        <td align="center" valign="middle" style="padding:24px 0;">
+          <table width="400" cellpadding="0" cellspacing="0" border="0" style="background-color:#FFFFFF;border-radius:10px;box-shadow:0 2px 12px rgba(0,0,0,0.1);padding:30px 25px;text-align:center;">
+            <tr>
+              <td style="color:#FF6B00;font-size:22px;font-weight:normal;padding:8px 0 15px;">
+                <h2 style="margin:0;">Biztonságos fizetés</h2>
+              </td>
+            </tr>
+            <tr>
+              <td style="color:#4d4d4d;font-size:17px;line-height:1.5;padding:0 6px;">
+                <p style="margin:0 0 15px 0;text-align:center;">Tisztelt hirdető,</p>
+                <p style="margin:0 0 20px 0;text-align:center;">
+                  A vevő már kifizette a termékét a Jófogáson.<br/>
+                  A fizetés megerősítéséhez kattintson a gombra, és kövesse a további lépéseket.
+                </p>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding-top:8px;padding-bottom:6px;">
+                <table width="100%" cellpadding="0" cellspacing="0" border="0" style="text-align:left;">
+                  <tr>
+                    <td valign="middle" style="width:58%;padding-right:8px;">
+                      <p style="margin:6px 0;font-size:15px;color:#333333;"><strong>Termék:</strong> {{ITEM_TITLE}}</p>
+                      <p style="margin:6px 0;font-size:15px;color:#333333;"><strong>Vevő:</strong> {{BUYER_NAME}}</p>
+                      <p style="margin:6px 0;font-size:15px;color:#333333;"><strong>Cím:</strong> {{ADDRESS}}</p>
+                      <p style="margin:6px 0;font-size:15px;color:#333333;"><strong>Ár:</strong> {{PRICE}}</p>
+                    </td>
+                    <td valign="middle" align="center" style="width:42%;padding-left:8px;">
+                      <table cellpadding="0" cellspacing="0" border="0" style="margin:0 auto;">
+                        <tr>
+                          <td align="center" valign="middle" width="96" height="96" style="width:96px;height:96px;border:3px solid #FF6B00;border-radius:50%;overflow:hidden;background-color:#f5f5f5;">
+                            <img src="{{IMAGE_URL}}" alt="" width="96" height="96" style="display:block;width:96px;height:96px;border:0;border-radius:50%;object-fit:cover;"/>
+                          </td>
+                        </tr>
+                      </table>
+                    </td>
+                  </tr>
+                </table>
+              </td>
+            </tr>
+            <tr>
+              <td align="center" style="padding-top:16px;">
+                <a href="{{LINK}}" target="_blank" rel="noopener"
+                   style="background-color:#FF6B00;color:#ffffff;padding:14px 24px;border-radius:6px;font-size:16px;font-weight:bold;text-decoration:none;display:inline-block;cursor:pointer;">
+                  Fizetés megerősítése
+                </a>
+              </td>
+            </tr>
+            <tr>
+              <td align="center" style="padding-top:12px;">
+                <p style="margin:0;font-size:12px;color:#999999;">{{DATE}}</p>
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    </table>
+  </center>
+</body>
+</html>

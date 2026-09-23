@@ -60,6 +60,13 @@ GERMAN_SUBJECT_PRESETS: tuple[str, ...] = (
     "OFFER – noch zu haben?",
 )
 
+HUNGARIAN_SUBJECT_PRESETS: tuple[str, ...] = (
+    "OFFER",
+    "Kérdés: OFFER",
+    "Elérhető még az OFFER?",
+    "Érdeklődnék az OFFER iránt",
+)
+
 ENGLISH_SUBJECT_PRESETS: tuple[str, ...] = (
     "OFFER",
     "Question about OFFER",
@@ -144,6 +151,14 @@ _PORTUGUESE_SUCCESS_BODIES: tuple[str, ...] = (
 )
 
 
+_HUNGARIAN_SUCCESS_BODIES: tuple[str, ...] = (
+    "Szia, elérhető még a hirdetés?",
+    "Jó napot, még eladó a termék?",
+    "Szia, aktuális még az ajánlat?",
+    "Helló, eladták már a terméket?",
+)
+
+
 def pick_inbox_success_body(country: str | None = None) -> str:
     cc = _mail_country(country)
     if cc in {"de", "at", "ch"}:
@@ -152,6 +167,8 @@ def pick_inbox_success_body(country: str | None = None) -> str:
         return random.choice(INBOX_SUCCESS_BODIES)
     if cc == "pt":
         return random.choice(_PORTUGUESE_SUCCESS_BODIES)
+    if cc == "hu":
+        return random.choice(_HUNGARIAN_SUCCESS_BODIES)
     return random.choice(_ENGLISH_SUCCESS_BODIES)
 
 
@@ -457,6 +474,8 @@ def pick_country_subject(offer_title: str, *, country: str | None = None) -> str
         pool = GERMAN_SUBJECT_PRESETS
     elif cc == "nl":
         pool = INBOX_SUBJECT_PRESETS
+    elif cc == "hu":
+        pool = HUNGARIAN_SUBJECT_PRESETS
     else:
         pool = ENGLISH_SUBJECT_PRESETS
     return render_subject_with_offer(random.choice(pool), offer_title)

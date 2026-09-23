@@ -50,6 +50,17 @@ def hustle_team_key() -> str:
     return str(raw).strip().strip('"').strip("'")
 
 
+def bastard_team_key() -> str:
+    raw = (
+        os.getenv("BASTARD_TEAM_KEY")
+        or os.getenv("INC_CORE_TEAM_KEY")
+        or os.getenv("INCORE_TEAM_KEY")
+        or os.getenv("HUSTLE_TEAM_KEY")
+        or ""
+    )
+    return str(raw).strip().strip('"').strip("'")
+
+
 def _auth_headers(*, api_key: str, team_key: str) -> dict[str, str]:
     user = (api_key or "").strip()
     team = (team_key or "").strip()

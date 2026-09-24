@@ -13,6 +13,15 @@ logger = logging.getLogger(__name__)
 _ANSWER_TIMEOUT_SEC = 8.0
 
 
+def is_expired_callback_error(exc: BaseException) -> bool:
+    msg = str(exc).lower()
+    return (
+        "query is too old" in msg
+        or "query id is invalid" in msg
+        or "response timeout expired" in msg
+    )
+
+
 async def callback_answer_safe(
     callback: CallbackQuery,
     text: str | None = None,
@@ -27,6 +36,9 @@ async def callback_answer_safe(
     except asyncio.TimeoutError:
         logger.warning("callback.answer timeout (data=%r)", callback.data)
     except TelegramBadRequest as e:
-        logger.warning("callback.answer пропущен (TelegramBadRequest): %s", e)
+        if is_expired_callback_error(e):
+            logger.warning("callback.answer skipped (expired query): %s", e)
+        else:
+            logger.warning("callback.answer пропущен (TelegramBadRequest): %s", e)
     except Exception:
         logger.exception("callback.answer error (data=%r)", callback.data)

@@ -66,7 +66,8 @@ from services.translate import translate_to_ru, _strip_html
 # Email reply "presets" must use the same storage/UI as ⚡ Шаблоны (handlers/templates.py)
 from handlers.templates import load_templates, TemplateItem
 from utils.bg_jobs import is_running as bg_is_running, start as bg_start
-from utils.ui_emoji import html_emoji, inline_button, back_inline, menu_path, msg_fail, msg_ok, msg_wait, msg_warn
+from utils.callback_safe import callback_answer_safe, is_expired_callback_error
+from utils.ui_emoji import html_emoji, inline_button, back_inline, menu_path, msg_fail, msg_ok, msg_wait, msg_warn, toast
 
 router = Router()
 
@@ -93,6 +94,12 @@ async def _run_aqua_link_bg(callback: CallbackQuery, work) -> None:
     try:
         await work()
     except Exception as e:
+        if is_expired_callback_error(e):
+            logger.warning(
+                "aqua_link: stale Telegram callback (link work may have finished) tg=%s",
+                callback.from_user.id,
+            )
+            return
         logger.exception("aqua_link background failed tg=%s", callback.from_user.id)
         try:
             await callback.message.answer(
@@ -2171,11 +2178,14 @@ async def _create_aqua_link_from_db_work(callback: CallbackQuery, mail_id: int) 
                 await session.rollback()
             except Exception:
                 pass
+            if is_expired_callback_error(e):
+                logger.warning("create aqua link: stale callback mail_id=%s", mail_id)
+                return
             await callback.message.answer(
                 f"{html_emoji('fail')} <b>Ошибка создания ссылки</b>\n<code>{_e(_aqua_link_user_error(e))}</code>",
                 parse_mode="HTML",
             )
-            await callback.answer()
+            await callback_answer_safe(callback)
 
 
 async def _create_aqua_link_from_db_work_impl(
@@ -2193,10 +2203,12 @@ async def _create_aqua_link_from_db_work_impl(
         ).scalars().first()
 
         if not mail:
-            return await callback.answer("Письмо не найдено в БД", show_alert=True)
+            await callback.message.answer(f"{html_emoji('fail')} Письмо не найдено в БД")
+            return await callback_answer_safe(callback, "Письмо не найдено в БД", show_alert=True)
 
         if int(mail.user_id) != int(tg_user.id):
-            return await callback.answer("Нет доступа к этому письму", show_alert=True)
+            await callback.message.answer(f"{html_emoji('fail')} Нет доступа к этому письму")
+            return await callback_answer_safe(callback, "Нет доступа к этому письму", show_alert=True)
 
         acc_id = int(mail.account_id)
         inbox_email = _canon_email(mail.account_email or "")
@@ -2285,7 +2297,7 @@ async def _create_aqua_link_from_db_work_impl(
                 parse_mode="HTML",
                 disable_web_page_preview=True,
             )
-            await callback.answer()
+            await callback_answer_safe(callback)
             return
 
         url = (url or (offer_effective_link(offer) or "").strip() or (getattr(mail, "ad_url", "") or "").strip())
@@ -2299,7 +2311,7 @@ async def _create_aqua_link_from_db_work_impl(
                 parse_mode="HTML",
                 disable_web_page_preview=True,
             )
-            await callback.answer()
+            await callback_answer_safe(callback)
             return
 
         if offer:
@@ -2324,7 +2336,7 @@ async def _create_aqua_link_from_db_work_impl(
 
         if not title:
             await callback.message.answer(f"{html_emoji('fail')} Нет названия в теме письма (Re: …).")
-            await callback.answer()
+            await callback_answer_safe(callback)
             return
 
         try:
@@ -2338,7 +2350,7 @@ async def _create_aqua_link_from_db_work_impl(
             )
         except AquaError as e:
             await callback.message.answer(f"{html_emoji('fail')} <b>API генерации</b>\n<code>{_e(str(e)[:400])}</code>", parse_mode="HTML")
-            await callback.answer()
+            await callback_answer_safe(callback)
             return
 
         await _upsert_convlink(
@@ -2415,33 +2427,38 @@ async def _create_aqua_link_from_db_work_impl(
             contact_email=contact_email,
             inbox_label=inbox_label or None,
         )
-        await callback.answer()
 
 
-async def _enqueue_aqua_link_by_mail_id(callback: CallbackQuery, mail_id: int) -> None:
+async def _enqueue_aqua_link_by_mail_id(
+    callback: CallbackQuery, mail_id: int, *, ack: bool = True
+) -> None:
     uid_tg = callback.from_user.id
     bg_key = f"aqua_link:{int(mail_id)}"
     if bg_is_running(uid_tg, bg_key):
-        return await callback.answer(toast("wait", "Ссылка уже создаётся…"), show_alert=True)
-    try:
-        await callback.answer(toast("wait", "Создаю ссылку…"), show_alert=False)
-    except Exception:
-        pass
+        return await callback_answer_safe(
+            callback, toast("wait", "Ссылка уже создаётся…"), show_alert=True
+        )
+    if ack:
+        await callback_answer_safe(callback, toast("wait", "Создаю ссылку…"))
 
     async def _link_job() -> None:
         await _run_aqua_link_bg(callback, lambda: _create_aqua_link_from_db_work(callback, int(mail_id)))
 
     if not bg_start(uid_tg, bg_key, _link_job()):
-        return await callback.answer(toast("wait", "Ссылка уже создаётся…"), show_alert=True)
+        return await callback_answer_safe(
+            callback, toast("wait", "Ссылка уже создаётся…"), show_alert=True
+        )
 
 
 @router.callback_query(F.data.startswith("goo_link:"))
 async def cb_create_goo_link(callback: CallbackQuery):
     parsed = _parse_acc_uid_callback(callback.data or "", "goo_link")
     if not parsed:
-        return await callback.answer("Неверные данные", show_alert=True)
+        return await callback_answer_safe(callback, "Неверные данные", show_alert=True)
     acc_id, uid = parsed
     card_mid = int(callback.message.message_id) if callback.message else None
+
+    await callback_answer_safe(callback, toast("wait", "Создаю ссылку…"))
 
     async with Session() as session:
         mail = await _load_incoming_mail_for_callback(
@@ -2451,33 +2468,28 @@ async def cb_create_goo_link(callback: CallbackQuery):
             tg_message_id=card_mid,
         )
     if mail:
-        return await _enqueue_aqua_link_by_mail_id(callback, int(mail.id))
+        return await _enqueue_aqua_link_by_mail_id(callback, int(mail.id), ack=False)
 
     from handlers.mail_templates import _load_meta_from_db, _STALE_MAIL_MSG
 
     meta = full_meta_get(acc_id, uid) or await _load_meta_from_db(acc_id, uid)
     if not meta:
-        return await callback.answer(
+        await callback.message.answer(
             "Письмо ещё не в базе. Подождите 5–10 сек и нажмите снова, "
             "или дождитесь следующего входящего.",
-            show_alert=True,
         )
+        return
 
     uid_tg = callback.from_user.id
     if bg_is_running(uid_tg, "aqua_link"):
-        return await callback.answer(toast("wait", "Ссылка уже создаётся…"), show_alert=True)
-    try:
-        await callback.answer(toast("wait", "Создаю ссылку…"), show_alert=False)
-    except Exception:
-        pass
+        return
 
     async def _link_job() -> None:
         await _run_aqua_link_bg(
             callback, lambda: _create_aqua_link_work(callback, acc_id, uid, meta)
         )
 
-    if not bg_start(uid_tg, "aqua_link", _link_job()):
-        return await callback.answer(toast("wait", "Ссылка уже создаётся…"), show_alert=True)
+    bg_start(uid_tg, "aqua_link", _link_job())
 
 
 async def _create_aqua_link_work(callback: CallbackQuery, acc_id: int, uid: str, meta: dict) -> None:
@@ -2490,7 +2502,8 @@ async def _create_aqua_link_work(callback: CallbackQuery, acc_id: int, uid: str,
     async with Session() as session:
         owner_user_id = await _get_acc_owner_user_id(session, acc_id)
         if not owner_user_id:
-            return await callback.answer("Аккаунт не найден в БД", show_alert=True)
+            await callback.message.answer(f"{html_emoji('fail')} Аккаунт не найден в БД")
+            return await callback_answer_safe(callback, "Аккаунт не найден в БД", show_alert=True)
 
         mail_pre = (
             await session.execute(
@@ -2588,7 +2601,7 @@ async def _create_aqua_link_work(callback: CallbackQuery, acc_id: int, uid: str,
                 parse_mode="HTML",
                 disable_web_page_preview=True,
             )
-            return await callback.answer()
+            return await callback_answer_safe(callback)
 
         user = await get_or_create_user(session, int(callback.from_user.id))
 
@@ -2608,7 +2621,7 @@ async def _create_aqua_link_work(callback: CallbackQuery, acc_id: int, uid: str,
 
         if not title:
             await callback.message.answer(f"{html_emoji('fail')} Нет названия в теме письма (Re: …).")
-            return await callback.answer()
+            return await callback_answer_safe(callback)
 
         service = await get_user_aqua_service(session, user)
         prof_display = (
@@ -2637,7 +2650,7 @@ async def _create_aqua_link_work(callback: CallbackQuery, acc_id: int, uid: str,
                 f"{html_emoji('fail')} <b>API генерации</b>\n<code>{_e(str(e)[:400])}</code>",
                 parse_mode="HTML",
             )
-            return await callback.answer()
+            return await callback_answer_safe(callback)
 
         await _upsert_convlink(
             session,
@@ -2685,7 +2698,6 @@ async def _create_aqua_link_work(callback: CallbackQuery, acc_id: int, uid: str,
             contact_email=contact_email,
             inbox_label=inbox_label or None,
         )
-        await callback.answer(toast("ok", "Готово"))
 
 
 @router.callback_query(F.data.startswith("mail_reply_db:"))

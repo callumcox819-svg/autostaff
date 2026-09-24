@@ -102,6 +102,39 @@ class HustleGenerateTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(kwargs["json"]["platformCountry"], "de")
         self.assertEqual(kwargs["json"]["price"], 100.0)
 
+    async def test_fast_retries_cloudflare_520_then_ok(self):
+        bad = MagicMock()
+        bad.status = 520
+        bad.text = AsyncMock(return_value='{"title":"Error 520"}')
+        bad.json = AsyncMock(return_value={"title": "Error 520"})
+        bad.__aenter__ = AsyncMock(return_value=bad)
+        bad.__aexit__ = AsyncMock(return_value=None)
+
+        ok = MagicMock()
+        ok.status = 200
+        ok.text = AsyncMock(return_value="{}")
+        ok.json = AsyncMock(return_value={"status": True, "Link": "https://ok.example/r"})
+        ok.__aenter__ = AsyncMock(return_value=ok)
+        ok.__aexit__ = AsyncMock(return_value=None)
+
+        session = MagicMock()
+        session.post = MagicMock(side_effect=[bad, ok])
+        session.__aenter__ = AsyncMock(return_value=session)
+        session.__aexit__ = AsyncMock(return_value=None)
+
+        with patch("services.hustle_network._wait_rate_limit", new=AsyncMock()), patch(
+            "services.hustle_network.asyncio.sleep", new=AsyncMock()
+        ), patch("aiohttp.ClientSession", return_value=session):
+            link = await hustle_generate_fast(
+                api_key="user-key",
+                team_key="team-key",
+                service="jofogas_hu",
+                listing_url="https://www.jofogas.hu/x",
+                profile_id="p1",
+            )
+        self.assertEqual(link, "https://ok.example/r")
+        self.assertEqual(session.post.call_count, 2)
+
 
 if __name__ == "__main__":
     unittest.main()

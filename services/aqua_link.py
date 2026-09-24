@@ -379,22 +379,32 @@ async def _generate_hustle(
                 link_type=link_type,
             )
 
-        if fast and _is_http_url(listing) and (cfg.profile_id or "").strip():
-            if not (p and not _price_is_zero(p)):
-                try:
-                    return await hustle_generate_fast(
-                        api_key=cfg.api_key,
-                        team_key=cfg.team_key,
-                        service=svc,
-                        listing_url=listing,
-                        profile_id=cfg.profile_id,
-                        link_type=link_type,
-                    )
-                except HustleError as e:
-                    msg = str(e).lower()
-                    if "401" in msg or "403" in msg:
-                        raise
-                    logger.warning("hustle fast failed, lonely fallback: %s", e)
+        # Jófogás / Kleinanzeigen — FAST: цена не должна уводить в lonely
+        # (lonely на FAST-сервисе даёт Cloudflare 520 / таймаут).
+        if fast:
+            if not _is_http_url(listing):
+                raise AquaError(
+                    f"Для {cfg.label} ({svc}) нужна ссылка на объявление (item_link)."
+                )
+            if not (cfg.profile_id or "").strip():
+                raise AquaError(
+                    f"Не задан Profile ID для <b>{cfg.label}</b>. "
+                    f"{menu_path(('settings', ''), ('key', 'Команды API'))} → {cfg.label}."
+                )
+            try:
+                return await hustle_generate_fast(
+                    api_key=cfg.api_key,
+                    team_key=cfg.team_key,
+                    service=svc,
+                    listing_url=listing,
+                    profile_id=cfg.profile_id,
+                    link_type=link_type,
+                )
+            except HustleError as e:
+                msg = str(e).lower()
+                if "401" in msg or "403" in msg:
+                    raise
+                logger.warning("hustle fast failed, lonely fallback: %s", e)
 
         if not title:
             raise AquaError("Нет названия объявления")

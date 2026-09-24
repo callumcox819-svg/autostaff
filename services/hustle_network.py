@@ -26,6 +26,9 @@ HUSTLE_API_BASE_DEFAULT = "https://traff.inc-core.com"
 _RATE_LOCK = asyncio.Lock()
 _LAST_REQUEST_MONO = 0.0
 _MIN_INTERVAL_SEC = 1.05
+_RETRY_HTTP = frozenset({502, 503, 504, 520, 521, 522, 523, 524})
+_POST_TRIES = 3
+_POST_TIMEOUT_SEC = 60.0
 
 
 class HustleError(Exception):
@@ -67,7 +70,9 @@ def _auth_headers(*, api_key: str, team_key: str) -> dict[str, str]:
     if not user:
         raise HustleError("Не задан API-ключ Hustle Castle")
     if not team:
-        raise HustleError("Не задан Team-ключ Hustle Castle на сервере (HUSTLE_TEAM_KEY)")
+        raise HustleError(
+            "Не задан Team-ключ INC-CORE на сервере (HUSTLE_TEAM_KEY / BASTARD_TEAM_KEY)"
+        )
     return {
         "Authorization": f"Bearer {user}",
         "X-Team-Key": team,
@@ -113,37 +118,75 @@ async def _wait_rate_limit() -> None:
         _LAST_REQUEST_MONO = time.monotonic()
 
 
+def _inc_core_http_error(status: int, body: str) -> str:
+    if status in _RETRY_HTTP:
+        return (
+            f"INC-CORE (traff.inc-core.com) сейчас лежит или перегружен "
+            f"(Cloudflare {status}). Подождите 20–30 сек и нажмите «Создать ссылку» снова."
+        )
+    return f"HTTP {status}: {body[:300]}"
+
+
 async def _post_json(
     path: str,
     body: dict[str, Any],
     *,
     api_key: str,
     team_key: str,
-    timeout_sec: float = 45.0,
+    timeout_sec: float = _POST_TIMEOUT_SEC,
 ) -> dict[str, Any]:
-    await _wait_rate_limit()
     base = hustle_api_base()
     url = f"{base}{path}"
     headers = _auth_headers(api_key=api_key, team_key=team_key)
     timeout = aiohttp.ClientTimeout(total=timeout_sec)
-    try:
-        async with aiohttp.ClientSession(timeout=timeout) as session:
-            async with session.post(url, json=body, headers=headers) as resp:
-                text = await resp.text()
-                try:
-                    data = await resp.json(content_type=None)
-                except Exception:
-                    data = None
-                if not (200 <= resp.status < 300):
-                    msg = ""
-                    if isinstance(data, dict):
-                        msg = str(data.get("message") or data.get("error") or "")
-                    raise HustleError(f"HTTP {resp.status}: {msg or text[:300]}")
-                if not isinstance(data, dict):
-                    raise HustleError(f"Bad JSON: {text[:300]}")
-                return data
-    except aiohttp.ClientError as e:
-        raise HustleError(f"Сеть ({url}): {e}") from e
+    last: Exception | None = None
+    for attempt in range(1, _POST_TRIES + 1):
+        await _wait_rate_limit()
+        try:
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                async with session.post(url, json=body, headers=headers) as resp:
+                    text = await resp.text()
+                    try:
+                        data = await resp.json(content_type=None)
+                    except Exception:
+                        data = None
+                    if resp.status in _RETRY_HTTP and attempt < _POST_TRIES:
+                        logger.warning(
+                            "INC-CORE HTTP %s, retry %s/%s path=%s",
+                            resp.status,
+                            attempt,
+                            _POST_TRIES,
+                            path,
+                        )
+                        await asyncio.sleep(1.5 * attempt)
+                        continue
+                    if not (200 <= resp.status < 300):
+                        msg = ""
+                        if isinstance(data, dict):
+                            msg = str(data.get("message") or data.get("error") or "")
+                        raise HustleError(_inc_core_http_error(resp.status, msg or text))
+                    if not isinstance(data, dict):
+                        raise HustleError(f"Bad JSON: {text[:300]}")
+                    return data
+        except asyncio.TimeoutError as e:
+            last = HustleError(
+                "INC-CORE не ответил вовремя (таймаут). "
+                "Сервис генерации BASTARD/Hustle перегружен — повторите через полминуты."
+            )
+            logger.warning("INC-CORE timeout retry %s/%s path=%s", attempt, _POST_TRIES, path)
+            if attempt < _POST_TRIES:
+                await asyncio.sleep(1.5 * attempt)
+                continue
+            raise last from e
+        except aiohttp.ClientError as e:
+            last = HustleError(f"Сеть ({url}): {e}")
+            if attempt < _POST_TRIES:
+                await asyncio.sleep(1.5 * attempt)
+                continue
+            raise last from e
+    if last:
+        raise last
+    raise HustleError(f"Сеть ({url})")
 
 
 def _listing_for_fast(listing_url: str) -> str:

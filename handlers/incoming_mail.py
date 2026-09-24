@@ -86,6 +86,11 @@ def _aqua_link_user_error(e: Exception) -> str:
             "Лот с карточки уже удалён из базы. "
             "Загрузите JSON, провалидируйте email и снова нажмите «Создать ссылку»."
         )
+    if "timeouterror" in blob or "таймаут" in blob:
+        return (
+            "INC-CORE не ответил вовремя. "
+            "Подождите 20–30 сек и нажмите «Создать ссылку» ещё раз."
+        )
     return raw[:350]
 
 

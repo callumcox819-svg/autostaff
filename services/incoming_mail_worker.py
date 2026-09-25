@@ -897,6 +897,16 @@ def _parse_imap_uid_list(data) -> list[int]:
     return [int(x) for x in str(raw).split() if str(x).isdigit()]
 
 
+def _inbox_uid_batch(last_uid: int, found: list[int], *, limit: int) -> tuple[list[int], int]:
+    """Старые UID первыми. last_seen двигаем только по взятой пачке — иначе письмо теряется."""
+    uids = sorted({int(u) for u in found if int(u) > int(last_uid)})
+    if not uids:
+        return [], int(last_uid)
+    cap = max(1, int(limit))
+    take = uids[:cap]
+    return take, int(take[-1])
+
+
 def _imap_status_uidnext(M: imaplib.IMAP4_SSL, mailbox: str = "INBOX") -> int | None:
     """UIDNEXT без UID SEARCH ALL по всей куче писем."""
     try:
@@ -1013,14 +1023,12 @@ def _imap_fetch_new_sync_raw(
             lo = int(last_uid) + 1
             typ, data = M.uid("search", None, "UID", f"{lo}:*")
             inbox_uids = _parse_imap_uid_list(data) if typ == "OK" else []
-            inbox_uids = [u for u in inbox_uids if u > int(last_uid)]
-            if inbox_uids:
-                max_uid = max(int(last_uid), max(inbox_uids))
-                inbox_mails = _fetch_uids(sorted(inbox_uids)[-DEFAULT_MAX_PER_ACCOUNT:])
-            else:
-                nxt = _imap_status_uidnext(M, "INBOX")
-                if nxt and nxt - 1 > int(last_uid):
-                    max_uid = nxt - 1
+            take, cursor = _inbox_uid_batch(int(last_uid), inbox_uids, limit=DEFAULT_MAX_PER_ACCOUNT)
+            if take:
+                max_uid = cursor
+                inbox_mails = _fetch_uids(take)
+            # Пустой SEARCH не прыгаем через UIDNEXT: иначе пропускаем письма,
+            # которые ещё не попали в выдачу (Gmail / таймаут SEARCH).
 
         updated_last_uid: Optional[int] = int(max_uid) if max_uid is not None else last_uid
         if last_uid is None and max_uid is not None:

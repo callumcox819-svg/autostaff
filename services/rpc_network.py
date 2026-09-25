@@ -1,8 +1,8 @@
 """RPC / Continental Group Rental Public API.
 
 https://docs.continental-group-rental.com/start
-Auth: заголовок X-API-KEY
-Base: свой API-домен проекта (не домен документации).
+Auth: заголовок X-API-KEY (личный ключ пользователя)
+Base: RPC_API_BASE на сервере, один на всех
 Create: POST /api/v1/ad/create
 """
 
@@ -158,8 +158,7 @@ async def _post_json(
     root = normalize_rpc_api_base(base)
     if not root:
         raise RpcError(
-            "Не задан API-домен RPC. Команды API → RPC → API-домен "
-            "(или переменная RPC_API_BASE на сервере)."
+            "Не задан API-домен RPC на сервере (переменная RPC_API_BASE)."
         )
     url = f"{root}{path}"
     headers = _auth_headers(api_key=api_key)

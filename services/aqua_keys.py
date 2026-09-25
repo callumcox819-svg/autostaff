@@ -421,6 +421,8 @@ async def get_user_aqua_profile_display(session, user: User) -> str:
         pid = (cfg.profile_id or "").strip() if cfg else ""
         if tid == "gag":
             return name
+        if tid == "rpc":
+            return name
         if name and pid:
             return f"{name} · {pid}"
         return name or pid

@@ -179,11 +179,9 @@ def _team_detail_kb(team_id: str, *, service_code: str = "") -> InlineKeyboardMa
                 )
             ]
         )
-    if team_id != "gag":
-        pid_label = "API-домен" if team_id == "rpc" else "Profile ID"
-        pid_emoji = "link" if team_id == "rpc" else "profile"
+    if team_id not in {"gag", "rpc"}:
         rows.append(
-            [inline_button(pid_emoji, pid_label, callback_data=f"api_team_edit:{team_id}:profile_id")]
+            [inline_button("profile", "Profile ID", callback_data=f"api_team_edit:{team_id}:profile_id")]
         )
     if team_id == "evoleum":
         rows.extend(
@@ -280,11 +278,8 @@ def _team_detail_text(cfg, *, buyer_name: str = "", address: str = "", country_n
         )
     else:
         lines.append(f"<b>Код сервиса:</b> <code>{html.escape(cfg.service_code or '—')}</code>")
-    if cfg.team_id != "gag":
-        if cfg.team_id == "rpc":
-            lines.append(f"<b>API-домен:</b> <code>{html.escape(cfg.profile_id or '—')}</code>")
-        else:
-            lines.append(f"<b>Profile ID:</b> <code>{html.escape(cfg.profile_id or '—')}</code>")
+    if cfg.team_id not in {"gag", "rpc"}:
+        lines.append(f"<b>Profile ID:</b> <code>{html.escape(cfg.profile_id or '—')}</code>")
     if cfg.team_id == "csm":
         cc = f" ({html.escape(country_name)})" if country_name else ""
         lines.append(
@@ -324,7 +319,7 @@ def _team_detail_text(cfg, *, buyer_name: str = "", address: str = "", country_n
             f"<b>Адрес{cc}:</b> <code>{html.escape(address or '—')}</code>\n"
             "<i>Continental Group: <code>POST /api/v1/ad/create</code>, заголовок "
             "<code>X-API-KEY</code>. Венгрия (Jófogás) — отдельно от BASTARD. "
-            "API-домен из их бота: Настройки → API, не docs.continental-group-rental.com.</i>"
+            "API-домен один на всех — на сервере <code>RPC_API_BASE</code>.</i>"
         )
     if cfg.team_id == "gag":
         cc = f" ({html.escape(country_name)})" if country_name else ""
@@ -1122,6 +1117,9 @@ async def api_team_edit(callback: CallbackQuery, state: FSMContext) -> None:
     if field == "service_code" and tid == "bastard":
         callback.data = f"api_team_bastard_plats:{tid}"
         return await api_team_bastard_plats(callback, state)
+    if field == "profile_id" and tid == "rpc":
+        await callback.answer(toast("ok", "API-домен общий на сервере"), show_alert=True)
+        return
     if field == "service_code" and tid == "rpc":
         callback.data = f"api_team_rpc_plats:{tid}"
         return await api_team_rpc_plats(callback, state)
@@ -1158,11 +1156,6 @@ async def api_team_edit(callback: CallbackQuery, state: FSMContext) -> None:
         hint = "\nФИО покупателя для генерации (lonely) и HTML Jófogás."
     if field == "address" and tid == "bastard":
         hint = "\nАдрес в Венгрии, например: <code>Andrássy út 12, 1061 Budapest</code>."
-    if field == "profile_id" and tid == "rpc":
-        hint = (
-            "\nAPI-домен из бота RPC: Настройки → API. "
-            "Не docs.continental-group-rental.com. Пример: <code>https://api.your-host.com</code>."
-        )
     if field == "buyer_name" and tid == "rpc":
         hint = "\nФИО покупателя на лендинге (profile.full_name)."
     if field == "address" and tid == "rpc":

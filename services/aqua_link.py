@@ -522,12 +522,11 @@ async def _generate_rpc(
             f"Не задан API-ключ для <b>{cfg.label}</b> (заголовок X-API-KEY). "
             f"{menu_path(('settings', ''), ('key', 'Команды API'))} → {cfg.label}."
         )
-    api_base = (cfg.profile_id or "").strip() or rpc_env_api_base()
+    api_base = rpc_env_api_base()
     if not api_base:
         raise AquaError(
-            f"Не задан API-домен для <b>{cfg.label}</b>. "
-            f"{menu_path(('settings', ''), ('key', 'Команды API'))} → {cfg.label} → API-домен. "
-            "Его выдают в боте RPC: Настройки → API (не домен документации)."
+            "Генерация RPC недоступна: на сервере не задан <code>RPC_API_BASE</code>. "
+            "Напишите админу."
         )
     svc = rpc_api_service_code(cfg.service_code)
     if not svc:

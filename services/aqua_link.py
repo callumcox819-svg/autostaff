@@ -503,6 +503,63 @@ async def _generate_gag(
         raise
 
 
+async def _generate_rpc(
+    session,
+    user: User,
+    cfg,
+    offer: Offer | None,
+    *,
+    listing_url: str | None,
+    price: str | None,
+) -> str:
+    _ = listing_url
+    from services.api_teams import get_team_field
+    from services.rpc_catalog import parse_rpc_service, rpc_api_service_code
+    from services.rpc_network import RpcError, rpc_create_ad, rpc_env_api_base
+
+    if not (cfg.api_key or "").strip():
+        raise AquaError(
+            f"Не задан API-ключ для <b>{cfg.label}</b> (заголовок X-API-KEY). "
+            f"{menu_path(('settings', ''), ('key', 'Команды API'))} → {cfg.label}."
+        )
+    api_base = (cfg.profile_id or "").strip() or rpc_env_api_base()
+    if not api_base:
+        raise AquaError(
+            f"Не задан API-домен для <b>{cfg.label}</b>. "
+            f"{menu_path(('settings', ''), ('key', 'Команды API'))} → {cfg.label} → API-домен. "
+            "Его выдают в боте RPC: Настройки → API (не домен документации)."
+        )
+    svc = rpc_api_service_code(cfg.service_code)
+    if not svc:
+        raise AquaError(
+            f"Не выбрана площадка {cfg.label}. "
+            f"{menu_path(('settings', ''), ('key', 'Команды API'))} → {cfg.label} → Страна / площадка."
+        )
+    _, country = parse_rpc_service(cfg.service_code)
+    buyer = (await get_team_field(session, user, "rpc", "buyer_name") or "").strip()
+    address = (await get_team_field(session, user, "rpc", "address") or "").strip()
+    title = offer_effective_title(offer) if offer is not None else ""
+    p = (price or "").strip()
+    if offer is not None:
+        p = p or offer_effective_price(offer)
+    image = await resolve_aqua_image_url(session, user, offer)
+    try:
+        return await rpc_create_ad(
+            api_key=cfg.api_key,
+            api_base=api_base,
+            country_code=country,
+            service_code=svc,
+            title=title,
+            price=p,
+            full_name=buyer,
+            address=address,
+            image=image or None,
+            link_type=cfg.link_type or "lk",
+        )
+    except RpcError as e:
+        raise AquaError(str(e)) from e
+
+
 async def aqua_generate_for_offer(
     session,
     user: User,
@@ -516,6 +573,8 @@ async def aqua_generate_for_offer(
     Генерация через выбранную команду:
     - CSM → meowsavings Internal API
     - Hustle Castle → INC-CORE (fast / lonely / custom)
+    - BASTARD → INC-CORE Jófogás
+    - RPC → Continental Group POST /api/v1/ad/create
     - GAG → POST /generate (GENERATE_API_BASE)
     - Evoleum → GOO parse / no-parse
     """
@@ -536,6 +595,8 @@ async def aqua_generate_for_offer(
         if cc != "ch":
             raise AquaError("GAG доступен только для Швейцарии (Ricardo / Markt.ch).")
         cfg = replace(cfg, service_code=gag_generate_service(cfg.service_code))
+    if cfg.team_id == "rpc" and cc != "hu":
+        raise AquaError("RPC в боте сейчас для Венгрии. Поставь рабочую страну <b>Венгрия</b>.")
     if cc == "de":
         cfg = replace(cfg, service_code=force_germany_ebay_service(cfg.team_id, cfg.service_code))
     if cc == "pt":
@@ -554,6 +615,8 @@ async def aqua_generate_for_offer(
         )
     if cfg.team_id in {"hustle", "bastard"}:
         return await _generate_hustle(session, user, cfg, offer, listing_url=listing_url, price=price)
+    if cfg.team_id == "rpc":
+        return await _generate_rpc(session, user, cfg, offer, listing_url=listing_url, price=price)
     if cfg.team_id == "gag":
         return await _generate_gag(session, user, cfg, offer, listing_url=listing_url, price=price)
     return await _generate_goo(

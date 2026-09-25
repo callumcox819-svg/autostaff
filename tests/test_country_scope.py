@@ -107,6 +107,8 @@ class CountryScopeTests(unittest.TestCase):
         self.assertEqual(force_hungary_jofogas_service("csm", "jofogas_hu"), "jofogas_hu")
         self.assertEqual(force_hungary_jofogas_service("bastard", ""), "jofogas_hu")
         self.assertEqual(force_hungary_jofogas_service("bastard", "facebook_hu"), "facebook_hu")
+        self.assertEqual(force_hungary_jofogas_service("rpc", ""), "jofogas")
+        self.assertEqual(force_hungary_jofogas_service("rpc", "jofogas_hu"), "jofogas")
         self.assertEqual(force_hungary_jofogas_service("csm", "depop_verify_all"), "depop_verify_all")
         self.assertEqual(force_hungary_html_service("csm", "jofogas"), "jofogas_hu")
         self.assertEqual(force_hungary_html_service("csm", "marktplaats_nl"), "jofogas_hu")

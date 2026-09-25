@@ -13,6 +13,7 @@ class ApiTeamsGagTests(unittest.TestCase):
         ids = {tid for tid, _ in API_TEAMS}
         self.assertIn("gag", ids)
         self.assertIn("bastard", ids)
+        self.assertIn("rpc", ids)
         self.assertEqual(normalize_team_id("gag"), "gag")
         self.assertEqual(normalize_team_id("aqua"), "gag")
 

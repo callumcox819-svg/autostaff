@@ -1,4 +1,4 @@
-"""Команды API: CSM / Evoleum / Hustle Castle / BASTARD / GAG."""
+"""Команды API: CSM / Evoleum / Hustle Castle / BASTARD / RPC / GAG."""
 
 from __future__ import annotations
 
@@ -16,6 +16,7 @@ API_TEAMS: tuple[tuple[str, str], ...] = (
     ("evoleum", "Evoleum"),
     ("hustle", "Hustle Castle"),
     ("bastard", "BASTARD"),
+    ("rpc", "RPC"),
     ("gag", "GAG"),
 )
 
@@ -76,6 +77,8 @@ def normalize_team_id(raw: str | None) -> str | None:
         return "hustle"
     if s in {"bastard_team", "bastards"}:
         return "bastard"
+    if s in {"rpc_team", "rpts", "continental", "cgr", "continental_group"}:
+        return "rpc"
     if s in {"gag_bot", "aqua", "generate"}:
         return "gag"
     return None
@@ -94,6 +97,8 @@ def default_service_for_team(team_id: str) -> str:
         return "kleinanzeigen_de"
     if team_id == "bastard":
         return "jofogas_hu"
+    if team_id == "rpc":
+        return "jofogas"
     if team_id == "gag":
         from services.gag_catalog import normalize_gag_service_code
 
@@ -147,6 +152,12 @@ async def set_team_field(session, user: User, team_id: str, field: str, value: s
         raise ValueError(f"Unknown team: {team_id!r}")
     if field == "team_key":
         raise ValueError("Team-ключ задаётся только на сервере")
+    if tid == "rpc" and field == "service_code":
+        from services.rpc_catalog import is_rpc_service_code, rpc_api_service_code
+
+        if not is_rpc_service_code(value):
+            raise ValueError("RPC: Венгрия — Jófogás (jofogas) или Facebook")
+        value = rpc_api_service_code(value)
     if tid == "gag" and field == "service_code":
         from services.gag_catalog import is_gag_service_code, normalize_gag_service_code
 
@@ -184,6 +195,8 @@ def _team_key_for(team_id: str) -> str:
         from services.hustle_network import bastard_team_key
 
         return bastard_team_key()
+    if team_id == "rpc":
+        return ""
     if team_id == "gag":
         # GAG использует личный apikey; инфраструктурный URL скрыт от пользователя.
         return ""

@@ -238,6 +238,30 @@ class HtmlCtxBuyerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(name, "Kiss Anna")
         self.assertIn("Budapest", addr)
 
+    async def test_rpc_html_uses_team_name_address(self):
+        from services.aqua_keys import resolve_html_buyer_profile
+
+        session = AsyncMock()
+        user = SimpleNamespace(id=1)
+        cfg = SimpleNamespace(team_id="rpc", profile_id="https://api.rpc.example")
+
+        async def _field(_s, _u, _tid, field):
+            return {"buyer_name": "Nagy Péter", "address": "Budapest, HU"}.get(field, "")
+
+        with (
+            patch(
+                "services.api_teams.get_selected_team_config",
+                new=AsyncMock(return_value=cfg),
+            ),
+            patch(
+                "services.api_teams.get_team_field",
+                new=_field,
+            ),
+        ):
+            name, addr = await resolve_html_buyer_profile(session, user)
+        self.assertEqual(name, "Nagy Péter")
+        self.assertIn("Budapest", addr)
+
     async def test_gag_html_uses_gag_name_address(self):
         from services.aqua_keys import resolve_html_buyer_profile
 

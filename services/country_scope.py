@@ -286,7 +286,7 @@ def force_hungary_html_service(team_id: str, service_code: str) -> str:
 
 
 def force_hungary_jofogas_service(team_id: str, service_code: str) -> str:
-    """BASTARD/CSM на HU → jofogas_hu (Verify не трогаем)."""
+    """BASTARD/RPC/CSM на HU → Jófogás (Verify не трогаем)."""
     from services.csm_catalog import is_verify_service, make_service_key, parse_service_key
     from services.bastard_catalog import BASTARD_DEFAULT_SERVICE
 
@@ -296,6 +296,10 @@ def force_hungary_jofogas_service(team_id: str, service_code: str) -> str:
         return code
     if tid == "bastard":
         return code or BASTARD_DEFAULT_SERVICE
+    if tid == "rpc":
+        from services.rpc_catalog import RPC_DEFAULT_SERVICE, rpc_api_service_code
+
+        return rpc_api_service_code(code) if code else RPC_DEFAULT_SERVICE
     if tid != "csm":
         return hungary_html_service_for_code(code)
     platform, cc = parse_service_key(code)

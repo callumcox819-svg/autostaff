@@ -82,8 +82,9 @@ def _countries_text(active: str) -> str:
         )
     elif active == "hu":
         extra = (
-            "\nВенгрия: команда <b>BASTARD</b> (INC-CORE как Hustle), "
-            "площадка <b>Jófogás</b> (<code>jofogas_hu</code> FAST), HTML <code>jofogas_hu</code>."
+            "\nВенгрия: <b>BASTARD</b> (INC-CORE Jófogás) или <b>RPC</b> "
+            "(Continental Group <code>/api/v1/ad/create</code>), "
+            "HTML <code>jofogas_hu</code>. Команды независимы."
         )
     return (
         f"{html_emoji('compass')} <b>Страны</b>\n\n"

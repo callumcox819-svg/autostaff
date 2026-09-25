@@ -37,6 +37,13 @@ from services.bastard_catalog import (
     parse_bastard_service,
     platforms_for_bastard_country,
 )
+from services.rpc_catalog import (
+    list_rpc_countries,
+    parse_rpc_service,
+    platforms_for_rpc_country,
+    rpc_country_label,
+    rpc_service_label,
+)
 from services.hustle_catalog import (
     hustle_country_label,
     hustle_service_label,
@@ -62,6 +69,15 @@ class TeamFieldState(StatesGroup):
     waiting = State()
 
 
+_TEAM_ROW_EMOJI = {
+    "csm": "key",
+    "hustle": "pin",
+    "gag": "burst",
+    "bastard": "status",
+    "rpc": "compass",
+}
+
+
 def _teams_list_kb(selected_id: str) -> InlineKeyboardMarkup:
     rows: list[list[InlineKeyboardButton]] = []
     for tid, label in API_TEAMS:
@@ -74,17 +90,7 @@ def _teams_list_kb(selected_id: str) -> InlineKeyboardMarkup:
         rows.append(
             [
                 inline_button(
-                    "key"
-                    if tid == "csm"
-                    else (
-                        "pin"
-                        if tid == "hustle"
-                        else (
-                            "burst"
-                            if tid == "gag"
-                            else ("status" if tid == "bastard" else "link")
-                        )
-                    ),
+                    _TEAM_ROW_EMOJI.get(tid, "link"),
                     label,
                     callback_data=f"api_team_open:{tid}",
                 ),
@@ -151,6 +157,16 @@ def _team_detail_kb(team_id: str, *, service_code: str = "") -> InlineKeyboardMa
                 )
             ]
         )
+    elif team_id == "rpc":
+        rows.append(
+            [
+                inline_button(
+                    "compass",
+                    "Страна / площадка",
+                    callback_data=f"api_team_rpc_plats:{team_id}",
+                )
+            ]
+        )
     elif team_id == "gag":
         rows.extend(_gag_service_toggle_rows(team_id, service_code))
     elif team_id != "gag":
@@ -164,8 +180,10 @@ def _team_detail_kb(team_id: str, *, service_code: str = "") -> InlineKeyboardMa
             ]
         )
     if team_id != "gag":
+        pid_label = "API-домен" if team_id == "rpc" else "Profile ID"
+        pid_emoji = "link" if team_id == "rpc" else "profile"
         rows.append(
-            [inline_button("profile", "Profile ID", callback_data=f"api_team_edit:{team_id}:profile_id")]
+            [inline_button(pid_emoji, pid_label, callback_data=f"api_team_edit:{team_id}:profile_id")]
         )
     if team_id == "evoleum":
         rows.extend(
@@ -186,7 +204,7 @@ def _team_detail_kb(team_id: str, *, service_code: str = "") -> InlineKeyboardMa
                 ],
             ]
         )
-    if team_id in {"hustle", "gag", "csm", "bastard"}:
+    if team_id in {"hustle", "gag", "csm", "bastard", "rpc"}:
         rows.extend(
             [
                 [
@@ -247,6 +265,11 @@ def _team_detail_text(cfg, *, buyer_name: str = "", address: str = "", country_n
             f"<b>Площадка:</b> <b>{html.escape(bastard_service_label(cfg.service_code))}</b>"
             f" (<code>{html.escape(cfg.service_code or '—')}</code>)"
         )
+    elif cfg.team_id == "rpc":
+        lines.append(
+            f"<b>Площадка:</b> <b>{html.escape(rpc_service_label(cfg.service_code))}</b>"
+            f" (<code>{html.escape(cfg.service_code or '—')}</code>)"
+        )
     elif cfg.team_id == "gag":
         from services.gag_catalog import gag_generate_service, gag_service_label
 
@@ -258,7 +281,10 @@ def _team_detail_text(cfg, *, buyer_name: str = "", address: str = "", country_n
     else:
         lines.append(f"<b>Код сервиса:</b> <code>{html.escape(cfg.service_code or '—')}</code>")
     if cfg.team_id != "gag":
-        lines.append(f"<b>Profile ID:</b> <code>{html.escape(cfg.profile_id or '—')}</code>")
+        if cfg.team_id == "rpc":
+            lines.append(f"<b>API-домен:</b> <code>{html.escape(cfg.profile_id or '—')}</code>")
+        else:
+            lines.append(f"<b>Profile ID:</b> <code>{html.escape(cfg.profile_id or '—')}</code>")
     if cfg.team_id == "csm":
         cc = f" ({html.escape(country_name)})" if country_name else ""
         lines.append(
@@ -290,6 +316,15 @@ def _team_detail_text(cfg, *, buyer_name: str = "", address: str = "", country_n
             f"<b>Адрес{cc}:</b> <code>{html.escape(address or '—')}</code>\n"
             "<i>INC-CORE как у Hustle. Венгрия, площадка <b>Jófogás</b> "
             "(<code>jofogas_hu</code> FAST). Team-ключ: <code>BASTARD_TEAM_KEY</code>.</i>"
+        )
+    if cfg.team_id == "rpc":
+        cc = f" ({html.escape(country_name)})" if country_name else ""
+        lines.append(
+            f"<b>ФИО{cc}:</b> <code>{html.escape(buyer_name or '—')}</code>\n"
+            f"<b>Адрес{cc}:</b> <code>{html.escape(address or '—')}</code>\n"
+            "<i>Continental Group: <code>POST /api/v1/ad/create</code>, заголовок "
+            "<code>X-API-KEY</code>. Венгрия (Jófogás) — отдельно от BASTARD. "
+            "API-домен из их бота: Настройки → API, не docs.continental-group-rental.com.</i>"
         )
     if cfg.team_id == "gag":
         cc = f" ({html.escape(country_name)})" if country_name else ""
@@ -467,7 +502,7 @@ async def _team_detail_payload(session, user, tid: str) -> tuple[object, str]:
     cc_name = country_display_name(await get_active_country(session, user))
     if cfg.team_id == "evoleum":
         buyer, addr = await _evoleum_html_profile_fields(session, user)
-    elif cfg.team_id in {"hustle", "gag", "csm", "bastard"}:
+    elif cfg.team_id in {"hustle", "gag", "csm", "bastard", "rpc"}:
         from services.api_teams import get_team_field
 
         buyer = await get_team_field(session, user, cfg.team_id, "buyer_name")
@@ -832,6 +867,132 @@ async def api_team_bastard_svc(callback: CallbackQuery, state: FSMContext) -> No
     await callback.answer(toast("ok", bastard_service_label(sk)))
 
 
+def _rpc_countries_kb(
+    team_id: str,
+    current_service: str,
+    enabled: set[str] | None = None,
+) -> InlineKeyboardMarkup:
+    from services.enabled_countries import is_country_enabled
+
+    _, cur_cc = parse_rpc_service(current_service)
+    rows: list[list[InlineKeyboardButton]] = []
+    row: list[InlineKeyboardButton] = []
+    for cid, label, emoji_key in list_rpc_countries():
+        if enabled is not None and not is_country_enabled(enabled, cid) and cid != cur_cc:
+            continue
+        on = cid == cur_cc
+        btn = (
+            toggle_button(True, label, f"api_team_rpc_country:{team_id}:{cid}")
+            if on
+            else inline_button(
+                emoji_key, label, callback_data=f"api_team_rpc_country:{team_id}:{cid}"
+            )
+        )
+        row.append(btn)
+        if len(row) == 2:
+            rows.append(row)
+            row = []
+    if row:
+        rows.append(row)
+    rows.append([back_inline(f"api_team_open:{team_id}")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def _rpc_services_kb(team_id: str, country: str, current_service: str) -> InlineKeyboardMarkup:
+    cur, _cc = parse_rpc_service(current_service)
+    rows: list[list[InlineKeyboardButton]] = []
+    row: list[InlineKeyboardButton] = []
+    for sid, label, emoji_key in platforms_for_rpc_country(country):
+        on = sid == cur
+        btn = (
+            toggle_button(True, label, f"api_team_rpc_svc:{team_id}:{sid}")
+            if on
+            else inline_button(
+                emoji_key, label, callback_data=f"api_team_rpc_svc:{team_id}:{sid}"
+            )
+        )
+        row.append(btn)
+        if len(row) == 2:
+            rows.append(row)
+            row = []
+    if row:
+        rows.append(row)
+    rows.append([back_inline(f"api_team_rpc_plats:{team_id}")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+@router.callback_query(F.data.startswith("api_team_rpc_plats:"))
+async def api_team_rpc_plats(callback: CallbackQuery, state: FSMContext) -> None:
+    await state.clear()
+    tid = (callback.data or "").split(":", 1)[-1].strip()
+    async with Session() as session:
+        user = await get_or_create_user(session, callback.from_user.id)
+        cfg = await get_team_config(session, user, tid)
+        from services.enabled_countries import get_enabled_country_ids
+
+        enabled = await get_enabled_country_ids(session, user)
+    text = (
+        f"{html_emoji('compass')} <b>Страна RPC</b>\n"
+        f"Сейчас: <b>{html.escape(rpc_service_label(cfg.service_code))}</b>\n\n"
+        "Венгрия здесь и в BASTARD — разные API. Выбери страну:"
+    )
+    await _edit(
+        callback,
+        text,
+        _rpc_countries_kb(tid, cfg.service_code or "jofogas", enabled),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("api_team_rpc_country:"))
+async def api_team_rpc_country(callback: CallbackQuery, state: FSMContext) -> None:
+    await state.clear()
+    parts = (callback.data or "").split(":")
+    if len(parts) != 3:
+        await callback.answer()
+        return
+    _, tid, country = parts
+    async with Session() as session:
+        user = await get_or_create_user(session, callback.from_user.id)
+        cfg = await get_team_config(session, user, tid)
+    text = (
+        f"{html_emoji('compass')} <b>{html.escape(rpc_country_label(country))}</b>\n"
+        f"Сейчас: <b>{html.escape(rpc_service_label(cfg.service_code))}</b>\n\n"
+        "Выбери площадку:"
+    )
+    await _edit(
+        callback,
+        text,
+        _rpc_services_kb(tid, country, cfg.service_code or "jofogas"),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("api_team_rpc_svc:"))
+async def api_team_rpc_svc(callback: CallbackQuery, state: FSMContext) -> None:
+    await state.clear()
+    parts = (callback.data or "").split(":")
+    if len(parts) < 3:
+        await callback.answer()
+        return
+    tid = parts[1]
+    sk = parts[2]
+    async with Session() as session:
+        user = await get_or_create_user(session, callback.from_user.id)
+        try:
+            await set_team_field(session, user, tid, "service_code", sk)
+            from services.aqua_keys import sync_html_service_from_code
+
+            await sync_html_service_from_code(session, user, sk)
+            await session.commit()
+            cfg, text = await _team_detail_payload(session, user, tid)
+        except ValueError as e:
+            await callback.answer(toast("fail", str(e)[:180]), show_alert=True)
+            return
+    await _edit(callback, text, _team_detail_kb(tid, service_code=cfg.service_code))
+    await callback.answer(toast("ok", rpc_service_label(sk)))
+
+
 def _gag_plats_kb(team_id: str, current: str) -> InlineKeyboardMarkup:
     from services.gag_catalog import GAG_CH_PLATFORMS, normalize_gag_service_code
 
@@ -961,6 +1122,9 @@ async def api_team_edit(callback: CallbackQuery, state: FSMContext) -> None:
     if field == "service_code" and tid == "bastard":
         callback.data = f"api_team_bastard_plats:{tid}"
         return await api_team_bastard_plats(callback, state)
+    if field == "service_code" and tid == "rpc":
+        callback.data = f"api_team_rpc_plats:{tid}"
+        return await api_team_rpc_plats(callback, state)
     if field == "service_code" and tid == "gag":
         callback.data = f"api_team_gag_plats:{tid}"
         return await api_team_gag_plats(callback, state)
@@ -993,6 +1157,15 @@ async def api_team_edit(callback: CallbackQuery, state: FSMContext) -> None:
     if field == "buyer_name" and tid == "bastard":
         hint = "\nФИО покупателя для генерации (lonely) и HTML Jófogás."
     if field == "address" and tid == "bastard":
+        hint = "\nАдрес в Венгрии, например: <code>Andrássy út 12, 1061 Budapest</code>."
+    if field == "profile_id" and tid == "rpc":
+        hint = (
+            "\nAPI-домен из бота RPC: Настройки → API. "
+            "Не docs.continental-group-rental.com. Пример: <code>https://api.your-host.com</code>."
+        )
+    if field == "buyer_name" and tid == "rpc":
+        hint = "\nФИО покупателя на лендинге (profile.full_name)."
+    if field == "address" and tid == "rpc":
         hint = "\nАдрес в Венгрии, например: <code>Andrássy út 12, 1061 Budapest</code>."
     if field == "service_code" and tid == "gag":
         callback.data = f"api_team_gag_plats:{tid}"

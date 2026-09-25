@@ -1505,7 +1505,11 @@ def _generate_card_service_label(*, team_id: str, service_code: str, offer) -> s
                 return f"{host} ({cc.upper()})"
             return host
         return _service_label_for_card(sc)
-    if tid in {"hustle", "bastard"} and sc:
+    if tid in {"hustle", "bastard", "rpc"} and sc:
+        if tid == "rpc":
+            from services.rpc_catalog import rpc_service_label
+
+            return rpc_service_label(sc)
         if tid == "bastard":
             from services.bastard_catalog import bastard_service_label
 

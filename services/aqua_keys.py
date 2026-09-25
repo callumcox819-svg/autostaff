@@ -416,7 +416,7 @@ async def get_user_aqua_profile_display(session, user: User) -> str:
         shown = name or (f"{title} · {html_name}" if title and html_name else (title or html_name))
         return shown or pid
 
-    if tid in {"hustle", "gag", "bastard"}:
+    if tid in {"hustle", "gag", "bastard", "rpc"}:
         name = (await get_team_field(session, user, tid, "buyer_name") or "").strip()
         pid = (cfg.profile_id or "").strip() if cfg else ""
         if tid == "gag":
@@ -444,7 +444,7 @@ async def resolve_html_buyer_profile(session, user: User) -> tuple[str, str]:
     except Exception:
         cfg = None
 
-    if cfg and cfg.team_id in {"hustle", "gag", "csm", "bastard"}:
+    if cfg and cfg.team_id in {"hustle", "gag", "csm", "bastard", "rpc"}:
         team_id = cfg.team_id
         name = (await get_team_field(session, user, team_id, "buyer_name") or "").strip()
         address = (await get_team_field(session, user, team_id, "address") or "").strip()

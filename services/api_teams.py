@@ -153,11 +153,15 @@ async def set_team_field(session, user: User, team_id: str, field: str, value: s
     if field == "team_key":
         raise ValueError("Team-ключ задаётся только на сервере")
     if tid == "rpc" and field == "service_code":
-        from services.rpc_catalog import is_rpc_service_code, rpc_api_service_code
+        from services.rpc_catalog import is_rpc_service_code, parse_rpc_service
 
         if not is_rpc_service_code(value):
-            raise ValueError("RPC: Венгрия — Jófogás (jofogas) или Facebook")
-        value = rpc_api_service_code(value)
+            raise ValueError(
+                "RPC: Венгрия — Jófogás (jofogas) / Facebook; "
+                "Хорватия — Njuškalo (njuskalo) / Facebook"
+            )
+        plat, cc = parse_rpc_service(value)
+        value = f"facebook_{cc}" if plat == "facebook" else plat
     if tid == "gag" and field == "service_code":
         from services.gag_catalog import is_gag_service_code, normalize_gag_service_code
 

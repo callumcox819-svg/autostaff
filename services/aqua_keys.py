@@ -209,6 +209,7 @@ async def resolve_html_service(session, user: User) -> str:
         f"marktplaats_{cc}",
         f"olx_{cc}",
         f"jofogas_{cc}",
+        f"njuskalo_{cc}",
         cc,
         "kleinanzeigen_de" if cc == "de" else "",
         "ebay_de" if cc == "de" else "",

@@ -1481,6 +1481,8 @@ def _service_label_for_card(service_code: str) -> str:
         return "OLX.pt"
     if low in {"jofogas_hu", "jofogas.hu", "jofogas"}:
         return "Jófogás"
+    if low in {"njuskalo_hr", "njuskalo.hr", "njuskalo"}:
+        return "Njuškalo"
     if "_" in low and low.split("_", 1)[0] == "olx":
         cc = low.split("_", 1)[-1]
         return f"OLX.{cc}" if cc and cc != "pt" else "OLX.pt"
@@ -1499,6 +1501,8 @@ def _generate_card_service_label(*, team_id: str, service_code: str, offer) -> s
             return "OLX.pt" if cc == "pt" else f"OLX.{cc or 'pt'}"
         if plat == "jofogas":
             return "Jófogás"
+        if plat == "njuskalo":
+            return "Njuškalo"
         if plat:
             host = f"{platform_label(plat)}"
             if cc:

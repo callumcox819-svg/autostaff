@@ -318,8 +318,9 @@ def _team_detail_text(cfg, *, buyer_name: str = "", address: str = "", country_n
             f"<b>ФИО{cc}:</b> <code>{html.escape(buyer_name or '—')}</code>\n"
             f"<b>Адрес{cc}:</b> <code>{html.escape(address or '—')}</code>\n"
             "<i>Continental Group: <code>POST /api/v1/ad/create</code>, заголовок "
-            "<code>X-API-KEY</code>. Венгрия (Jófogás) — отдельно от BASTARD. "
-            "API-домен один на всех — на сервере <code>RPC_API_BASE</code>.</i>"
+            "<code>X-API-KEY</code>. Венгрия (Jófogás) или Хорватия (Njuškalo) — "
+            "отдельно от BASTARD. API-домен один на всех — на сервере "
+            "<code>RPC_API_BASE</code>.</i>"
         )
     if cfg.team_id == "gag":
         cc = f" ({html.escape(country_name)})" if country_name else ""
@@ -900,10 +901,12 @@ def _rpc_services_kb(team_id: str, country: str, current_service: str) -> Inline
     for sid, label, emoji_key in platforms_for_rpc_country(country):
         on = sid == cur
         btn = (
-            toggle_button(True, label, f"api_team_rpc_svc:{team_id}:{sid}")
+            toggle_button(True, label, f"api_team_rpc_svc:{team_id}:{country}:{sid}")
             if on
             else inline_button(
-                emoji_key, label, callback_data=f"api_team_rpc_svc:{team_id}:{sid}"
+                emoji_key,
+                label,
+                callback_data=f"api_team_rpc_svc:{team_id}:{country}:{sid}",
             )
         )
         row.append(btn)
@@ -929,7 +932,7 @@ async def api_team_rpc_plats(callback: CallbackQuery, state: FSMContext) -> None
     text = (
         f"{html_emoji('compass')} <b>Страна RPC</b>\n"
         f"Сейчас: <b>{html.escape(rpc_service_label(cfg.service_code))}</b>\n\n"
-        "Венгрия здесь и в BASTARD — разные API. Выбери страну:"
+        "Венгрия (Jófogás) и Хорватия (Njuškalo). BASTARD — отдельно. Выбери страну:"
     )
     await _edit(
         callback,
@@ -971,7 +974,13 @@ async def api_team_rpc_svc(callback: CallbackQuery, state: FSMContext) -> None:
         await callback.answer()
         return
     tid = parts[1]
-    sk = parts[2]
+    if len(parts) >= 4:
+        country = parts[2].strip().lower()
+        sk = parts[3]
+        if sk == "facebook" and country in {"hu", "hr"}:
+            sk = f"facebook_{country}"
+    else:
+        sk = parts[2]
     async with Session() as session:
         user = await get_or_create_user(session, callback.from_user.id)
         try:

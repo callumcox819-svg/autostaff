@@ -28,7 +28,7 @@ def all_country_ids() -> tuple[str, ...]:
 
 def countries_for_settings_ui() -> list[tuple[str, str, str]]:
     """Германия и Нидерланды сверху, остальные как в CSM."""
-    priority = {"de": 0, "nl": 1, "pt": 2, "hu": 3}
+    priority = {"de": 0, "nl": 1, "pt": 2, "hu": 3, "hr": 4}
     rows = list(CSM_COUNTRIES)
     rows.sort(key=lambda row: (priority.get(row[0], 50), row[1]))
     return rows

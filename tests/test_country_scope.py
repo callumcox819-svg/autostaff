@@ -112,6 +112,10 @@ class CountryScopeTests(unittest.TestCase):
         self.assertEqual(force_hungary_jofogas_service("csm", "depop_verify_all"), "depop_verify_all")
         self.assertEqual(force_hungary_html_service("csm", "jofogas"), "jofogas_hu")
         self.assertEqual(force_hungary_html_service("csm", "marktplaats_nl"), "jofogas_hu")
+        from services.country_scope import force_croatia_njuskalo_service
+
+        self.assertEqual(force_croatia_njuskalo_service("rpc", ""), "njuskalo")
+        self.assertEqual(force_croatia_njuskalo_service("rpc", "njuskalo_hr"), "njuskalo")
         domains = default_validation_domains_for("hu")
         self.assertEqual(domains, HUNGARY_VALIDATION_DOMAINS)
         self.assertEqual(domains[0], "freemail.hu")

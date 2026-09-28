@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from services.api_teams import default_service_for_team, normalize_team_id
 from services.rpc_catalog import (
     RPC_DEFAULT_SERVICE,
+    force_rpc_generate_service,
     parse_rpc_service,
     platforms_for_rpc_country,
     rpc_api_service_code,
@@ -27,6 +28,22 @@ class RpcCatalogTests(unittest.TestCase):
         self.assertEqual(normalize_team_id("continental"), "rpc")
         self.assertEqual(default_service_for_team("rpc"), "jofogas")
         self.assertEqual(default_service_for_team("bastard"), "jofogas_hu")
+
+    def test_croatia_njuskalo(self):
+        ids = [sid for sid, _, _ in platforms_for_rpc_country("hr")]
+        self.assertEqual(ids[0], "njuskalo")
+        self.assertIn("facebook", ids)
+        self.assertEqual(parse_rpc_service("njuskalo"), ("njuskalo", "hr"))
+        self.assertEqual(parse_rpc_service("njuskalo_hr"), ("njuskalo", "hr"))
+        self.assertEqual(rpc_api_service_code("njuskalo_hr"), "njuskalo")
+        self.assertIn("Njuškalo", rpc_service_label("njuskalo"))
+        self.assertEqual(force_rpc_generate_service("hr", "jofogas"), "njuskalo")
+        self.assertEqual(force_rpc_generate_service("hr", "njuskalo"), "njuskalo")
+        self.assertEqual(force_rpc_generate_service("hr", "facebook_hu"), "facebook")
+        from services.country_scope import force_croatia_njuskalo_service
+
+        self.assertEqual(force_croatia_njuskalo_service("rpc", "jofogas"), "njuskalo")
+        self.assertEqual(force_croatia_njuskalo_service("rpc", "facebook"), "facebook")
 
     def test_hungary_available_on_both_teams(self):
         from services.country_scope import force_hungary_jofogas_service
@@ -117,6 +134,46 @@ class RpcCreateTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(kwargs["json"]["price"], 155000.0)
         self.assertEqual(kwargs["json"]["profile"]["full_name"], "Kiss Anna")
         self.assertEqual(kwargs["json"]["images"]["0"]["url"], "https://img.example/a.jpg")
+
+    async def test_create_body_croatia_njuskalo(self):
+        resp = MagicMock()
+        resp.status = 200
+        resp.text = AsyncMock(return_value="{}")
+        resp.json = AsyncMock(
+            return_value={
+                "status": "success",
+                "data": {
+                    "paths": {"phishing": {"2_0": "/p/hr"}},
+                    "domains": {"general": "land.example.com"},
+                },
+            }
+        )
+        resp.__aenter__ = AsyncMock(return_value=resp)
+        resp.__aexit__ = AsyncMock(return_value=None)
+        session = MagicMock()
+        session.post = MagicMock(return_value=resp)
+        session.__aenter__ = AsyncMock(return_value=session)
+        session.__aexit__ = AsyncMock(return_value=None)
+
+        with patch("aiohttp.ClientSession", return_value=session):
+            link = await rpc_create_ad(
+                api_key="secret-key",
+                api_base="https://api.rpc-host.com/api/v1",
+                country_code="hr",
+                service_code="njuskalo",
+                title="Bicikl",
+                price="250",
+                full_name="Ivan Horvat",
+                address="Zagreb",
+                image="https://img.example/b.jpg",
+                link_type="lk",
+            )
+        self.assertEqual(link, "https://land.example.com/p/hr")
+        _args, kwargs = session.post.call_args
+        self.assertEqual(kwargs["json"]["country_code"], "HR")
+        self.assertEqual(kwargs["json"]["service_code"], "njuskalo")
+        self.assertEqual(kwargs["json"]["title"], "Bicikl")
+        self.assertEqual(kwargs["json"]["profile"]["full_name"], "Ivan Horvat")
 
 
 if __name__ == "__main__":

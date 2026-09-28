@@ -1275,6 +1275,8 @@ _MARKETPLACE_SERVICE_RULES: tuple[tuple[str, str, str], ...] = (
     ("olx.com.pt", "OLX.pt", "olx_pt"),
     ("jofogas.hu", "Jófogás", "jofogas_hu"),
     ("jofogas.com", "Jófogás", "jofogas_hu"),
+    ("njuskalo.hr", "Njuškalo", "njuskalo_hr"),
+    ("njuskalo.com", "Njuškalo", "njuskalo_hr"),
     ("willhaben.at", "willhaben.at", "willhaben_at"),
     ("laendleanzeiger.at", "Laendleanzeiger", "laendleanzeiger_at"),
     ("ländleanzeiger.at", "Laendleanzeiger", "laendleanzeiger_at"),

@@ -2,13 +2,14 @@
 
 Документация: https://docs.continental-group-rental.com/endpoints/geo
 Генерация: POST /api/v1/ad/create
-Венгрия доступна и здесь, и в BASTARD (разные API).
+Венгрия — Jófogás (и в BASTARD). Хорватия — Njuškalo.
 """
 
 from __future__ import annotations
 
 RPC_COUNTRIES: tuple[tuple[str, str, str], ...] = (
     ("hu", "Венгрия", "compass"),
+    ("hr", "Хорватия", "compass"),
 )
 
 # (service_code для /geo, label, emoji)
@@ -17,11 +18,20 @@ RPC_COUNTRY_SERVICES: dict[str, tuple[tuple[str, str, str], ...]] = {
         ("jofogas", "Jófogás", "pin"),
         ("facebook", "Facebook", "user"),
     ),
+    "hr": (
+        ("njuskalo", "Njuškalo", "pin"),
+        ("facebook", "Facebook", "user"),
+    ),
 }
 
 RPC_DEFAULT_SERVICE = "jofogas"
+RPC_DEFAULT_BY_COUNTRY = {"hu": "jofogas", "hr": "njuskalo"}
 
 _COUNTRY_IDS = {c for c, _, _ in RPC_COUNTRIES}
+_SERVICE_HOME: dict[str, str] = {
+    "jofogas": "hu",
+    "njuskalo": "hr",
+}
 _SERVICE_IDS = {
     sid for rows in RPC_COUNTRY_SERVICES.values() for sid, _, _ in rows
 }
@@ -40,18 +50,24 @@ def rpc_country_label(country_id: str) -> str:
 
 
 def parse_rpc_service(service_code: str | None) -> tuple[str, str]:
-    """→ (service_code для /ad/create, country). jofogas_hu → jofogas."""
+    """→ (service_code для /ad/create, country). njuskalo_hr → njuskalo / hr."""
     s = (service_code or "").strip().lower()
     if not s:
         return RPC_DEFAULT_SERVICE, "hu"
     if s in {"jofogas_hu", "jofogas.hu"}:
         return "jofogas", "hu"
-    if s in {"facebook_hu", "facebook.com"}:
+    if s in {"njuskalo_hr", "njuskalo.hr"}:
+        return "njuskalo", "hr"
+    if s in {"facebook_hu"}:
         return "facebook", "hu"
+    if s in {"facebook_hr"}:
+        return "facebook", "hr"
     if "_" in s:
         plat, country = s.rsplit("_", 1)
         if country in _COUNTRY_IDS:
             return (plat if plat in _SERVICE_IDS else s), country
+    if s in _SERVICE_HOME:
+        return s, _SERVICE_HOME[s]
     if s in _SERVICE_IDS:
         return s, "hu"
     return s, "hu"
@@ -84,3 +100,13 @@ def rpc_api_service_code(service_code: str | None) -> str:
 def is_rpc_service_code(service_code: str | None) -> bool:
     code, _cc = parse_rpc_service(service_code)
     return code in _SERVICE_IDS
+
+
+def force_rpc_generate_service(country_id: str, service_code: str | None) -> str:
+    """Рабочая страна HU/HR → service_code для /ad/create (jofogas / njuskalo / facebook)."""
+    cc = (country_id or "").strip().lower()
+    plat, _parsed_cc = parse_rpc_service(service_code)
+    allowed = {sid for sid, _, _ in platforms_for_rpc_country(cc)}
+    if plat in allowed:
+        return plat
+    return RPC_DEFAULT_BY_COUNTRY.get(cc) or RPC_DEFAULT_SERVICE

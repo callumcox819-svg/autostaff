@@ -285,6 +285,16 @@ def force_hungary_html_service(team_id: str, service_code: str) -> str:
     return hungary_html_service_for_code(code)
 
 
+def force_croatia_njuskalo_service(team_id: str, service_code: str) -> str:
+    """RPC на HR → Njuškalo (facebook оставляем)."""
+    tid = (team_id or "").strip().lower()
+    if tid == "rpc":
+        from services.rpc_catalog import force_rpc_generate_service
+
+        return force_rpc_generate_service("hr", service_code)
+    return (service_code or "").strip() or "njuskalo_hr"
+
+
 def force_hungary_jofogas_service(team_id: str, service_code: str) -> str:
     """BASTARD/RPC/CSM на HU → Jófogás (Verify не трогаем)."""
     from services.csm_catalog import is_verify_service, make_service_key, parse_service_key

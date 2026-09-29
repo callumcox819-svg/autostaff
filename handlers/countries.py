@@ -92,7 +92,9 @@ def _countries_text(active: str) -> str:
             "(<code>njuskalo</code> / <code>POST /api/v1/ad/create</code>), "
             "HTML <code>njuskalo_hr</code> — отдельно от Венгрии / Jófogás. "
             "Валидация: ники ≥5 (с цифрами — буквы+цифры, <code>Anaama_08</code>); "
-            "Имя Фамилия → <code>ivan.horvat</code> с точкой."
+            "Имя Фамилия → <code>ivan.horvat</code>; короткое одно слово "
+            "(<code>Mari</code>) пропускаем; слитый ник "
+            "(<code>BugsBunnyLostinTime</code>) целиком."
         )
     return (
         f"{html_emoji('compass')} <b>Страны</b>\n\n"

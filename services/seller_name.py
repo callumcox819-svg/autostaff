@@ -26,8 +26,9 @@ def seller_name_min_letters(country: str | None = None) -> int:
 
 
 def allow_single_first_name(country: str | None = None) -> bool:
-    """Одиночное имя/ник тоже валидируем (Hans, Irene, брендовый ник)."""
-    _ = country
+    """Одиночное короткое имя (Mari/Irene). HR: нет — только ники и Имя Фамилия."""
+    if is_hr_name_policy(country):
+        return False
     return True
 
 
@@ -760,13 +761,13 @@ def person_tokens_for_email(name: str) -> list[str]:
 
 
 def first_name_long_enough(tokens: list[str], *, country: str | None = None) -> bool:
-    """First token for first.last: CH ≥4, иначе ≥5 букв.
+    """Два слова (Ivan Horvat, Maria Johansen) → first.last без порога 5 букв на имя.
 
-    HR: два слова (Имя Фамилия) — всегда first.last, даже если имя короче 5 (Ivan Horvat).
+    Одно слово сюда не для first.last — короткий Mari отсекается отдельно.
     """
     if not tokens:
         return False
-    if is_hr_name_policy(country) and len(tokens) >= 2:
+    if len(tokens) >= 2:
         return True
     need = MIN_SELLER_LETTERS_CH if is_ch_name_policy(country) else MIN_FIRST_NAME_LEN
     first = re.sub(r"[^a-z]", "", (tokens[0] or "").lower())

@@ -218,9 +218,16 @@ def _make_local_part_variants(
         dotted = re.sub(r"[\s\-]+", ".", form)
         if "." not in dotted:
             continue
-        first_chunk = re.sub(r"[^a-z]", "", dotted.split(".", 1)[0].lower())
+        alpha_chunks = [
+            re.sub(r"[^a-z]", "", c.lower()) for c in dotted.split(".") if c.strip()
+        ]
+        alpha_chunks = [c for c in alpha_chunks if c]
+        if len(alpha_chunks) >= 2:
+            _add(dotted)
+            continue
+        first_chunk = alpha_chunks[0] if alpha_chunks else ""
         need = MIN_SELLER_LETTERS_CH if is_ch_name_policy(country) else MIN_FIRST_NAME_LEN
-        if not is_hr_name_policy(country) and len(first_chunk) < need:
+        if len(first_chunk) < need:
             continue
         _add(dotted)
 

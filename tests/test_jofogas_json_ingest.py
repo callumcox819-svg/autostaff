@@ -64,8 +64,8 @@ def test_jofogas_nick_and_short_first_name():
     )
     assert "aristarhios9" in vs
 
-    assert not seller_name_eligible_for_validation("Jan Kovács", country="hu")
-    assert not _make_local_part_variants(
+    assert seller_name_eligible_for_validation("Jan Kovács", country="hu")
+    assert "jan.kovacs" in _make_local_part_variants(
         "Jan Kovács", require_first_and_last=False, country="hu"
     )
     assert not seller_name_eligible_for_validation("Bestpups Kft", country="hu")

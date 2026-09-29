@@ -51,10 +51,18 @@ class SellerDedupTests(unittest.TestCase):
         # Ник площадки / никнейм — можно.
         self.assertTrue(seller_name_eligible_for_validation("Bregenznet"))
         self.assertTrue(seller_name_eligible_for_validation("mariasto"))
-        # Имя для first.last — не короче 5 букв (Hans/Jan не берём).
-        self.assertFalse(seller_name_eligible_for_validation("Hans Mueller"))
-        self.assertFalse(seller_name_eligible_for_validation("Jan de Vries"))
+        # Имя Фамилия → first.last, даже если имя короче 5 (Ivan Horvat / Hans Mueller).
+        self.assertTrue(seller_name_eligible_for_validation("Hans Mueller"))
+        self.assertTrue(seller_name_eligible_for_validation("Jan de Vries"))
         self.assertTrue(seller_name_eligible_for_validation("Maria Johansen"))
+        self.assertIn(
+            "hans.mueller",
+            _make_local_part_variants("Hans Mueller", require_first_and_last=False),
+        )
+        self.assertIn(
+            "maria.johansen",
+            _make_local_part_variants("Maria Johansen", require_first_and_last=False),
+        )
 
         vs_dr = _make_local_part_variants(
             "Dr. Michael Raufeisen", require_first_and_last=False
@@ -67,8 +75,7 @@ class SellerDedupTests(unittest.TestCase):
         vs_ro = _make_local_part_variants(
             "Mi\u0219u \u0218tefan", require_first_and_last=False
         )
-        # Misu — 4 буквы, first.last не берём
-        self.assertEqual(vs_ro, [])
+        self.assertIn("misu.stefan", vs_ro)
 
         self.assertEqual(
             _make_local_part_variants("Jan", require_first_and_last=False),
@@ -91,7 +98,7 @@ class SellerDedupTests(unittest.TestCase):
             _make_local_part_variants("mariasto", require_first_and_last=False),
         )
         vs = _make_local_part_variants("Jan de Vries", require_first_and_last=False)
-        self.assertEqual(vs, [])
+        self.assertTrue(any("vries" in x and "." in x for x in vs))
 
     def test_ch_allows_single_first_names_min_4(self):
         """Ricardo/CH: всё с ≥4 буквами; ник целиком (jul_2f57, Jessica13)."""

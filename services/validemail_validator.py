@@ -36,6 +36,7 @@ from services.seller_name import (
     first_name_long_enough,
     is_business_token,
     is_ch_name_policy,
+    is_hr_name_policy,
     is_usable_single_local,
     normalize_seller_name,
     person_tokens_for_email,
@@ -128,9 +129,15 @@ def _name_is_usable(
 
     min_letters = seller_name_min_letters(country)
     allow_cf = allow_single_first_name(country)
-    if seller_name_too_short(name, min_letters=min_letters):
+    count_digits = is_hr_name_policy(country)
+    if seller_name_too_short(name, min_letters=min_letters, count_digits=count_digits):
         return False
-    if pick_handle_locals(name, min_letters=min_letters, allow_common_first=allow_cf):
+    if pick_handle_locals(
+        name,
+        min_letters=min_letters,
+        allow_common_first=allow_cf,
+        count_digits=count_digits,
+    ):
         return not require_first_and_last
     if not seller_name_eligible_for_validation(name, country=country):
         return False
@@ -175,6 +182,7 @@ def _make_local_part_variants(
     parts = [p for p in re.split(r"[\s\-']+", norm) if p.strip()]
     min_letters = seller_name_min_letters(country)
     allow_cf = allow_single_first_name(country)
+    count_digits = is_hr_name_policy(country)
 
     def _add(local: str) -> None:
         local = re.sub(r"[^a-z0-9._+\-_]", "", (local or "").lower())
@@ -184,7 +192,10 @@ def _make_local_part_variants(
             return
         if "." not in local and "_" not in local and "+" not in local:
             if not is_usable_single_local(
-                local, min_letters=min_letters, allow_common_first=allow_cf
+                local,
+                min_letters=min_letters,
+                allow_common_first=allow_cf,
+                count_digits=count_digits,
             ):
                 return
         else:
@@ -196,7 +207,10 @@ def _make_local_part_variants(
         out.append(local)
 
     handles = pick_handle_locals(
-        name, min_letters=min_letters, allow_common_first=allow_cf
+        name,
+        min_letters=min_letters,
+        allow_common_first=allow_cf,
+        count_digits=count_digits,
     )
     from services.seller_name import seller_name_ascii_forms
 
@@ -208,6 +222,10 @@ def _make_local_part_variants(
         need = MIN_SELLER_LETTERS_CH if is_ch_name_policy(country) else MIN_FIRST_NAME_LEN
         if len(first_chunk) < need:
             continue
+        if is_hr_name_policy(country):
+            last_chunk = re.sub(r"[^a-z]", "", dotted.rsplit(".", 1)[-1].lower())
+            if len(last_chunk) < need:
+                continue
         _add(dotted)
 
     if handles and len(parts) <= 1:

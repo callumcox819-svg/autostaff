@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, patch
 
 from services.api_teams import ApiTeamConfig
 from services.country_scope import (
+    CROATIA_VALIDATION_DOMAINS,
     GERMANY_VALIDATION_DOMAINS,
     HUNGARY_VALIDATION_DOMAINS,
     PORTUGAL_VALIDATION_DOMAINS,
@@ -129,6 +130,9 @@ class CountryScopeTests(unittest.TestCase):
         self.assertEqual(force_croatia_html_service("rpc", "jofogas"), "njuskalo_hr")
         self.assertEqual(force_croatia_html_service("rpc", "facebook"), "njuskalo_hr")
         self.assertEqual(force_hungary_html_service("rpc", "jofogas"), "jofogas_hu")
+        domains = default_validation_domains_for("hr")
+        self.assertEqual(domains, CROATIA_VALIDATION_DOMAINS)
+        self.assertEqual(domains[0], "net.hr")
 
     def test_austria_default_domains(self):
         from services.country_scope import AUSTRIA_VALIDATION_DOMAINS

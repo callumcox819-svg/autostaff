@@ -79,6 +79,21 @@ HUNGARY_VALIDATION_DOMAINS: tuple[str, ...] = (
     "me.com",
 )
 
+# HR: Njuškalo — net.hr / t-com, потом gmail/icloud.
+CROATIA_VALIDATION_DOMAINS: tuple[str, ...] = (
+    "net.hr",
+    "gmail.com",
+    "t-com.hr",
+    "icloud.com",
+    "hotmail.com",
+    "outlook.com",
+    "iskon.hr",
+    "yahoo.com",
+    "optinet.hr",
+    "me.com",
+    "infonet.hr",
+)
+
 
 def scoped_setting_key(base: str, country: str) -> str:
     cc = normalize_country_id(country) or LEGACY_COUNTRY
@@ -388,6 +403,8 @@ def default_validation_domains_for(country: str) -> tuple[str, ...]:
         return PORTUGAL_VALIDATION_DOMAINS
     if cc == "hu":
         return HUNGARY_VALIDATION_DOMAINS
+    if cc == "hr":
+        return CROATIA_VALIDATION_DOMAINS
     from region import DEFAULT_VALIDATION_DOMAINS
 
     return DEFAULT_VALIDATION_DOMAINS

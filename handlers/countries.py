@@ -90,7 +90,10 @@ def _countries_text(active: str) -> str:
         extra = (
             "\nХорватия: <b>RPC</b> Continental Group, площадка <b>Njuškalo</b> "
             "(<code>njuskalo</code> / <code>POST /api/v1/ad/create</code>), "
-            "HTML <code>njuskalo_hr</code> — отдельно от Венгрии / Jófogás."
+            "HTML <code>njuskalo_hr</code> — отдельно от Венгрии / Jófogás. "
+            "Валидация имён: ≥5 букв в слове; ник с цифрами "
+            "(<code>Anaama_08</code>) — буквы+цифры; Имя Фамилия → "
+            "<code>ime.prezime</code>."
         )
     return (
         f"{html_emoji('compass')} <b>Страны</b>\n\n"

@@ -760,19 +760,17 @@ def person_tokens_for_email(name: str) -> list[str]:
 
 
 def first_name_long_enough(tokens: list[str], *, country: str | None = None) -> bool:
-    """First token for first.last: CH ≥4, иначе ≥5 букв. HR — и фамилия ≥5."""
+    """First token for first.last: CH ≥4, иначе ≥5 букв.
+
+    HR: два слова (Имя Фамилия) — всегда first.last, даже если имя короче 5 (Ivan Horvat).
+    """
     if not tokens:
         return False
+    if is_hr_name_policy(country) and len(tokens) >= 2:
+        return True
     need = MIN_SELLER_LETTERS_CH if is_ch_name_policy(country) else MIN_FIRST_NAME_LEN
-
-    def _letters(tok: str) -> int:
-        return len(re.sub(r"[^a-z]", "", (tok or "").lower()))
-
-    if _letters(tokens[0]) < need:
-        return False
-    if is_hr_name_policy(country) and len(tokens) >= 2 and _letters(tokens[-1]) < need:
-        return False
-    return True
+    first = re.sub(r"[^a-z]", "", (tokens[0] or "").lower())
+    return len(first) >= need
 
 
 _MARKT_PROFILE_RENAME_RE = re.compile(

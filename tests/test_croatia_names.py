@@ -19,12 +19,14 @@ def test_croatia_full_name_gets_dot():
     assert "marko.horvat" in vs
     assert "markohorvat" in vs
 
-
-def test_croatia_short_word_rejected():
-    assert not seller_name_eligible_for_validation("Ivan Horvat", country="hr")
-    assert not _make_local_part_variants(
+    assert seller_name_eligible_for_validation("Ivan Horvat", country="hr")
+    vs_ivan = _make_local_part_variants(
         "Ivan Horvat", require_first_and_last=False, country="hr"
     )
+    assert "ivan.horvat" in vs_ivan
+
+
+def test_croatia_short_single_name_rejected():
     assert not seller_name_eligible_for_validation("Ana", country="hr")
 
 

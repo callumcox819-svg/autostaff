@@ -67,6 +67,8 @@ HTML_SERVICE_ALIASES: dict[str, str] = {
     "olx.pt": "olx_pt",
     "jofogas": "jofogas_hu",
     "jofogas.hu": "jofogas_hu",
+    "njuskalo": "njuskalo_hr",
+    "njuskalo.hr": "njuskalo_hr",
 }
 
 
@@ -148,6 +150,7 @@ async def resolve_html_service(session, user: User) -> str:
     """HTML-папка: рабочая страна + площадка команды (ebay_de / willhaben_at / ricardo_ch / …)."""
     from services.country_scope import (
         force_austria_html_service,
+        force_croatia_html_service,
         force_germany_ebay_service,
         force_portugal_html_service,
         force_hungary_html_service,
@@ -177,6 +180,8 @@ async def resolve_html_service(session, user: User) -> str:
             sc = force_portugal_html_service(cfg.team_id, sc)
         elif cc == "hu" and sc and not is_verify_service(sc):
             sc = force_hungary_html_service(cfg.team_id, sc)
+        elif cc == "hr" and sc and not is_verify_service(sc):
+            sc = force_croatia_html_service(cfg.team_id, sc)
         svc = sc
     except Exception:
         pass
@@ -192,6 +197,8 @@ async def resolve_html_service(session, user: User) -> str:
         candidates.append("olx_pt")
     if cc == "hu" and not svc:
         candidates.append("jofogas_hu")
+    if cc == "hr" and not svc:
+        candidates.append("njuskalo_hr")
     if cc == "nl" and not svc:
         candidates.append("marktplaats_nl")
     for raw in (
@@ -216,6 +223,7 @@ async def resolve_html_service(session, user: User) -> str:
         "marktplaats_nl" if cc == "nl" else "",
         "olx_pt" if cc == "pt" else "",
         "jofogas_hu" if cc == "hu" else "",
+        "njuskalo_hr" if cc == "hr" else "",
         "ricardo_ch" if cc == "ch" else "",
     ):
         code = (raw or "").strip().lower()
@@ -243,6 +251,8 @@ async def resolve_html_service(session, user: User) -> str:
         return "olx_pt"
     if cc == "hu":
         return "jofogas_hu"
+    if cc == "hr":
+        return "njuskalo_hr"
     return cc
 
 
@@ -255,6 +265,7 @@ async def sync_html_service_from_code(session, user: User, service_code: str | N
         from services.csm_catalog import is_verify_service
         from services.country_scope import (
             austria_html_service_for_code,
+            force_croatia_html_service,
             force_germany_ebay_service,
             force_portugal_html_service,
             force_hungary_html_service,
@@ -281,6 +292,8 @@ async def sync_html_service_from_code(session, user: User, service_code: str | N
             sc = force_portugal_html_service(team_id, sc)
         elif cc == "hu":
             sc = force_hungary_html_service(team_id, sc)
+        elif cc == "hr":
+            sc = force_croatia_html_service(team_id, sc)
     except Exception:
         pass
     n = normalize_aqua_service(sc)

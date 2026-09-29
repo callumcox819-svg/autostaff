@@ -89,7 +89,8 @@ def _countries_text(active: str) -> str:
     elif active == "hr":
         extra = (
             "\nХорватия: <b>RPC</b> Continental Group, площадка <b>Njuškalo</b> "
-            "(<code>njuskalo</code> / <code>POST /api/v1/ad/create</code>)."
+            "(<code>njuskalo</code> / <code>POST /api/v1/ad/create</code>), "
+            "HTML <code>njuskalo_hr</code> — отдельно от Венгрии / Jófogás."
         )
     return (
         f"{html_emoji('compass')} <b>Страны</b>\n\n"

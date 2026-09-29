@@ -31,6 +31,7 @@ class HtmlPriceFormatTests(unittest.TestCase):
         from services.html_reply import _html_currency_for_country
 
         self.assertEqual(_html_currency_for_country("hu"), "HUF")
+        self.assertEqual(_html_currency_for_country("hr"), "EUR")
         self.assertEqual(_format_html_price("155 000 Ft", currency="HUF"), "155 000 Ft")
         self.assertEqual(_format_html_price("155000", currency="HUF"), "155 000 Ft")
         self.assertEqual(_format_html_price("155 000 Ft", currency="EUR"), "155 000 Ft")

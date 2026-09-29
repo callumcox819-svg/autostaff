@@ -285,6 +285,43 @@ def force_hungary_html_service(team_id: str, service_code: str) -> str:
     return hungary_html_service_for_code(code)
 
 
+def croatia_html_service(team_id: str = "") -> str:
+    """Дефолт Хорватии (RPC): Njuškalo. Не Jófogás."""
+    _ = team_id
+    return "njuskalo_hr"
+
+
+def croatia_html_service_for_code(service_code: str) -> str:
+    from services.csm_catalog import parse_service_key
+
+    code = (service_code or "").strip().lower()
+    if not code:
+        return croatia_html_service()
+    if code in {"njuskalo_hr", "njuskalo", "njuskalo.hr"}:
+        return "njuskalo_hr"
+    if "_" in code:
+        platform, cc = parse_service_key(code)
+        plat = (platform or "").strip().lower()
+        if plat == "njuskalo" or cc == "hr":
+            return "njuskalo_hr"
+    if code.startswith("njuskalo"):
+        return "njuskalo_hr"
+    return croatia_html_service()
+
+
+def force_croatia_html_service(team_id: str, service_code: str) -> str:
+    from services.csm_catalog import is_verify_service
+    from services.hustle_catalog import is_hustle_verify
+
+    tid = (team_id or "").strip().lower()
+    code = (service_code or "").strip()
+    if tid == "csm" and is_verify_service(code):
+        return code
+    if tid == "hustle" and is_hustle_verify(code):
+        return code
+    return croatia_html_service_for_code(code)
+
+
 def force_croatia_njuskalo_service(team_id: str, service_code: str) -> str:
     """RPC на HR → Njuškalo (facebook оставляем)."""
     tid = (team_id or "").strip().lower()

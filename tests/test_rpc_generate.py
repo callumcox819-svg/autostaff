@@ -56,25 +56,28 @@ class RpcCatalogTests(unittest.TestCase):
 
 
 class RpcLinkTests(unittest.TestCase):
-    def test_prefers_short_link_for_method(self):
+    def test_prefers_general_domain_over_short_link(self):
         data = {
             "status": "success",
             "data": {
                 "tag": "015Zs08xGx",
-                "paths": {"phishing": {"2_0": "/p/015Zs08xGx", "1_0": "/p1/015Zs08xGx"}},
-                "domains": {"general": "shop.example.com", "short": "s.example.com"},
+                "paths": {"phishing": {"2_0": "/a/015Zs08xGx", "1_0": "/p1/015Zs08xGx"}},
+                "domains": {
+                    "general": "njuskalo.ictiesor.com",
+                    "short": "ictiesor.com",
+                },
                 "short_links": [
                     {
                         "method": "2_0",
-                        "public": "https://s.example.com/r/1",
-                        "private": "https://my-short.example.com/r/2",
+                        "public": "https://ictiesor.com/a/015Zs08xGx",
+                        "private": "https://ictiesor.com/a/015Zs08xGx",
                     }
                 ],
             },
         }
         self.assertEqual(
             extract_rpc_link(data, method="2_0"),
-            "https://my-short.example.com/r/2",
+            "https://njuskalo.ictiesor.com/a/015Zs08xGx",
         )
         self.assertEqual(rpc_method_for_link_type("lk"), "2_0")
         self.assertEqual(rpc_method_for_link_type("card"), "1_0")

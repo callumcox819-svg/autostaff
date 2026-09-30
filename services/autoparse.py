@@ -12,6 +12,7 @@ from utils.secrets import clean_secret
 AUTOPARSE_KEY = "autoparse_api_key"
 AUTOPARSE_COUNTRY_KEY = "autoparse_country"
 AUTOPARSE_COUNT_KEY = "autoparse_json_count"
+AUTOPARSE_PLATFORM_KEY = "autoparse_platform"
 AUTOPARSE_FILTERS_PREFIX = "autoparse_filters:"
 
 DEFAULT_JSON_COUNT = 100

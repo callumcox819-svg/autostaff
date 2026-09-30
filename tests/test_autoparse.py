@@ -21,6 +21,9 @@ class AutoparseMapTests(unittest.TestCase):
         self.assertEqual(default_platform_for_country("hr"), "vinted")
         self.assertEqual(default_platform_for_country("hu"), "vinted")
         self.assertEqual(parser_iso_country("uk"), "gb")
+        from services.autoparse import AUTOPARSE_PLATFORM_KEY
+
+        self.assertEqual(AUTOPARSE_PLATFORM_KEY, "autoparse_platform")
 
     def test_listing_to_bot_json(self):
         item = listing_to_item(

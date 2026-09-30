@@ -11,7 +11,7 @@ from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.types import CallbackQuery, InlineKeyboardMarkup, Message
+from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
 from database import Session
 from services.autoparse import (
@@ -532,62 +532,88 @@ async def apf_toggle(callback: CallbackQuery, state: FSMContext) -> None:
     await callback_answer_safe(callback)
 
 
+def _cat_btn(on: bool, lab: str, data: str) -> InlineKeyboardButton:
+    """Без style=success/danger — Telegram часто не принимает и не обновляет клавиатуру."""
+    return inline_button("green" if on else "red", lab, callback_data=data)
+
+
+def _categories_kb(cats: list[str], selected: set[str], page: int) -> tuple[str, InlineKeyboardMarkup]:
+    pages = max(1, (len(cats) + _CATS_PAGE - 1) // _CATS_PAGE)
+    page = max(0, min(page, pages - 1))
+    chunk = cats[page * _CATS_PAGE : (page + 1) * _CATS_PAGE]
+    rows = []
+    row = []
+    for i, slug in enumerate(chunk):
+        idx = page * _CATS_PAGE + i
+        lab = category_label(slug)
+        if len(lab) > 24:
+            lab = lab[:24]
+        row.append(_cat_btn(slug in selected, lab, f"apf_ci:{idx}"))
+        if len(row) == 2:
+            rows.append(row)
+            row = []
+    if row:
+        rows.append(row)
+    rows.append(
+        [
+            inline_button("ok", "Выбрать все", callback_data="apf_call"),
+            inline_button("fail", "Убрать все", callback_data="apf_cnone"),
+        ]
+    )
+    nav = []
+    if page > 0:
+        nav.append(inline_button("prev", "<", callback_data=f"apf_cats:{page - 1}"))
+    nav.append(inline_button("status", f"{page + 1}/{pages}", callback_data=f"apf_cats:{page}"))
+    if page + 1 < pages:
+        nav.append(inline_button("next", ">", callback_data=f"apf_cats:{page + 1}"))
+    rows.append(nav)
+    rows.append([back_inline("autoparse_filters")])
+    names = [category_label(x) for x in cats if x in selected]
+    picked = ", ".join(names[:6]) or _NONE
+    extra = f" +{len(names) - 6}" if len(names) > 6 else ""
+    text = (
+        f"{html_emoji('presets')} <b>Категории</b>\n\n"
+        "Нажми категорию — загорится зелёным. «Смотреть везде» — обычная категория.\n"
+        f"Сейчас: <b>{html.escape(picked)}{html.escape(extra)}</b> · "
+        f"выбрано <b>{len(selected)}</b>/{len(cats)}"
+    )
+    return text, InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+async def _cats_list(session, user, state: FSMContext) -> list[str]:
+    data = await state.get_data()
+    cached = data.get("apf_cat_list")
+    if isinstance(cached, list) and cached:
+        return [str(x) for x in cached if str(x).strip()]
+    _p, _sv, _s, meta = await _plat_meta(session, user)
+    cats = schema_category_values(meta)
+    if cats:
+        await state.update_data(apf_cat_list=cats)
+    return cats
+
+
+async def _show_cats(callback: CallbackQuery, state: FSMContext, page: int) -> None:
+    async with Session() as session:
+        user = await get_or_create_user(session, callback.from_user.id)
+        cats = await _cats_list(session, user, state)
+        plat = await get_autoparse_platform(session, user)
+        saved = await get_saved_filters(session, user, plat)
+    if not cats:
+        await callback_answer_safe(callback, toast("fail", "Схема без категорий"), show_alert=True)
+        return
+    selected = {str(x).strip() for x in (saved.get("categories") or []) if str(x).strip()}
+    text, kb = _categories_kb(cats, selected, page)
+    await _edit(callback, text, kb)
+    await callback_answer_safe(callback)
+
+
 @router.callback_query(F.data.startswith("apf_cats:"))
 async def apf_cats(callback: CallbackQuery, state: FSMContext) -> None:
-    await state.clear()
     try:
         page = int((callback.data or "").split(":")[-1])
     except ValueError:
         page = 0
-    async with Session() as session:
-        user = await get_or_create_user(session, callback.from_user.id)
-        plat, saved, _sup, meta = await _plat_meta(session, user)
-        cats = schema_category_values(meta)
-        selected = {str(x) for x in (saved.get("categories") or []) if str(x).strip()}
-        if not cats:
-            await callback_answer_safe(callback, toast("fail", "Схема без категорий"), show_alert=True)
-            return
-        pages = max(1, (len(cats) + _CATS_PAGE - 1) // _CATS_PAGE)
-        page = max(0, min(page, pages - 1))
-        chunk = cats[page * _CATS_PAGE : (page + 1) * _CATS_PAGE]
-        rows = []
-        row = []
-        for i, slug in enumerate(chunk):
-            idx = page * _CATS_PAGE + i
-            on = slug in selected
-            lab = category_label(slug)
-            if lab.lower() == slug.replace("_", " ").lower() and len(lab) > 22:
-                lab = lab[:22]
-            row.append(toggle_button(on, lab, f"apf_ci:{idx}"))
-            if len(row) == 2:
-                rows.append(row)
-                row = []
-        if row:
-            rows.append(row)
-        rows.append(
-            [
-                inline_button("ok", "Выбрать все", callback_data="apf_call"),
-                inline_button("fail", "Убрать все", callback_data="apf_cnone"),
-            ]
-        )
-        nav = []
-        if page > 0:
-            nav.append(inline_button("prev", "<", callback_data=f"apf_cats:{page - 1}"))
-        nav.append(inline_button("status", f"{page + 1}/{pages}", callback_data="apf_cats:" + str(page)))
-        if page + 1 < pages:
-            nav.append(inline_button("next", ">", callback_data=f"apf_cats:{page + 1}"))
-        rows.append(nav)
-        rows.append([back_inline("autoparse_filters")])
-        picked = ", ".join(category_label(x) for x in list(selected)[:6]) or _NONE
-        text = (
-            f"{html_emoji('presets')} <b>Категории</b>\n\n"
-            "Выберите одно или несколько значений. "
-            "«Смотреть везде» — обычная категория площадки.\n"
-            f"Сейчас: <b>{html.escape(picked)}</b>"
-            + (f" +{len(selected) - 6}" if len(selected) > 6 else "")
-        )
-    await _edit(callback, text, InlineKeyboardMarkup(inline_keyboard=rows))
-    await callback_answer_safe(callback)
+    await _show_cats(callback, state, page)
 
 
 @router.callback_query(F.data.startswith("apf_ci:"))
@@ -599,27 +625,24 @@ async def apf_ci(callback: CallbackQuery, state: FSMContext) -> None:
         return
     async with Session() as session:
         user = await get_or_create_user(session, callback.from_user.id)
-        _plat, saved, _s, meta = await _plat_meta(session, user)
-        cats = schema_category_values(meta)
+        cats = await _cats_list(session, user, state)
+        plat = await get_autoparse_platform(session, user)
+        saved = await get_saved_filters(session, user, plat)
         if idx < 0 or idx >= len(cats):
-            await callback_answer_safe(callback)
+            await callback_answer_safe(callback, toast("fail", "Список категорий устарел"), show_alert=True)
             return
         new = toggle_category_list(saved.get("categories"), cats[idx], all_values=cats)
         await _save_filters_patch(session, user, categories=new or None)
-    page = idx // _CATS_PAGE
-    callback.data = f"apf_cats:{page}"
-    await apf_cats(callback, state)
+    await _show_cats(callback, state, idx // _CATS_PAGE)
 
 
 @router.callback_query(F.data == "apf_call")
 async def apf_call(callback: CallbackQuery, state: FSMContext) -> None:
     async with Session() as session:
         user = await get_or_create_user(session, callback.from_user.id)
-        _p, _sv, _s, meta = await _plat_meta(session, user)
-        cats = schema_category_values(meta)
+        cats = await _cats_list(session, user, state)
         await _save_filters_patch(session, user, categories=list(cats) or None)
-    callback.data = "apf_cats:0"
-    await apf_cats(callback, state)
+    await _show_cats(callback, state, 0)
 
 
 @router.callback_query(F.data == "apf_cnone")
@@ -627,8 +650,7 @@ async def apf_cnone(callback: CallbackQuery, state: FSMContext) -> None:
     async with Session() as session:
         user = await get_or_create_user(session, callback.from_user.id)
         await _save_filters_patch(session, user, categories=None)
-    callback.data = "apf_cats:0"
-    await apf_cats(callback, state)
+    await _show_cats(callback, state, 0)
 
 
 def _choice_kb(preset_pairs: list[tuple[str, str]], off_data: str, enter_data: str, back: str):

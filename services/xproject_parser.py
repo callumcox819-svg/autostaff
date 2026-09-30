@@ -102,6 +102,11 @@ async def list_tasks(api_key: str) -> list[dict[str, Any]]:
     data = await _request("GET", "/api/v1/parser/tasks", api_key=api_key)
     if isinstance(data, list):
         return [x for x in data if isinstance(x, dict)]
+    if isinstance(data, dict):
+        for key in ("tasks", "items", "data"):
+            rows = data.get(key)
+            if isinstance(rows, list):
+                return [x for x in rows if isinstance(x, dict)]
     return []
 
 

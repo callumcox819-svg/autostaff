@@ -15,19 +15,26 @@ from aiogram.types import CallbackQuery, InlineKeyboardMarkup, Message
 
 from database import Session
 from services.autoparse import (
-    build_start_filters,
     default_platform_for_country,
     get_autoparse_country,
     get_autoparse_key,
     get_autoparse_platform,
     get_json_count,
+    get_saved_filters,
     listing_to_item,
-    merge_filters_keep_user,
     pick_existing_task,
+    pick_task_for_filters,
     platform_schema,
+    resolve_local_start_filters,
+    schema_category_values,
     set_autoparse_country,
     set_autoparse_key,
     set_json_count,
+    set_saved_filters,
+    summarize_filters,
+    supported_filter_keys,
+    toggle_category_list,
+    category_label,
 )
 from services.enabled_countries import countries_for_settings_ui
 from services.users import get_or_create_user
@@ -62,6 +69,12 @@ logger = logging.getLogger(__name__)
 class AutoparseState(StatesGroup):
     waiting_key = State()
     waiting_count = State()
+    waiting_price_min = State()
+    waiting_price_max = State()
+    waiting_stop_words = State()
+    waiting_num = State()
+    waiting_period = State()
+    waiting_reg = State()
 
 
 def _mask_key(key: str) -> str:
@@ -86,6 +99,7 @@ def _menu_kb(*, running: bool) -> InlineKeyboardMarkup:
         [inline_button("key", "Ключ парсера", callback_data="autoparse_key")],
         [inline_button("compass", "Страна парсера", callback_data="autoparse_country")],
         [inline_button("presets", "Количество объяв. для JSON", callback_data="autoparse_count")],
+        [inline_button("wrench", "Фильтры", callback_data="autoparse_filters")],
     ]
     if running:
         rows.append([inline_button("stop", "Стоп авто-парс", callback_data="autoparse_stop")])
@@ -118,6 +132,7 @@ async def _menu_text(session, user, *, running: bool) -> str:
     cc = await get_autoparse_country(session, user)
     plat = await get_autoparse_platform(session, user)
     n = await get_json_count(session, user)
+    saved = await get_saved_filters(session, user, plat)
     run = "идёт" if running else "стоп"
     return (
         f"{html_emoji('search')} <b>Авто-парс</b>\n"
@@ -125,12 +140,13 @@ async def _menu_text(session, user, *, running: bool) -> str:
         f"<b>Ключ:</b> <code>{html.escape(_mask_key(key))}</code>\n"
         f"<b>Страна:</b> <b>{html.escape(cname(cc))}</b> · площадка <code>{html.escape(plat)}</code>\n"
         f"<b>Объявлений в JSON:</b> <code>{n}</code>\n"
+        f"<b>Фильтры:</b> {html.escape(summarize_filters(saved))}\n"
         f"<b>Статус:</b> {html.escape(run)}\n\n"
-        "Ключ — <code>X-API-Key</code> с XProject. Фильтры (категории, цена, дата…) "
-        "берутся с <b>запущенной задачи</b> в боте парсера; здесь меняется только "
-        "размер JSON на батч.\n"
-        "Запуск: 1 / 5 / 10 батчей или 0 — пока не остановишь / 402.\n"
-        "Остановка: кнопка Стоп или <code>/stopparse</code>."
+        "Старт сам поднимает задачу XProject через API. "
+        "Если в парсере уже есть задача этой площадки — её фильтры копируются и сохраняются. "
+        "Иначе берутся сохранённые в «Фильтры». "
+        "У XProject нет API на «общие фильтры» бота — только живые задачи.\n"
+        "Запуск: 1 / 5 / 10 батчей или 0 — пока не остановишь / 402."
     )
 
 
@@ -260,6 +276,815 @@ async def autoparse_count_save(message: Message, state: FSMContext) -> None:
     await message.answer(text, reply_markup=_menu_kb(running=running), parse_mode="HTML")
 
 
+_NONE = "Без фильтра"
+_CATS_PAGE = 20
+_DATE_OPTS = (
+    ("fresh", "Свежие объявления"),
+    ("1h", "1 час назад"),
+    ("3h", "3 часа назад"),
+    ("6h", "6 часов назад"),
+    ("12h", "12 часов назад"),
+    ("1d", "1 день назад"),
+    ("3d", "3 дня назад"),
+    ("7d", "1 неделя назад"),
+)
+_REG_OPTS = (
+    ("1d", "1 день"),
+    ("7d", "7 дней"),
+    ("14d", "14 дней"),
+    ("30d", "30 дней"),
+    ("90d", "90 дней"),
+    ("180d", "180 дней"),
+)
+
+
+def _bool_on(filters: dict, key: str) -> bool:
+    return filters.get(key) is True
+
+
+def _none(v) -> str:
+    if v is None or v is False or v == "" or v == []:
+        return _NONE
+    return str(v)
+
+
+def _period_label(code: str | None) -> str:
+    c = (code or "").strip()
+    if not c:
+        return _NONE
+    for k, lab in _DATE_OPTS + _REG_OPTS:
+        if k == c:
+            return lab
+    return c
+
+
+def _ok_set(supported: set[str], name: str) -> bool:
+    return not supported or name in supported
+
+
+async def _plat_meta(session, user):
+    plat = await get_autoparse_platform(session, user)
+    saved = await get_saved_filters(session, user, plat)
+    key = await get_autoparse_key(session, user)
+    meta: dict = {}
+    supported: set[str] = set()
+    if key:
+        try:
+            meta = platform_schema(await fetch_schema(key), plat) or {}
+            supported = supported_filter_keys(meta)
+        except XProjectError:
+            meta = {}
+    return plat, saved, supported, meta
+
+
+async def _save_filters_patch(session, user, **patch) -> None:
+    plat = await get_autoparse_platform(session, user)
+    saved = await get_saved_filters(session, user, plat)
+    for k, v in patch.items():
+        if v is None:
+            saved.pop(k, None)
+        else:
+            saved[k] = v
+    await set_saved_filters(session, user, plat, saved)
+
+
+async def _filters_view(session, user) -> tuple[str, InlineKeyboardMarkup]:
+    plat, saved, supported, _meta = await _plat_meta(session, user)
+    cats = saved.get("categories") if isinstance(saved.get("categories"), list) else []
+    if not cats:
+        cat_lab = _NONE
+    elif len(cats) == 1:
+        cat_lab = category_label(cats[0])
+    else:
+        cat_lab = f"{len(cats)} выбрано"
+    pmin, pmax = saved.get("price_min"), saved.get("price_max")
+    if pmin is None and pmax is None:
+        price_lab = _NONE
+    else:
+        price_lab = f"{_none(pmin)} – {_none(pmax)}"
+    sw = saved.get("stop_words") if isinstance(saved.get("stop_words"), list) else []
+    views = saved.get("internal_view_count")
+    views_lab = "Уникальные" if views == 0 else _none(views)
+    n = await get_json_count(session, user)
+
+    def row_btn(key: str, caption: str, data: str, *, toggle: bool | None = None):
+        if toggle is None:
+            return [inline_button(key, caption, callback_data=data)]
+        return [toggle_button(toggle, caption, data)]
+
+    rows = []
+    rows.append([inline_button("refresh", "Подтянуть с XProject", callback_data="apf_sync")])
+    if _ok_set(supported, "categories"):
+        rows.append(
+            [inline_button("presets", f"Категории: {cat_lab}", callback_data="apf_cats:0")]
+        )
+    if _ok_set(supported, "price_min") or _ok_set(supported, "price_max"):
+        rows.append([inline_button("price", f"Цена: {price_lab}", callback_data="apf_price")])
+    if _ok_set(supported, "seller_review_count_max"):
+        rows.append(
+            [
+                inline_button(
+                    "status",
+                    f"Макс. отзывов: {_none(saved.get('seller_review_count_max'))}",
+                    callback_data="apf_num:rev",
+                )
+            ]
+        )
+    if _ok_set(supported, "seller_listing_count_max"):
+        rows.append(
+            [
+                inline_button(
+                    "presets",
+                    f"Макс. объяв. продавца: {_none(saved.get('seller_listing_count_max'))}",
+                    callback_data="apf_num:ads",
+                )
+            ]
+        )
+    if _ok_set(supported, "created_at_period"):
+        rows.append(
+            [
+                inline_button(
+                    "interval",
+                    f"Дата объявления: {_period_label(saved.get('created_at_period'))}",
+                    callback_data="apf_date",
+                )
+            ]
+        )
+    if _ok_set(supported, "seller_created_at_period") or _ok_set(
+        supported, "seller_created_at_max_period"
+    ):
+        rmin = _period_label(saved.get("seller_created_at_max_period"))
+        rmax = _period_label(saved.get("seller_created_at_period"))
+        rows.append(
+            [
+                inline_button(
+                    "user",
+                    f"Регистрация: {rmin} / {rmax}",
+                    callback_data="apf_reg",
+                )
+            ]
+        )
+    if _ok_set(supported, "delivery"):
+        on = _bool_on(saved, "delivery")
+        rows.append(
+            row_btn("ok" if on else "fail", f"Доставка: {'Вкл' if on else 'Выкл'}", "apf_tg:delivery", toggle=on)
+        )
+    if _ok_set(supported, "seller_email"):
+        on = _bool_on(saved, "seller_email")
+        rows.append(
+            row_btn(
+                "email",
+                f"Почта продавца: {'Вкл' if on else 'Выкл'}",
+                "apf_tg:seller_email",
+                toggle=on,
+            )
+        )
+    if _ok_set(supported, "stop_words"):
+        rows.append(
+            [
+                inline_button(
+                    "edit",
+                    f"Банворды: {len(sw)} шт." if sw else f"Банворды: {_NONE}",
+                    callback_data="apf_sw",
+                )
+            ]
+        )
+    if _ok_set(supported, "internal_view_count"):
+        rows.append(
+            [inline_button("search", f"Просмотры в парсере: {views_lab}", callback_data="apf_num:view")]
+        )
+    rows.append(
+        [inline_button("presets", f"Объявлений для выдачи (JSON): {n}", callback_data="autoparse_count")]
+    )
+    rows.append([inline_button("delete", "Сбросить фильтры", callback_data="apf_reset")])
+    rows.append([back_inline("autoparse")])
+    text = (
+        f"{html_emoji('wrench')} <b>Фильтры авто-парса</b>\n"
+        f"{menu_path(('search', 'Авто-парс'), ('wrench', 'Фильтры'))}\n\n"
+        f"Площадка: <code>{html.escape(plat)}</code>\n"
+        f"<i>Как в XProject: «без фильтра» = любые объявления. "
+        f"Количество выдачи — то же, что JSON в авто-парсе.</i>"
+    )
+    return text, InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+@router.callback_query(F.data == "autoparse_filters")
+async def autoparse_filters(callback: CallbackQuery, state: FSMContext) -> None:
+    await state.clear()
+    async with Session() as session:
+        user = await get_or_create_user(session, callback.from_user.id)
+        text, kb = await _filters_view(session, user)
+    await _edit(callback, text, kb)
+    await callback_answer_safe(callback)
+
+
+@router.callback_query(F.data == "apf_sync")
+async def apf_sync(callback: CallbackQuery, state: FSMContext) -> None:
+    await state.clear()
+    async with Session() as session:
+        user = await get_or_create_user(session, callback.from_user.id)
+        api_key = await get_autoparse_key(session, user)
+        plat = await get_autoparse_platform(session, user)
+        if not api_key:
+            await callback_answer_safe(callback, toast("fail", "Сначала ключ"), show_alert=True)
+            return
+        try:
+            hit = pick_task_for_filters(await list_tasks(api_key), platform=plat)
+        except XProjectError as e:
+            await callback_answer_safe(callback, toast("fail", str(e)[:80]), show_alert=True)
+            return
+        if not hit or not isinstance(hit.get("filters"), dict) or not hit.get("filters"):
+            await callback_answer_safe(
+                callback,
+                toast("warn", "Нет задачи этой площадки в API"),
+                show_alert=True,
+            )
+            text, kb = await _filters_view(session, user)
+            await _edit(callback, text, kb)
+            return
+        src = dict(hit["filters"])
+        src.pop("internal_listing_count", None)
+        await set_saved_filters(session, user, plat, src)
+        text, kb = await _filters_view(session, user)
+    await _edit(callback, text, kb)
+    await callback_answer_safe(
+        callback, toast("ok", f"С задачи #{hit.get('task_id')}")
+    )
+
+
+@router.callback_query(F.data.startswith("apf_tg:"))
+async def apf_toggle(callback: CallbackQuery, state: FSMContext) -> None:
+    field = (callback.data or "").split(":", 1)[-1].strip()
+    if field not in {"seller_email", "delivery"}:
+        await callback_answer_safe(callback)
+        return
+    async with Session() as session:
+        user = await get_or_create_user(session, callback.from_user.id)
+        plat = await get_autoparse_platform(session, user)
+        saved = await get_saved_filters(session, user, plat)
+        if saved.get(field) is True:
+            saved.pop(field, None)
+        else:
+            saved[field] = True
+        await set_saved_filters(session, user, plat, saved)
+        text, kb = await _filters_view(session, user)
+    await _edit(callback, text, kb)
+    await callback_answer_safe(callback)
+
+
+@router.callback_query(F.data.startswith("apf_cats:"))
+async def apf_cats(callback: CallbackQuery, state: FSMContext) -> None:
+    await state.clear()
+    try:
+        page = int((callback.data or "").split(":")[-1])
+    except ValueError:
+        page = 0
+    async with Session() as session:
+        user = await get_or_create_user(session, callback.from_user.id)
+        plat, saved, _sup, meta = await _plat_meta(session, user)
+        cats = schema_category_values(meta)
+        selected = {str(x) for x in (saved.get("categories") or []) if str(x).strip()}
+        if not cats:
+            await callback_answer_safe(callback, toast("fail", "Схема без категорий"), show_alert=True)
+            return
+        pages = max(1, (len(cats) + _CATS_PAGE - 1) // _CATS_PAGE)
+        page = max(0, min(page, pages - 1))
+        chunk = cats[page * _CATS_PAGE : (page + 1) * _CATS_PAGE]
+        rows = []
+        row = []
+        for i, slug in enumerate(chunk):
+            idx = page * _CATS_PAGE + i
+            on = slug in selected
+            lab = category_label(slug)
+            if lab.lower() == slug.replace("_", " ").lower() and len(lab) > 22:
+                lab = lab[:22]
+            row.append(toggle_button(on, lab, f"apf_ci:{idx}"))
+            if len(row) == 2:
+                rows.append(row)
+                row = []
+        if row:
+            rows.append(row)
+        rows.append(
+            [
+                inline_button("ok", "Выбрать все", callback_data="apf_call"),
+                inline_button("fail", "Убрать все", callback_data="apf_cnone"),
+            ]
+        )
+        nav = []
+        if page > 0:
+            nav.append(inline_button("prev", "<", callback_data=f"apf_cats:{page - 1}"))
+        nav.append(inline_button("status", f"{page + 1}/{pages}", callback_data="apf_cats:" + str(page)))
+        if page + 1 < pages:
+            nav.append(inline_button("next", ">", callback_data=f"apf_cats:{page + 1}"))
+        rows.append(nav)
+        rows.append([back_inline("autoparse_filters")])
+        picked = ", ".join(category_label(x) for x in list(selected)[:6]) or _NONE
+        text = (
+            f"{html_emoji('presets')} <b>Категории</b>\n\n"
+            "Выберите одно или несколько значений. "
+            "«Смотреть везде» — обычная категория площадки.\n"
+            f"Сейчас: <b>{html.escape(picked)}</b>"
+            + (f" +{len(selected) - 6}" if len(selected) > 6 else "")
+        )
+    await _edit(callback, text, InlineKeyboardMarkup(inline_keyboard=rows))
+    await callback_answer_safe(callback)
+
+
+@router.callback_query(F.data.startswith("apf_ci:"))
+async def apf_ci(callback: CallbackQuery, state: FSMContext) -> None:
+    try:
+        idx = int((callback.data or "").split(":")[-1])
+    except ValueError:
+        await callback_answer_safe(callback)
+        return
+    async with Session() as session:
+        user = await get_or_create_user(session, callback.from_user.id)
+        _plat, saved, _s, meta = await _plat_meta(session, user)
+        cats = schema_category_values(meta)
+        if idx < 0 or idx >= len(cats):
+            await callback_answer_safe(callback)
+            return
+        new = toggle_category_list(saved.get("categories"), cats[idx], all_values=cats)
+        await _save_filters_patch(session, user, categories=new or None)
+    page = idx // _CATS_PAGE
+    callback.data = f"apf_cats:{page}"
+    await apf_cats(callback, state)
+
+
+@router.callback_query(F.data == "apf_call")
+async def apf_call(callback: CallbackQuery, state: FSMContext) -> None:
+    async with Session() as session:
+        user = await get_or_create_user(session, callback.from_user.id)
+        _p, _sv, _s, meta = await _plat_meta(session, user)
+        cats = schema_category_values(meta)
+        await _save_filters_patch(session, user, categories=list(cats) or None)
+    callback.data = "apf_cats:0"
+    await apf_cats(callback, state)
+
+
+@router.callback_query(F.data == "apf_cnone")
+async def apf_cnone(callback: CallbackQuery, state: FSMContext) -> None:
+    async with Session() as session:
+        user = await get_or_create_user(session, callback.from_user.id)
+        await _save_filters_patch(session, user, categories=None)
+    callback.data = "apf_cats:0"
+    await apf_cats(callback, state)
+
+
+def _choice_kb(preset_pairs: list[tuple[str, str]], off_data: str, enter_data: str, back: str):
+    rows = []
+    row = []
+    for code, lab in preset_pairs:
+        row.append(inline_button("ok", lab, callback_data=code))
+        if len(row) == 2:
+            rows.append(row)
+            row = []
+    if row:
+        rows.append(row)
+    rows.append(
+        [
+            inline_button("fail", _NONE, callback_data=off_data),
+            inline_button("write", "Ввести", callback_data=enter_data),
+        ]
+    )
+    rows.append([back_inline(back)])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+@router.callback_query(F.data == "apf_price")
+async def apf_price(callback: CallbackQuery, state: FSMContext) -> None:
+    await state.clear()
+    async with Session() as session:
+        user = await get_or_create_user(session, callback.from_user.id)
+        _p, saved, _s, _m = await _plat_meta(session, user)
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                inline_button(
+                    "price",
+                    f"Минимум: {_none(saved.get('price_min'))}",
+                    callback_data="apf_pmin",
+                ),
+                inline_button(
+                    "price",
+                    f"Максимум: {_none(saved.get('price_max'))}",
+                    callback_data="apf_pmax",
+                ),
+            ],
+            [back_inline("autoparse_filters")],
+        ]
+    )
+    await _edit(
+        callback,
+        f"{html_emoji('price')} <b>Цена</b>\n\n"
+        "Выберите минимум и максимум. Без фильтра — любые цены.",
+        kb,
+    )
+    await callback_answer_safe(callback)
+
+
+@router.callback_query(F.data == "apf_pmin")
+async def apf_pmin(callback: CallbackQuery, state: FSMContext) -> None:
+    await _edit(
+        callback,
+        f"{html_emoji('price')} <b>Минимум цены</b>",
+        InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    inline_button("fail", _NONE, callback_data="apf_pmin_off"),
+                    inline_button("write", "Указать цену", callback_data="apf_pmin_in"),
+                ],
+                [back_inline("apf_price")],
+            ]
+        ),
+    )
+    await callback_answer_safe(callback)
+
+
+@router.callback_query(F.data == "apf_pmax")
+async def apf_pmax(callback: CallbackQuery, state: FSMContext) -> None:
+    await _edit(
+        callback,
+        f"{html_emoji('price')} <b>Максимум цены</b>",
+        InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    inline_button("fail", _NONE, callback_data="apf_pmax_off"),
+                    inline_button("write", "Указать цену", callback_data="apf_pmax_in"),
+                ],
+                [back_inline("apf_price")],
+            ]
+        ),
+    )
+    await callback_answer_safe(callback)
+
+
+@router.callback_query(F.data == "apf_pmin_off")
+async def apf_pmin_off(callback: CallbackQuery, state: FSMContext) -> None:
+    async with Session() as session:
+        user = await get_or_create_user(session, callback.from_user.id)
+        await _save_filters_patch(session, user, price_min=None)
+    await apf_price(callback, state)
+
+
+@router.callback_query(F.data == "apf_pmax_off")
+async def apf_pmax_off(callback: CallbackQuery, state: FSMContext) -> None:
+    async with Session() as session:
+        user = await get_or_create_user(session, callback.from_user.id)
+        await _save_filters_patch(session, user, price_max=None)
+    await apf_price(callback, state)
+
+
+@router.callback_query(F.data == "apf_pmin_in")
+async def apf_pmin_in(callback: CallbackQuery, state: FSMContext) -> None:
+    await state.set_state(AutoparseState.waiting_price_min)
+    await _edit(
+        callback,
+        f"{html_emoji('price')} Пришли число — минимум цены.",
+        InlineKeyboardMarkup(inline_keyboard=[[back_inline("apf_price")]]),
+    )
+    await callback_answer_safe(callback)
+
+
+@router.callback_query(F.data == "apf_pmax_in")
+async def apf_pmax_in(callback: CallbackQuery, state: FSMContext) -> None:
+    await state.set_state(AutoparseState.waiting_price_max)
+    await _edit(
+        callback,
+        f"{html_emoji('price')} Пришли число — максимум цены.",
+        InlineKeyboardMarkup(inline_keyboard=[[back_inline("apf_price")]]),
+    )
+    await callback_answer_safe(callback)
+
+
+_NUM_KIND = {
+    "rev": ("seller_review_count_max", "Максимум отзывов", [(0, "0"), (5, "5"), (15, "15")]),
+    "ads": ("seller_listing_count_max", "Максимум объявлений", [(1, "1"), (5, "5"), (15, "15")]),
+    "view": ("internal_view_count", "Просмотры в парсере", [(0, "Уникальные объявления")]),
+}
+
+
+@router.callback_query(F.data.startswith("apf_num:"))
+async def apf_num(callback: CallbackQuery, state: FSMContext) -> None:
+    await state.clear()
+    kind = (callback.data or "").split(":")[-1]
+    spec = _NUM_KIND.get(kind)
+    if not spec:
+        await callback_answer_safe(callback)
+        return
+    field, title, presets = spec
+    pairs = [(f"apf_nv:{kind}:{v}", lab) for v, lab in presets]
+    extra = ""
+    if kind == "view":
+        extra = "\nМаксимум, сколько раз объявление уже отдавалось парсером. 0 — только уникальные."
+    elif kind == "rev":
+        extra = "\nПродавцы с большим числом отзывов отсекаются."
+    await _edit(
+        callback,
+        f"{html_emoji('status')} <b>{html.escape(title)}</b>\n\n"
+        f"Выберите значение, снимите фильтр или введите своё.{extra}",
+        _choice_kb(pairs, f"apf_nv:{kind}:off", f"apf_nin:{kind}", "autoparse_filters"),
+    )
+    await callback_answer_safe(callback)
+
+
+@router.callback_query(F.data.startswith("apf_nv:"))
+async def apf_nv(callback: CallbackQuery, state: FSMContext) -> None:
+    parts = (callback.data or "").split(":")
+    if len(parts) < 3:
+        await callback_answer_safe(callback)
+        return
+    kind, raw = parts[1], parts[2]
+    spec = _NUM_KIND.get(kind)
+    if not spec:
+        await callback_answer_safe(callback)
+        return
+    field = spec[0]
+    async with Session() as session:
+        user = await get_or_create_user(session, callback.from_user.id)
+        if raw == "off":
+            await _save_filters_patch(session, user, **{field: None})
+        else:
+            try:
+                await _save_filters_patch(session, user, **{field: int(raw)})
+            except ValueError:
+                await callback_answer_safe(callback)
+                return
+        text, kb = await _filters_view(session, user)
+    await _edit(callback, text, kb)
+    await callback_answer_safe(callback, toast("ok", "Ок"))
+
+
+@router.callback_query(F.data.startswith("apf_nin:"))
+async def apf_nin(callback: CallbackQuery, state: FSMContext) -> None:
+    kind = (callback.data or "").split(":")[-1]
+    if kind not in _NUM_KIND:
+        await callback_answer_safe(callback)
+        return
+    await state.set_state(AutoparseState.waiting_num)
+    await state.update_data(apf_num_kind=kind)
+    await _edit(
+        callback,
+        f"{html_emoji('write')} Пришли число для фильтра.",
+        InlineKeyboardMarkup(inline_keyboard=[[back_inline(f"apf_num:{kind}")]]),
+    )
+    await callback_answer_safe(callback)
+
+
+@router.callback_query(F.data == "apf_date")
+async def apf_date(callback: CallbackQuery, state: FSMContext) -> None:
+    await state.clear()
+    pairs = [(f"apf_dv:{code}", lab) for code, lab in _DATE_OPTS]
+    await _edit(
+        callback,
+        f"{html_emoji('interval')} <b>Дата объявления</b>\n\n"
+        "Выберите одно из значений ниже или введите значение.",
+        _choice_kb(pairs, "apf_dv:off", "apf_din", "autoparse_filters"),
+    )
+    await callback_answer_safe(callback)
+
+
+@router.callback_query(F.data.startswith("apf_dv:"))
+async def apf_dv(callback: CallbackQuery, state: FSMContext) -> None:
+    raw = (callback.data or "").split(":", 1)[-1]
+    async with Session() as session:
+        user = await get_or_create_user(session, callback.from_user.id)
+        if raw == "off":
+            await _save_filters_patch(session, user, created_at_period=None)
+        else:
+            await _save_filters_patch(session, user, created_at_period=raw)
+        text, kb = await _filters_view(session, user)
+    await _edit(callback, text, kb)
+    await callback_answer_safe(callback, toast("ok", "Ок"))
+
+
+@router.callback_query(F.data == "apf_din")
+async def apf_din(callback: CallbackQuery, state: FSMContext) -> None:
+    await state.set_state(AutoparseState.waiting_period)
+    await state.update_data(apf_period_field="created_at_period")
+    await _edit(
+        callback,
+        f"{html_emoji('write')} Период: <code>fresh</code>, <code>1h</code>, <code>3h</code>, "
+        f"<code>1d</code>, <code>7d</code>…",
+        InlineKeyboardMarkup(inline_keyboard=[[back_inline("apf_date")]]),
+    )
+    await callback_answer_safe(callback)
+
+
+@router.callback_query(F.data == "apf_reg")
+async def apf_reg(callback: CallbackQuery, state: FSMContext) -> None:
+    await state.clear()
+    async with Session() as session:
+        user = await get_or_create_user(session, callback.from_user.id)
+        _p, saved, _s, _m = await _plat_meta(session, user)
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                inline_button(
+                    "user",
+                    f"Минимум: {_period_label(saved.get('seller_created_at_max_period'))}",
+                    callback_data="apf_regside:min",
+                ),
+                inline_button(
+                    "user",
+                    f"Максимум: {_period_label(saved.get('seller_created_at_period'))}",
+                    callback_data="apf_regside:max",
+                ),
+            ],
+            [back_inline("autoparse_filters")],
+        ]
+    )
+    await _edit(
+        callback,
+        f"{html_emoji('user')} <b>Дата регистрации продавца</b>\n\n"
+        "Минимум — аккаунт не моложе. Максимум — аккаунт не старше. Без фильтра — любые.",
+        kb,
+    )
+    await callback_answer_safe(callback)
+
+
+@router.callback_query(F.data.startswith("apf_regside:"))
+async def apf_regside(callback: CallbackQuery, state: FSMContext) -> None:
+    side = (callback.data or "").split(":")[-1]
+    field = "seller_created_at_max_period" if side == "min" else "seller_created_at_period"
+    title = "Минимум (возраст не меньше)" if side == "min" else "Максимум (возраст не больше)"
+    pairs = [(f"apf_rv:{side}:{code}", lab) for code, lab in _REG_OPTS]
+    await _edit(
+        callback,
+        f"{html_emoji('user')} <b>{html.escape(title)}</b>",
+        _choice_kb(pairs, f"apf_rv:{side}:off", f"apf_rin:{side}", "apf_reg"),
+    )
+    await callback_answer_safe(callback)
+
+
+@router.callback_query(F.data.startswith("apf_rv:"))
+async def apf_rv(callback: CallbackQuery, state: FSMContext) -> None:
+    parts = (callback.data or "").split(":")
+    if len(parts) < 3:
+        await callback_answer_safe(callback)
+        return
+    side, raw = parts[1], parts[2]
+    field = "seller_created_at_max_period" if side == "min" else "seller_created_at_period"
+    async with Session() as session:
+        user = await get_or_create_user(session, callback.from_user.id)
+        await _save_filters_patch(session, user, **{field: None if raw == "off" else raw})
+    await apf_reg(callback, state)
+
+
+@router.callback_query(F.data.startswith("apf_rin:"))
+async def apf_rin(callback: CallbackQuery, state: FSMContext) -> None:
+    side = (callback.data or "").split(":")[-1]
+    field = "seller_created_at_max_period" if side == "min" else "seller_created_at_period"
+    await state.set_state(AutoparseState.waiting_reg)
+    await state.update_data(apf_reg_field=field)
+    await _edit(
+        callback,
+        f"{html_emoji('write')} Период: <code>1d</code>, <code>7d</code>, <code>30d</code>…",
+        InlineKeyboardMarkup(inline_keyboard=[[back_inline("apf_reg")]]),
+    )
+    await callback_answer_safe(callback)
+
+
+@router.callback_query(F.data == "apf_reset")
+async def apf_reset(callback: CallbackQuery, state: FSMContext) -> None:
+    async with Session() as session:
+        user = await get_or_create_user(session, callback.from_user.id)
+        plat = await get_autoparse_platform(session, user)
+        await set_saved_filters(session, user, plat, {})
+        text, kb = await _filters_view(session, user)
+    await _edit(callback, text, kb)
+    await callback_answer_safe(callback, toast("ok", "Сброшено"))
+
+
+@router.callback_query(F.data == "apf_sw")
+async def apf_sw(callback: CallbackQuery, state: FSMContext) -> None:
+    await state.set_state(AutoparseState.waiting_stop_words)
+    await _edit(
+        callback,
+        f"{html_emoji('edit')} <b>Банворды</b>\n\n"
+        "Слова через запятую или с новой строки. Пустое сообщение — снять фильтр.",
+        InlineKeyboardMarkup(inline_keyboard=[[back_inline("autoparse_filters")]]),
+    )
+    await callback_answer_safe(callback)
+
+
+async def _show_filters_after_msg(message: Message, state: FSMContext) -> None:
+    await state.clear()
+    async with Session() as session:
+        user = await get_or_create_user(session, message.from_user.id)
+        text, kb = await _filters_view(session, user)
+    await message.answer(text, reply_markup=kb, parse_mode="HTML")
+
+
+@router.message(AutoparseState.waiting_price_min)
+async def apf_pmin_save(message: Message, state: FSMContext) -> None:
+    raw = (message.text or "").strip().replace(",", ".")
+    async with Session() as session:
+        user = await get_or_create_user(session, message.from_user.id)
+        plat = await get_autoparse_platform(session, user)
+        saved = await get_saved_filters(session, user, plat)
+        try:
+            n = float(raw)
+        except ValueError:
+            await message.answer(msg_fail("Нужно число."))
+            return
+        if n <= 0:
+            saved.pop("price_min", None)
+        else:
+            saved["price_min"] = n
+        await set_saved_filters(session, user, plat, saved)
+    await _show_filters_after_msg(message, state)
+
+
+@router.message(AutoparseState.waiting_price_max)
+async def apf_pmax_save(message: Message, state: FSMContext) -> None:
+    raw = (message.text or "").strip().replace(",", ".")
+    async with Session() as session:
+        user = await get_or_create_user(session, message.from_user.id)
+        plat = await get_autoparse_platform(session, user)
+        saved = await get_saved_filters(session, user, plat)
+        try:
+            n = float(raw)
+        except ValueError:
+            await message.answer(msg_fail("Нужно число."))
+            return
+        if n <= 0:
+            saved.pop("price_max", None)
+        else:
+            saved["price_max"] = n
+        await set_saved_filters(session, user, plat, saved)
+    await _show_filters_after_msg(message, state)
+
+
+@router.message(AutoparseState.waiting_stop_words)
+async def apf_sw_save(message: Message, state: FSMContext) -> None:
+    raw = (message.text or "").strip()
+    async with Session() as session:
+        user = await get_or_create_user(session, message.from_user.id)
+        plat = await get_autoparse_platform(session, user)
+        saved = await get_saved_filters(session, user, plat)
+        if not raw:
+            saved.pop("stop_words", None)
+        else:
+            parts = [p.strip() for chunk in raw.split("\n") for p in chunk.split(",")]
+            words = [p for p in parts if p]
+            if words:
+                saved["stop_words"] = words
+            else:
+                saved.pop("stop_words", None)
+        await set_saved_filters(session, user, plat, saved)
+    await _show_filters_after_msg(message, state)
+
+
+@router.message(AutoparseState.waiting_num)
+async def apf_num_save(message: Message, state: FSMContext) -> None:
+    data = await state.get_data()
+    kind = str(data.get("apf_num_kind") or "")
+    spec = _NUM_KIND.get(kind)
+    if not spec:
+        await state.clear()
+        await message.answer(msg_fail("Фильтр сброшен, открой меню ещё раз."))
+        return
+    raw = (message.text or "").strip()
+    try:
+        n = int(float(raw.replace(",", ".")))
+    except ValueError:
+        await message.answer(msg_fail("Нужно число."))
+        return
+    async with Session() as session:
+        user = await get_or_create_user(session, message.from_user.id)
+        await _save_filters_patch(session, user, **{spec[0]: n})
+    await _show_filters_after_msg(message, state)
+
+
+@router.message(AutoparseState.waiting_period)
+async def apf_period_save(message: Message, state: FSMContext) -> None:
+    data = await state.get_data()
+    field = str(data.get("apf_period_field") or "created_at_period")
+    raw = (message.text or "").strip().lower()
+    if not raw:
+        await message.answer(msg_fail("Пришли период, например 7d."))
+        return
+    async with Session() as session:
+        user = await get_or_create_user(session, message.from_user.id)
+        await _save_filters_patch(session, user, **{field: raw})
+    await _show_filters_after_msg(message, state)
+
+
+@router.message(AutoparseState.waiting_reg)
+async def apf_reg_save(message: Message, state: FSMContext) -> None:
+    data = await state.get_data()
+    field = str(data.get("apf_reg_field") or "seller_created_at_period")
+    raw = (message.text or "").strip().lower()
+    if not raw:
+        await message.answer(msg_fail("Пришли период, например 30d."))
+        return
+    async with Session() as session:
+        user = await get_or_create_user(session, message.from_user.id)
+        await _save_filters_patch(session, user, **{field: raw})
+    await _show_filters_after_msg(message, state)
+
+
 @router.callback_query(F.data == "autoparse_start")
 async def autoparse_start(callback: CallbackQuery, state: FSMContext) -> None:
     await state.clear()
@@ -344,13 +1169,42 @@ async def _collect_listings(
     seen: set[int],
     *,
     infinite: bool,
+    status_msg=None,
+    batch_label: str = "",
+    plat: str = "",
+    src: str = "",
 ) -> list[dict]:
     out: list[dict] = []
     cursor: int | None = None
     idle = 0
+    polls = 0
     max_idle = 12 if infinite else 8
+
+    async def _tick(*, page_n: int, added: int, waiting: bool) -> None:
+        if status_msg is None:
+            return
+        wait_line = (
+            f"\nПусто · пауза 8 с · простой {idle}/{max_idle}"
+            if waiting
+            else f"\n+{added} новых на этой странице"
+        )
+        try:
+            await status_msg.edit_text(
+                f"{html_emoji('search')} <b>Парсер ищет</b>\n"
+                f"Батч <b>{html.escape(batch_label)}</b> · "
+                f"<code>{html.escape(plat)}</code> · задача <code>#{int(task_id)}</code>\n"
+                f"Собрано: <b>{len(out)}</b> / {int(need)}\n"
+                f"Опрос API: <b>{polls}</b> · на странице: <b>{page_n}</b>"
+                f"{wait_line}\n"
+                f"<i>{html.escape(src)}</i>",
+                parse_mode="HTML",
+            )
+        except Exception:
+            pass
+
     while len(out) < need:
         page = await fetch_listings(api_key, task_id, cursor=cursor)
+        polls += 1
         listings = page.get("listings") if isinstance(page.get("listings"), list) else []
         added = 0
         for raw in listings:
@@ -368,6 +1222,7 @@ async def _collect_listings(
             added += 1
             if len(out) >= need:
                 break
+        await _tick(page_n=len(listings), added=added, waiting=False)
         if len(out) >= need:
             break
         if page.get("has_more") and page.get("next_cursor") is not None:
@@ -381,6 +1236,7 @@ async def _collect_listings(
         idle += 1
         if added == 0 and idle >= max_idle:
             break
+        await _tick(page_n=len(listings), added=added, waiting=True)
         await asyncio.sleep(8)
     return out
 
@@ -397,8 +1253,6 @@ async def _start_or_reuse(api_key: str, platform: str, filters: dict) -> tuple[i
         hit = pick_existing_task(tasks, platform=platform)
         if hit:
             return int(hit["task_id"]), False
-        if tasks:
-            return int(tasks[0]["task_id"]), False
         raise
 
 
@@ -436,35 +1290,46 @@ async def _run_autoparse_loop(
                 parse_mode="HTML",
             )
             return
-        existing = pick_existing_task(await list_tasks(api_key), platform=plat)
-        if existing:
-            plat = str(existing.get("platform") or plat)
-            supported = {
-                str(x).strip()
-                for x in (meta.get("supported_filters") or [])
-                if str(x).strip()
-            }
-            filters = merge_filters_keep_user(
-                existing.get("filters") if isinstance(existing.get("filters"), dict) else {},
+        existing = pick_task_for_filters(await list_tasks(api_key), platform=plat)
+        saved: dict = {}
+        async with Session() as session:
+            user = await get_or_create_user(session, tg_id)
+            saved = await get_saved_filters(session, user, plat)
+            filters, src = resolve_local_start_filters(
+                plat=meta,
+                bot_cc=cc,
                 json_count=need,
-                supported=supported,
+                infinite=infinite,
+                saved=saved,
+                xp_task=existing,
             )
-            src = f"фильтры задачи #{existing.get('task_id')}"
-        else:
-            filters = build_start_filters(meta, bot_cc=cc, json_count=need, infinite=infinite)
-            src = "дефолт (нет запущенной задачи в парсере)"
+            if existing and isinstance(existing.get("filters"), dict) and existing.get("filters"):
+                store = dict(existing["filters"])
+                store.pop("internal_listing_count", None)
+                await set_saved_filters(session, user, plat, store)
+                src = f"XProject задача #{existing.get('task_id')} (сохранил)"
         done = 0
         while infinite or done < batches:
             task_id, created_here = await _start_or_reuse(api_key, plat, filters)
+            batch_label = f"{done + 1}" if infinite else f"{done + 1}/{batches}"
             status = await bot.send_message(
                 chat_id,
-                f"{html_emoji('wait')} Парсер: батч <b>{done + 1}</b>"
-                f"{'' if infinite else f'/{batches}'} · "
-                f"<code>{html.escape(plat)}</code> · JSON {need} · {html.escape(src)}.",
+                f"{html_emoji('wait')} Парсер: батч <b>{html.escape(batch_label)}</b> · "
+                f"<code>{html.escape(plat)}</code> · задача <code>#{int(task_id)}</code>\n"
+                f"Стартую выдачу JSON {need}…\n"
+                f"<i>{html.escape(src)}</i>",
                 parse_mode="HTML",
             )
             items = await _collect_listings(
-                api_key, task_id, need, seen, infinite=infinite
+                api_key,
+                task_id,
+                need,
+                seen,
+                infinite=infinite,
+                status_msg=status,
+                batch_label=batch_label,
+                plat=plat,
+                src=src,
             )
             if not items:
                 try:

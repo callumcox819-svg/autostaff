@@ -8,6 +8,9 @@ from services.autoparse import (
     merge_filters_keep_user,
     parser_iso_country,
     pick_existing_task,
+    pick_task_for_filters,
+    resolve_local_start_filters,
+    summarize_filters,
 )
 
 
@@ -46,9 +49,9 @@ class AutoparseMapTests(unittest.TestCase):
         }
         f = build_start_filters(plat, bot_cc="de", json_count=50, infinite=False)
         self.assertEqual(f["internal_listing_count"], 50)
-        self.assertTrue(f["seller_email"])
         self.assertEqual(f["created_at_period"], "7d")
         self.assertNotIn("countries", f)
+        self.assertNotIn("seller_email", f)
 
         vinted = {
             "platform": "vinted",
@@ -83,6 +86,69 @@ class AutoparseMapTests(unittest.TestCase):
         ]
         hit = pick_existing_task(tasks, platform="vinted")
         self.assertEqual(hit["task_id"], 368741)
+
+    def test_pick_filters_same_platform_only(self):
+        tasks = [
+            {"task_id": 9, "platform": "vinted", "status": "running", "filters": {"seller_email": True}},
+            {
+                "task_id": 368741,
+                "platform": "marktplaats",
+                "status": "stopped",
+                "filters": {"price_min": 5, "stop_words": ["x"]},
+            },
+        ]
+        hit = pick_task_for_filters(tasks, platform="marktplaats")
+        self.assertEqual(hit["task_id"], 368741)
+
+    def test_resolve_prefers_xp_then_saved(self):
+        plat = {
+            "platform": "marktplaats",
+            "countries": ["nl"],
+            "supported_filters": [
+                "internal_listing_count",
+                "price_min",
+                "seller_email",
+                "countries",
+            ],
+        }
+        xp = {
+            "task_id": 368741,
+            "filters": {"price_min": 10, "seller_email": True, "internal_listing_count": 500},
+        }
+        f, src = resolve_local_start_filters(
+            plat=plat,
+            bot_cc="nl",
+            json_count=80,
+            infinite=True,
+            saved={"price_min": 1},
+            xp_task=xp,
+        )
+        self.assertIn("задач", src)
+        self.assertEqual(f["price_min"], 10)
+        self.assertEqual(f["internal_listing_count"], 80)
+        self.assertTrue(f["seller_email"])
+
+        f2, src2 = resolve_local_start_filters(
+            plat=plat,
+            bot_cc="nl",
+            json_count=40,
+            infinite=False,
+            saved={"price_min": 3},
+            xp_task=None,
+        )
+        self.assertEqual(src2, "сохранённые фильтры")
+        self.assertEqual(f2["price_min"], 3)
+        self.assertEqual(f2["countries"], ["nl"])
+
+    def test_everywhere_is_a_category_label(self):
+        from services.autoparse import category_label, toggle_category_list
+
+        self.assertEqual(category_label("everywhere"), "Смотреть везде")
+        self.assertEqual(category_label("see_everywhere"), "Смотреть везде")
+        cur = toggle_category_list([], "cars", all_values=["everywhere", "cars"])
+        self.assertEqual(cur, ["cars"])
+        cur = toggle_category_list(cur, "everywhere", all_values=["everywhere", "cars"])
+        self.assertEqual(cur, ["everywhere", "cars"])
 
 
 if __name__ == "__main__":

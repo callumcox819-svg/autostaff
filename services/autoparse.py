@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from services.enabled_countries import get_active_country, normalize_country_id
@@ -11,7 +12,7 @@ from utils.secrets import clean_secret
 AUTOPARSE_KEY = "autoparse_api_key"
 AUTOPARSE_COUNTRY_KEY = "autoparse_country"
 AUTOPARSE_COUNT_KEY = "autoparse_json_count"
-AUTOPARSE_PLATFORM_KEY = "autoparse_platform"
+AUTOPARSE_FILTERS_PREFIX = "autoparse_filters:"
 
 DEFAULT_JSON_COUNT = 100
 MIN_JSON_COUNT = 10
@@ -120,6 +121,217 @@ def platform_schema(schema: dict[str, Any], platform: str) -> dict[str, Any] | N
     return None
 
 
+def supported_filter_keys(plat: dict[str, Any] | None) -> set[str]:
+    return {
+        str(x).strip()
+        for x in ((plat or {}).get("supported_filters") or [])
+        if str(x).strip()
+    }
+
+
+def clip_filters_to_supported(
+    filters: dict[str, Any] | None,
+    supported: set[str] | None,
+) -> dict[str, Any]:
+    src = filters if isinstance(filters, dict) else {}
+    if not supported:
+        return dict(src)
+    return {k: v for k, v in src.items() if str(k) in supported}
+
+
+def filters_storage_key(platform: str) -> str:
+    plat = (platform or "").strip().lower() or "unknown"
+    return f"{AUTOPARSE_FILTERS_PREFIX}{plat}"
+
+
+def parse_saved_filters(raw: str | None) -> dict[str, Any]:
+    s = (raw or "").strip()
+    if not s:
+        return {}
+    try:
+        data = json.loads(s)
+    except json.JSONDecodeError:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+async def get_saved_filters(session, user, platform: str) -> dict[str, Any]:
+    return parse_saved_filters(await get_user_setting(session, user, filters_storage_key(platform)))
+
+
+async def set_saved_filters(session, user, platform: str, filters: dict[str, Any] | None) -> None:
+    key = filters_storage_key(platform)
+    src = filters if isinstance(filters, dict) else {}
+    clean = {k: v for k, v in src.items() if str(k).strip()}
+    await set_user_setting(session, user, key, json.dumps(clean, ensure_ascii=False))
+
+
+def summarize_filters(filters: dict[str, Any] | None) -> str:
+    src = filters if isinstance(filters, dict) else {}
+    if not src:
+        return "не заданы"
+    bits: list[str] = []
+    if src.get("seller_email") is True:
+        bits.append("почта")
+    if src.get("delivery") is True:
+        bits.append("доставка")
+    if src.get("seller_online") is True:
+        bits.append("онлайн")
+    period = src.get("created_at_period")
+    if period:
+        bits.append(f"дата {period}")
+    if src.get("price_min") is not None:
+        bits.append(f"от {src.get('price_min')}")
+    if src.get("price_max") is not None:
+        bits.append(f"до {src.get('price_max')}")
+    sw = src.get("stop_words")
+    if isinstance(sw, list) and sw:
+        bits.append(f"банворды {len(sw)}")
+    cats = src.get("categories")
+    if isinstance(cats, list) and cats:
+        labels = [category_label(x) for x in cats[:3]]
+        extra = f"+{len(cats) - 3}" if len(cats) > 3 else ""
+        bits.append("кат. " + ", ".join(labels) + extra)
+    if src.get("internal_view_count") == 0:
+        bits.append("не виденные")
+    return ", ".join(bits) if bits else "сохранены"
+
+
+_EVERYWHERE_SLUGS = {
+    "everywhere",
+    "see_everywhere",
+    "look_everywhere",
+    "watch_everywhere",
+    "all",
+    "any",
+    "all_categories",
+    "see_all",
+}
+
+
+_CATEGORY_RU: dict[str, str] = {
+    "antiques_art": "Антиквариат и искусство",
+    "antiques_arts": "Антиквариат и искусство",
+    "audio_tv_photo": "Аудио, ТВ и фото",
+    "cars": "Автомобили",
+    "auto_parts": "Автозапчасти",
+    "auto_misc": "Авто разное",
+    "books": "Книги",
+    "caravans_camping": "Караваны и кемпинг",
+    "cd_dvd": "CD и DVD",
+    "computers_software": "Компьютеры и софт",
+    "contacts_messages": "Контакты и сообщения",
+    "services": "Услуги и специалисты",
+    "pets": "Животные и аксессуары",
+    "diy": "DIY и ремонт",
+    "bikes": "Велосипеды и мопеды",
+    "hobby": "Хобби и досуг",
+    "home_interior": "Дом и интерьер",
+    "houses_rooms": "Дома и комнаты",
+    "kids": "Дети и малыши",
+    "women": "Женская одежда",
+    "men": "Мужская одежда",
+}
+
+
+def category_label(value: Any) -> str:
+    slug = str(value or "").strip()
+    if not slug:
+        return "?"
+    low = slug.lower()
+    if low in _EVERYWHERE_SLUGS or "везде" in low or "everywhere" in low:
+        return "Смотреть везде"
+    if low in _CATEGORY_RU:
+        return _CATEGORY_RU[low]
+    return slug.replace("_", " ")
+
+
+def schema_category_values(plat: dict[str, Any] | None) -> list[str]:
+    out: list[str] = []
+    for raw in ((plat or {}).get("categories") or []):
+        if isinstance(raw, str) and raw.strip():
+            out.append(raw.strip())
+            continue
+        if isinstance(raw, dict):
+            val = raw.get("value") or raw.get("id") or raw.get("key") or raw.get("slug") or raw.get("name")
+            if val is not None and str(val).strip():
+                out.append(str(val).strip())
+    return out
+
+
+def toggle_category_list(current: Any, slug: str, *, all_values: list[str] | None = None) -> list[str]:
+    want = str(slug).strip()
+    cur = [str(x).strip() for x in (current or []) if str(x).strip()]
+    if want in cur:
+        cur = [x for x in cur if x != want]
+    else:
+        cur.append(want)
+    if all_values:
+        order = {v: i for i, v in enumerate(all_values)}
+        cur.sort(key=lambda x: order.get(x, 10_000))
+    return cur
+
+
+def pick_task_for_filters(
+    tasks: list[dict[str, Any]],
+    *,
+    platform: str,
+) -> dict[str, Any] | None:
+    """Только та же площадка: сначала живая задача, иначе последняя с фильтрами."""
+    want = (platform or "").strip().lower()
+    same = [
+        t
+        for t in tasks
+        if isinstance(t, dict) and str(t.get("platform") or "").strip().lower() == want
+    ]
+    if not same:
+        return None
+    for t in same:
+        if task_is_active(t) and isinstance(t.get("filters"), dict):
+            return t
+    for t in same:
+        if task_is_active(t):
+            return t
+    for t in same:
+        if isinstance(t.get("filters"), dict) and t.get("filters"):
+            return t
+    return same[0]
+
+
+def resolve_local_start_filters(
+    *,
+    plat: dict[str, Any] | None,
+    bot_cc: str,
+    json_count: int,
+    infinite: bool,
+    saved: dict[str, Any] | None,
+    xp_task: dict[str, Any] | None,
+) -> tuple[dict[str, Any], str]:
+    supported = supported_filter_keys(plat)
+    if xp_task and isinstance(xp_task.get("filters"), dict) and xp_task.get("filters"):
+        merged = merge_filters_keep_user(
+            xp_task.get("filters"),
+            json_count=json_count,
+            supported=supported,
+        )
+        merged = clip_filters_to_supported(merged, supported)
+        tid = xp_task.get("task_id")
+        return merged, f"XProject задача #{tid}"
+    if saved:
+        merged = merge_filters_keep_user(saved, json_count=json_count, supported=supported)
+        merged = clip_filters_to_supported(merged, supported)
+        iso = parser_iso_country(bot_cc)
+        countries = [str(c).lower() for c in ((plat or {}).get("countries") or [])]
+        if "countries" in supported and iso in countries and "countries" not in merged:
+            merged["countries"] = [iso]
+        return merged, "сохранённые фильтры"
+    built = clip_filters_to_supported(
+        build_start_filters(plat, bot_cc=bot_cc, json_count=json_count, infinite=infinite),
+        supported,
+    )
+    return built, "дефолт"
+
+
 def build_start_filters(
     plat: dict[str, Any] | None,
     *,
@@ -127,20 +339,12 @@ def build_start_filters(
     json_count: int,
     infinite: bool,
 ) -> dict[str, Any]:
-    supported = {
-        str(x).strip()
-        for x in ((plat or {}).get("supported_filters") or [])
-        if str(x).strip()
-    }
+    supported = supported_filter_keys(plat)
     iso = parser_iso_country(bot_cc)
     countries = [str(c).lower() for c in ((plat or {}).get("countries") or [])]
     filters: dict[str, Any] = {}
     if "internal_listing_count" in supported:
         filters["internal_listing_count"] = int(json_count)
-    if "internal_view_count" in supported:
-        filters["internal_view_count"] = 0
-    if "seller_email" in supported:
-        filters["seller_email"] = True
     if "created_at_period" in supported:
         filters["created_at_period"] = "fresh" if infinite else "7d"
     if "countries" in supported and iso in countries:
@@ -165,7 +369,7 @@ def pick_existing_task(
     for t in alive:
         if str(t.get("platform") or "").strip().lower() == want:
             return t
-    return alive[0] if alive else None
+    return None
 
 
 def merge_filters_keep_user(

@@ -211,6 +211,9 @@ def settings_menu_kb(flags: dict[str, bool]) -> InlineKeyboardMarkup:
                 inline_button("compass", "Страны", callback_data="countries_menu"),
             ],
             [
+                inline_button("search", "Авто-парс", callback_data="autoparse"),
+            ],
+            [
                 inline_button("hide", "Скрыть", callback_data="ref_hide"),
             ],
         ]

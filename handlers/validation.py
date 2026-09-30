@@ -534,7 +534,13 @@ async def validation_handler(message: Message):
         return await message.answer(hint, parse_mode="HTML")
 
 
-async def _run_validation_pipeline(message: Message, status_msg: Message, items: list) -> None:
+async def _run_validation_pipeline(
+    message: Message,
+    status_msg: Message,
+    items: list,
+    *,
+    country_override: str | None = None,
+) -> None:
     total_offers = len(items)
     user_line = _validation_user_line(message)
     tg_id = message.from_user.id
@@ -542,7 +548,13 @@ async def _run_validation_pipeline(message: Message, status_msg: Message, items:
 
     try:
         await _run_validation_pipeline_inner(
-            message, status_msg, items, total_offers, user_line, tg_id
+            message,
+            status_msg,
+            items,
+            total_offers,
+            user_line,
+            tg_id,
+            country_override=country_override,
         )
     except asyncio.CancelledError:
         try:
@@ -575,6 +587,8 @@ async def _run_validation_pipeline_inner(
     total_offers: int,
     user_line: str,
     tg_id: int,
+    *,
+    country_override: str | None = None,
 ) -> None:
     try:
         await status_msg.edit_text(
@@ -615,7 +629,7 @@ async def _run_validation_pipeline_inner(
         from services.country_scope import default_validation_domains_for, get_scoped_setting
         from services.enabled_countries import get_active_country
 
-        cc = await get_active_country(session, user)
+        cc = (country_override or "").strip().lower() or await get_active_country(session, user)
         priority_raw = await get_scoped_setting(session, user, "domain_priority", country=cc)
         # domain_priority is normally stored as JSON list (see settings.py),
         # but older DBs / migrations may contain raw text with newlines.
@@ -899,15 +913,7 @@ async def _run_validation_pipeline_inner(
     async def _deliver_validated_json() -> None:
         try:
             await asyncio.wait_for(
-                message.answer_document(
-                    FSInputFile(out_path),
-                    caption=(
-                        f"{html_emoji('presets')} Результат · новых {offers_saved} · "
-                        f"в файле {len(output)}/{total_offers} · "
-                        f"email {saved_email_count}{append_note}{skip_note}"
-                    ),
-                    parse_mode="HTML",
-                ),
+                _send_validation_document(message, out_path, offers_saved, output, total_offers, saved_email_count, append_note, skip_note),
                 timeout=180.0,
             )
         except asyncio.TimeoutError:
@@ -939,3 +945,66 @@ async def _run_validation_pipeline_inner(
         )
     except Exception:
         pass
+
+
+async def _send_validation_document(
+    message: Message,
+    out_path: str,
+    offers_saved,
+    output,
+    total_offers,
+    saved_email_count,
+    append_note,
+    skip_note,
+) -> None:
+    caption = (
+        f"{html_emoji('presets')} Результат · новых {offers_saved} · "
+        f"в файле {len(output)}/{total_offers} · "
+        f"email {saved_email_count}{append_note}{skip_note}"
+    )
+    send_doc = getattr(message, "answer_document", None)
+    if callable(send_doc):
+        await send_doc(FSInputFile(out_path), caption=caption, parse_mode="HTML")
+        return
+    bot = getattr(message, "bot", None)
+    chat = getattr(message, "chat", None)
+    chat_id = getattr(chat, "id", None)
+    if bot is None or chat_id is None:
+        raise RuntimeError("no chat for validation export")
+    await bot.send_document(
+        chat_id, FSInputFile(out_path), caption=caption, parse_mode="HTML"
+    )
+
+
+async def run_validation_items(
+    *,
+    bot,
+    chat_id: int,
+    tg_id: int,
+    items: list,
+    status_msg: Message,
+    country_override: str | None = None,
+    username: str | None = None,
+) -> None:
+    """Тот же пайплайн, что у JSON-файла, без документа в чат на входе."""
+    from types import SimpleNamespace
+
+    user = SimpleNamespace(id=int(tg_id), username=username)
+    chat = SimpleNamespace(id=int(chat_id))
+    proxy = SimpleNamespace(from_user=user, chat=chat, bot=bot)
+
+    async def _answer_document(*args, **kwargs):
+        return await bot.send_document(chat_id, *args, **kwargs)
+
+    async def _answer(*args, **kwargs):
+        return await bot.send_message(chat_id, *args, **kwargs)
+
+    proxy.answer_document = _answer_document
+    proxy.answer = _answer
+    await _run_validation_pipeline(
+        proxy,  # type: ignore[arg-type]
+        status_msg,
+        items,
+        country_override=country_override,
+    )
+

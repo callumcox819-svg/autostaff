@@ -18,6 +18,7 @@ DEFAULT_BOT_COMMANDS: tuple[BotCommand, ...] = (
     BotCommand(command="reset", description="Очистить очередь рассылки"),
     BotCommand(command="stat", description="Статус рассылки"),
     BotCommand(command="testmail", description="Тест маил"),
+    BotCommand(command="stopparse", description="Стоп авто-парс"),
 )
 
 

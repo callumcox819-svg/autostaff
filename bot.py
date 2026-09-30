@@ -274,6 +274,46 @@ async def _on_startup(bot: Bot) -> None:
     except Exception:
         logger.exception("Не удалось зарегистрировать меню /start /send /stop /reset /stat")
 
+    try:
+        from handlers.autosend import kick_autosend
+        from models import User, UserSetting
+        from sqlalchemy import select
+        from database import db_session as _ds
+
+        async with _ds() as session:
+            rows = (
+                await session.execute(
+                    select(User.telegram_id, UserSetting.value)
+                    .join(UserSetting, UserSetting.user_id == User.id)
+                    .where(UserSetting.key == "auto_send_chat_id")
+                )
+            ).all()
+            on_ids = {
+                int(tid)
+                for tid in (
+                    await session.execute(
+                        select(User.telegram_id)
+                        .join(UserSetting, UserSetting.user_id == User.id)
+                        .where(
+                            UserSetting.key == "auto_send",
+                            UserSetting.value.in_(("1", "true", "on", "yes")),
+                        )
+                    )
+                ).scalars().all()
+                if tid is not None
+            }
+        for tid, chat_raw in rows:
+            if tid is None or int(tid) not in on_ids:
+                continue
+            try:
+                cid = int(str(chat_raw or "").strip())
+            except ValueError:
+                continue
+            if cid:
+                await kick_autosend(bot, cid, int(tid))
+    except Exception:
+        logger.exception("resume auto_send watchers")
+
     wh = await bot.get_webhook_info()
     logger.info(
         "Telegram webhook: url=%r pending_updates=%s",

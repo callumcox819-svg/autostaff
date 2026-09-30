@@ -148,6 +148,51 @@ def build_start_filters(
     return filters
 
 
+def task_is_active(task: dict[str, Any] | None) -> bool:
+    if not isinstance(task, dict):
+        return False
+    st = str(task.get("status") or "").strip().lower()
+    return st not in {"stopped", "stop", "done", "finished", "error", "failed"}
+
+
+def pick_existing_task(
+    tasks: list[dict[str, Any]],
+    *,
+    platform: str,
+) -> dict[str, Any] | None:
+    want = (platform or "").strip().lower()
+    alive = [t for t in tasks if task_is_active(t)]
+    for t in alive:
+        if str(t.get("platform") or "").strip().lower() == want:
+            return t
+    return alive[0] if alive else None
+
+
+def merge_filters_keep_user(
+    existing: dict[str, Any] | None,
+    *,
+    json_count: int,
+    supported: set[str] | None = None,
+) -> dict[str, Any]:
+    """Фильтры с задачи XProject; меняем только размер выдачи (JSON)."""
+    out: dict[str, Any] = {}
+    src = existing if isinstance(existing, dict) else {}
+    for k, v in src.items():
+        key = str(k).strip()
+        if not key:
+            continue
+        if v is None or v is False:
+            continue
+        if isinstance(v, str) and not v.strip():
+            continue
+        if isinstance(v, (list, tuple)) and len(v) == 0:
+            continue
+        out[key] = v
+    if supported is None or "internal_listing_count" in supported or not supported:
+        out["internal_listing_count"] = int(json_count)
+    return out
+
+
 def clamp_json_count(raw: str | int | None) -> int:
     try:
         n = int(str(raw or "").strip())

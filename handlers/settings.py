@@ -212,6 +212,7 @@ def settings_menu_kb(flags: dict[str, bool]) -> InlineKeyboardMarkup:
             ],
             [
                 inline_button("search", "Авто-парс", callback_data="autoparse"),
+                toggle_button(flags.get("auto_send", False), "Авто-рассылка", "auto_send_toggle"),
             ],
             [
                 inline_button("hide", "Скрыть", callback_data="ref_hide"),
@@ -231,10 +232,13 @@ async def _settings_menu_kb_for_user(tg_user_id: int) -> InlineKeyboardMarkup:
             s = str(v).strip().lower()
             return s in {"1", "true", "yes", "on", "y"}
 
+        from services.autosend import is_auto_send_on
+
         flags = {
             "smart_mode": await _b_scoped("smart_mode", False),
             "spoofing": await _b_scoped("spoofing", False),
             "block_control": await _b_scoped("block_control", False),
+            "auto_send": await is_auto_send_on(session, user),
         }
 
     return settings_menu_kb(flags)

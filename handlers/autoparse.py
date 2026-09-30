@@ -22,6 +22,8 @@ from services.autoparse import (
     get_autoparse_platform,
     get_json_count,
     listing_to_item,
+    merge_filters_keep_user,
+    pick_existing_task,
     platform_schema,
     set_autoparse_country,
     set_autoparse_key,
@@ -124,8 +126,10 @@ async def _menu_text(session, user, *, running: bool) -> str:
         f"<b>Страна:</b> <b>{html.escape(cname(cc))}</b> · площадка <code>{html.escape(plat)}</code>\n"
         f"<b>Объявлений в JSON:</b> <code>{n}</code>\n"
         f"<b>Статус:</b> {html.escape(run)}\n\n"
-        "Ключ — <code>X-API-Key</code> с XProject. Запуск: 1 / 5 / 10 батчей "
-        "или 0 — пока не остановишь или не кончится подписка (402).\n"
+        "Ключ — <code>X-API-Key</code> с XProject. Фильтры (категории, цена, дата…) "
+        "берутся с <b>запущенной задачи</b> в боте парсера; здесь меняется только "
+        "размер JSON на батч.\n"
+        "Запуск: 1 / 5 / 10 батчей или 0 — пока не остановишь / 402.\n"
         "Остановка: кнопка Стоп или <code>/stopparse</code>."
     )
 
@@ -381,19 +385,20 @@ async def _collect_listings(
     return out
 
 
-async def _start_or_reuse(api_key: str, platform: str, filters: dict) -> int:
+async def _start_or_reuse(api_key: str, platform: str, filters: dict) -> tuple[int, bool]:
+    """→ (task_id, created_here). created_here=False — чужая задача, не стопаем."""
     try:
         task = await start_task(api_key, platform=platform, filters=filters)
-        return int(task.get("task_id"))
+        return int(task.get("task_id")), True
     except XProjectError as e:
         if e.status != 409:
             raise
         tasks = await list_tasks(api_key)
-        for t in tasks:
-            if str(t.get("platform") or "").lower() == platform:
-                return int(t["task_id"])
+        hit = pick_existing_task(tasks, platform=platform)
+        if hit:
+            return int(hit["task_id"]), False
         if tasks:
-            return int(tasks[0]["task_id"])
+            return int(tasks[0]["task_id"]), False
         raise
 
 
@@ -411,6 +416,7 @@ async def _run_autoparse_loop(
     seen: set[int] = set()
     task_id: int | None = None
     api_key = ""
+    created_here = False
     try:
         async with Session() as session:
             user = await get_or_create_user(session, tg_id)
@@ -430,15 +436,31 @@ async def _run_autoparse_loop(
                 parse_mode="HTML",
             )
             return
-        filters = build_start_filters(meta, bot_cc=cc, json_count=need, infinite=infinite)
+        existing = pick_existing_task(await list_tasks(api_key), platform=plat)
+        if existing:
+            plat = str(existing.get("platform") or plat)
+            supported = {
+                str(x).strip()
+                for x in (meta.get("supported_filters") or [])
+                if str(x).strip()
+            }
+            filters = merge_filters_keep_user(
+                existing.get("filters") if isinstance(existing.get("filters"), dict) else {},
+                json_count=need,
+                supported=supported,
+            )
+            src = f"фильтры задачи #{existing.get('task_id')}"
+        else:
+            filters = build_start_filters(meta, bot_cc=cc, json_count=need, infinite=infinite)
+            src = "дефолт (нет запущенной задачи в парсере)"
         done = 0
         while infinite or done < batches:
-            task_id = await _start_or_reuse(api_key, plat, filters)
+            task_id, created_here = await _start_or_reuse(api_key, plat, filters)
             status = await bot.send_message(
                 chat_id,
                 f"{html_emoji('wait')} Парсер: батч <b>{done + 1}</b>"
                 f"{'' if infinite else f'/{batches}'} · "
-                f"<code>{html.escape(plat)}</code> · жду {need} объяв.",
+                f"<code>{html.escape(plat)}</code> · JSON {need} · {html.escape(src)}.",
                 parse_mode="HTML",
             )
             items = await _collect_listings(
@@ -474,7 +496,7 @@ async def _run_autoparse_loop(
                 username=username,
             )
             done += 1
-            if not infinite:
+            if not infinite and created_here and task_id:
                 try:
                     await stop_task(api_key, task_id)
                 except XProjectError:
@@ -486,7 +508,7 @@ async def _run_autoparse_loop(
             parse_mode="HTML",
         )
     except asyncio.CancelledError:
-        if api_key and task_id:
+        if api_key and task_id and created_here:
             try:
                 await stop_task(api_key, task_id)
             except Exception:
@@ -516,7 +538,7 @@ async def _run_autoparse_loop(
         except Exception:
             pass
     finally:
-        if api_key and task_id:
+        if api_key and task_id and created_here:
             try:
                 await stop_task(api_key, task_id)
             except Exception:

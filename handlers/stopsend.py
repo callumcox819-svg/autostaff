@@ -45,6 +45,12 @@ async def cmd_stopsend_for(message: Message, *, tg_user_id: int) -> None:
 
     state.is_stopping = True
     set_sending_state(user_id, state=state)
+    try:
+        from services.autosend import pause_auto_send
+
+        pause_auto_send(user_id, 90.0)
+    except Exception:
+        pass
     await message.answer(
         f"{html_emoji('stop')} Я пометил рассылку на остановку.\n"
         "После отправки ближайших писем процесс завершится.",

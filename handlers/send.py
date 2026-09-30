@@ -731,3 +731,9 @@ async def _burst_sending_loop(*, bot: Bot, chat_id: int, tg_user_id: int) -> Non
         except Exception:
             logger.exception("clear mailing_active flag tg=%s", tg_user_id)
         await _notify_sending_finished(bot=bot, chat_id=chat_id, tg_user_id=tg_user_id)
+        try:
+            from handlers.autosend import kick_autosend
+
+            await kick_autosend(bot, chat_id, tg_user_id)
+        except Exception:
+            logger.exception("autosend kick after mailing tg=%s", tg_user_id)

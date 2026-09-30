@@ -946,6 +946,18 @@ async def _run_validation_pipeline_inner(
     except Exception:
         pass
 
+    if saved_email_count > 0:
+        try:
+            from handlers.autosend import kick_autosend
+
+            bot = getattr(message, "bot", None)
+            chat = getattr(message, "chat", None)
+            cid = getattr(chat, "id", None)
+            if bot is not None and cid is not None:
+                await kick_autosend(bot, int(cid), int(tg_id), force=True)
+        except Exception:
+            logger.exception("autosend kick after validation tg=%s", tg_id)
+
 
 async def _send_validation_document(
     message: Message,

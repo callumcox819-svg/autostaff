@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any
 
@@ -47,38 +48,54 @@ async def _request(
         "Content-Type": "application/json",
     }
     timeout = aiohttp.ClientTimeout(total=timeout_sec)
-    try:
-        async with aiohttp.ClientSession(timeout=timeout) as session:
-            async with session.request(
-                method, url, headers=headers, json=json_body, params=params
-            ) as resp:
-                text = await resp.text()
-                try:
-                    data = await resp.json(content_type=None)
-                except Exception:
-                    data = None
-                if resp.status == 401:
-                    raise XProjectError("Ключ парсера неверный.", status=401)
-                if resp.status == 402:
-                    raise XProjectError(
-                        "Подписка на парсинг неактивна (402). Авто-парс остановлен.",
-                        status=402,
-                    )
-                if resp.status == 409:
-                    raise XProjectError(
-                        _detail(data, "Такая задача уже запущена."),
-                        status=409,
-                    )
-                if resp.status == 429:
-                    raise XProjectError("Слишком много запросов к парсеру. Подожди.", status=429)
-                if not (200 <= resp.status < 300):
-                    raise XProjectError(
-                        _detail(data, f"HTTP {resp.status}: {text[:240]}"),
-                        status=resp.status,
-                    )
-                return data
-    except aiohttp.ClientError as e:
-        raise XProjectError(f"Сеть парсера: {e}") from e
+    last_net: Exception | None = None
+    for attempt in range(3):
+        try:
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                async with session.request(
+                    method, url, headers=headers, json=json_body, params=params
+                ) as resp:
+                    text = await resp.text()
+                    try:
+                        data = await resp.json(content_type=None)
+                    except Exception:
+                        data = None
+                    if resp.status == 401:
+                        raise XProjectError("Ключ парсера неверный.", status=401)
+                    if resp.status == 402:
+                        raise XProjectError(
+                            "Подписка на парсинг неактивна (402). Авто-парс остановлен.",
+                            status=402,
+                        )
+                    if resp.status == 409:
+                        raise XProjectError(
+                            _detail(data, "Такая задача уже запущена."),
+                            status=409,
+                        )
+                    if resp.status == 429:
+                        if attempt < 2:
+                            await asyncio.sleep(2.0 * (attempt + 1))
+                            continue
+                        raise XProjectError("Слишком много запросов к парсеру. Подожди.", status=429)
+                    if resp.status in {502, 503, 504} and attempt < 2:
+                        await asyncio.sleep(1.5 * (attempt + 1))
+                        continue
+                    if not (200 <= resp.status < 300):
+                        raise XProjectError(
+                            _detail(data, f"HTTP {resp.status}: {text[:240]}"),
+                            status=resp.status,
+                        )
+                    return data
+        except XProjectError:
+            raise
+        except aiohttp.ClientError as e:
+            last_net = e
+            if attempt < 2:
+                logger.warning("xproject net retry %s: %s", attempt + 1, e)
+                await asyncio.sleep(1.5 * (attempt + 1))
+                continue
+            raise XProjectError(f"Сеть парсера: {e}") from e
+    raise XProjectError(f"Сеть парсера: {last_net}")
 
 
 async def fetch_schema(api_key: str) -> dict[str, Any]:

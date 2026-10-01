@@ -71,9 +71,11 @@ def _bypass_access_db_check(event: TelegramObject) -> bool:
             "/menu",
             "/settings",
             "/status",
+            "/stat",
             "/imap_diag",
             "/accounts",
             "/stop",
+            "/stopparse",
             "/cancel",
         }:
             return True

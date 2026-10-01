@@ -5,9 +5,10 @@ from __future__ import annotations
 import asyncio
 import html
 import logging
+import time
 
 from aiogram import F, Router
-from aiogram.exceptions import TelegramBadRequest
+from aiogram.exceptions import TelegramBadRequest, TelegramRetryAfter
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
@@ -48,6 +49,7 @@ from services.xproject_parser import (
 )
 from utils.bg_jobs import cancel as bg_cancel
 from utils.bg_jobs import is_running as bg_is_running
+from utils.tg_flood import retry_after_seconds, tg_call
 from utils.bg_jobs import start as bg_start
 from utils.callback_safe import callback_answer_safe
 from utils.ui_emoji import (
@@ -1201,9 +1203,17 @@ async def _collect_listings(
     idle = 0
     polls = 0
     max_idle = 12 if infinite else 8
+    last_tick = 0.0
+    skip_edit_until = 0.0
 
     async def _tick(*, page_n: int, added: int, waiting: bool) -> None:
+        nonlocal last_tick, skip_edit_until
         if status_msg is None:
+            return
+        now = time.monotonic()
+        if now < skip_edit_until:
+            return
+        if polls > 1 and (now - last_tick) < 20 and polls % 4 != 0:
             return
         wait_line = (
             f"\nПусто · пауза 8 с · простой {idle}/{max_idle}"
@@ -1221,6 +1231,9 @@ async def _collect_listings(
                 f"<i>{html.escape(src)}</i>",
                 parse_mode="HTML",
             )
+            last_tick = now
+        except TelegramRetryAfter as e:
+            skip_edit_until = now + retry_after_seconds(e, cap=40.0)
         except Exception:
             pass
 
@@ -1294,12 +1307,32 @@ async def _run_autoparse_loop(
     api_key = ""
     created_here = False
     try:
+        try:
+            await tg_call(
+                lambda: bot.send_message(
+                    chat_id,
+                    f"{html_emoji('wait')} Авто-парс: подключаюсь к XProject…",
+                    parse_mode="HTML",
+                ),
+                retries=1,
+                cap=12.0,
+            )
+        except Exception:
+            logger.warning("autoparse: не смог написать «подключаюсь» tg=%s", tg_id)
         async with Session() as session:
             user = await get_or_create_user(session, tg_id)
             api_key = await get_autoparse_key(session, user)
             cc = await get_autoparse_country(session, user)
             plat = await get_autoparse_platform(session, user)
             need = await get_json_count(session, user)
+        if not api_key:
+            await bot.send_message(
+                chat_id,
+                msg_fail("Нет ключа XProject. Сохрани его в Авто-парс."),
+                parse_mode="HTML",
+            )
+            return
+        logger.info("autoparse start tg=%s plat=%s need=%s inf=%s", tg_id, plat, need, infinite)
         schema = await fetch_schema(api_key)
         meta = platform_schema(schema, plat)
         if not meta:
@@ -1331,69 +1364,132 @@ async def _run_autoparse_loop(
                 await set_saved_filters(session, user, plat, store)
                 src = f"XProject задача #{existing.get('task_id')} (сохранил)"
         done = 0
+        fails = 0
+        last_fail_notice = -10_000.0
+
+        async def _notice(text: str, *, force: bool = False) -> None:
+            nonlocal last_fail_notice
+            now = time.monotonic()
+            if not force and last_fail_notice > 0 and (now - last_fail_notice) < 90:
+                return
+            last_fail_notice = now
+            try:
+                await tg_call(
+                    lambda: bot.send_message(chat_id, text, parse_mode="HTML"),
+                    retries=1,
+                    cap=15.0,
+                )
+            except Exception:
+                logger.warning("autoparse notice send fail tg=%s", tg_id)
+
         while infinite or done < batches:
-            task_id, created_here = await _start_or_reuse(api_key, plat, filters)
-            batch_label = f"{done + 1}" if infinite else f"{done + 1}/{batches}"
-            status = await bot.send_message(
-                chat_id,
-                f"{html_emoji('wait')} Парсер: батч <b>{html.escape(batch_label)}</b> · "
-                f"<code>{html.escape(plat)}</code> · задача <code>#{int(task_id)}</code>\n"
-                f"Стартую выдачу JSON {need}…\n"
-                f"<i>{html.escape(src)}</i>",
-                parse_mode="HTML",
-            )
-            items = await _collect_listings(
-                api_key,
-                task_id,
-                need,
-                seen,
-                infinite=infinite,
-                status_msg=status,
-                batch_label=batch_label,
-                plat=plat,
-                src=src,
-            )
-            if not items:
+            try:
+                task_id, created_here = await _start_or_reuse(api_key, plat, filters)
+                batch_label = f"{done + 1}" if infinite else f"{done + 1}/{batches}"
+                status = await tg_call(
+                    lambda: bot.send_message(
+                        chat_id,
+                        f"{html_emoji('wait')} Парсер: батч <b>{html.escape(batch_label)}</b> · "
+                        f"<code>{html.escape(plat)}</code> · задача <code>#{int(task_id)}</code>\n"
+                        f"Стартую выдачу JSON {need}…\n"
+                        f"<i>{html.escape(src)}</i>",
+                        parse_mode="HTML",
+                    ),
+                    retries=2,
+                    cap=20.0,
+                )
+                items = await _collect_listings(
+                    api_key,
+                    task_id,
+                    need,
+                    seen,
+                    infinite=infinite,
+                    status_msg=status,
+                    batch_label=batch_label,
+                    plat=plat,
+                    src=src,
+                )
+                if not items:
+                    try:
+                        await status.edit_text(
+                            f"{html_emoji('warn')} Батч {done + 1}: парсер пока пустой.",
+                            parse_mode="HTML",
+                        )
+                    except Exception:
+                        pass
+                    if not infinite:
+                        break
+                    await asyncio.sleep(20)
+                    continue
                 try:
                     await status.edit_text(
-                        f"{html_emoji('warn')} Батч {done + 1}: парсер пока пустой.",
+                        f"{html_emoji('search')} <b>Авто-парс · валидация</b>\n"
+                        f"Батч <b>{done + 1}</b> · в JSON: <b>{len(items)}</b>",
                         parse_mode="HTML",
                     )
                 except Exception:
                     pass
+                await run_validation_items(
+                    bot=bot,
+                    chat_id=chat_id,
+                    tg_id=tg_id,
+                    items=items,
+                    status_msg=status,
+                    country_override=cc,
+                    username=username,
+                )
+                done += 1
+                fails = 0
+                if not infinite and created_here and task_id:
+                    try:
+                        await stop_task(api_key, task_id)
+                    except XProjectError:
+                        pass
+                    task_id = None
+            except asyncio.CancelledError:
+                raise
+            except XProjectError as e:
+                if e.status in {401, 402}:
+                    await _notice(msg_fail(str(e)), force=True)
+                    return
+                fails += 1
+                wait = min(120.0, 15.0 * fails)
+                logger.warning("autoparse batch fail tg=%s wait=%.0fs: %s", tg_id, wait, e)
+                await _notice(
+                    f"{html_emoji('warn')} Авто-парс: сбой батча, повтор через {int(wait)} с.\n"
+                    f"<code>{html.escape(str(e)[:200])}</code>"
+                )
                 if not infinite:
                     break
-                await asyncio.sleep(20)
-                continue
-            try:
-                await status.edit_text(
-                    f"{html_emoji('search')} <b>Авто-парс · валидация</b>\n"
-                    f"Батч <b>{done + 1}</b> · в JSON: <b>{len(items)}</b>",
-                    parse_mode="HTML",
-                )
+                await asyncio.sleep(wait)
+            except TelegramRetryAfter as e:
+                wait = retry_after_seconds(e, cap=40.0)
+                logger.warning("autoparse TelegramRetryAfter tg=%s wait=%.1fs", tg_id, wait)
+                await asyncio.sleep(wait)
+                if not infinite:
+                    break
             except Exception:
-                pass
-            await run_validation_items(
-                bot=bot,
-                chat_id=chat_id,
-                tg_id=tg_id,
-                items=items,
-                status_msg=status,
-                country_override=cc,
-                username=username,
+                fails += 1
+                wait = min(90.0, 20.0 * fails)
+                logger.exception("autoparse batch crash tg=%s", tg_id)
+                await _notice(
+                    f"{html_emoji('warn')} Авто-парс: ошибка батча, повтор через {int(wait)} с."
+                )
+                if not infinite:
+                    break
+                await asyncio.sleep(wait)
+        try:
+            await tg_call(
+                lambda: bot.send_message(
+                    chat_id,
+                    msg_ok(f"Авто-парс закончил. Батчей: {done}."),
+                    parse_mode="HTML",
+                ),
+                retries=1,
+                cap=15.0,
             )
-            done += 1
-            if not infinite and created_here and task_id:
-                try:
-                    await stop_task(api_key, task_id)
-                except XProjectError:
-                    pass
-                task_id = None
-        await bot.send_message(
-            chat_id,
-            msg_ok(f"Авто-парс закончил. Батчей: {done}."),
-            parse_mode="HTML",
-        )
+        except Exception:
+            pass
     except asyncio.CancelledError:
         if api_key and task_id and created_here:
             try:

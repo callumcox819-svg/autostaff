@@ -15,7 +15,12 @@ from aiogram.fsm.context import FSMContext
 from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.enums import ParseMode
 from aiogram.types import ErrorEvent
-from aiogram.exceptions import TelegramConflictError
+from aiogram.exceptions import (
+    TelegramBadRequest,
+    TelegramConflictError,
+    TelegramNetworkError,
+    TelegramRetryAfter,
+)
 
 from config import config
 from database import init_db
@@ -394,6 +399,15 @@ async def _on_error(event: ErrorEvent) -> None:
     if isinstance(exc, TelegramConflictError):
         logger.critical("⚠️ TELEGRAM CONFLICT: два процесса на одном BOT_TOKEN — exit")
         os._exit(1)
+    if isinstance(exc, TelegramRetryAfter):
+        logger.warning("Telegram flood retry_after=%s", getattr(exc, "retry_after", "?"))
+        return
+    if isinstance(exc, TelegramNetworkError):
+        logger.warning("Telegram network: %s", exc)
+        return
+    if isinstance(exc, TelegramBadRequest):
+        logger.warning("Telegram BadRequest: %s", exc)
+        return
     logger.exception("Необработанная ошибка апдейта: %s", exc)
 
 

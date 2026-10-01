@@ -1237,6 +1237,7 @@ async def _collect_listings(
     max_idle = 12 if infinite else 8
     last_tick = 0.0
     skip_edit_until = 0.0
+    status_every = 40.0
 
     async def _tick(*, page_n: int, added: int, waiting: bool) -> None:
         nonlocal last_tick, skip_edit_until
@@ -1245,7 +1246,7 @@ async def _collect_listings(
         now = time.monotonic()
         if now < skip_edit_until:
             return
-        if polls > 1 and (now - last_tick) < 20 and polls % 4 != 0:
+        if last_tick > 0 and (now - last_tick) < status_every:
             return
         wait_line = (
             f"\nПусто · пауза 8 с · простой {idle}/{max_idle}"
@@ -1265,7 +1266,12 @@ async def _collect_listings(
             )
             last_tick = now
         except TelegramRetryAfter as e:
-            skip_edit_until = now + retry_after_seconds(e, cap=40.0)
+            skip_edit_until = now + max(status_every, retry_after_seconds(e, cap=40.0))
+            logger.warning(
+                "autoparse status flood, mute %.0fs retry_after=%s",
+                skip_edit_until - now,
+                getattr(e, "retry_after", None),
+            )
         except Exception:
             pass
 

@@ -359,9 +359,9 @@ def force_hungary_jofogas_service(team_id: str, service_code: str) -> str:
     if tid == "bastard":
         return code or BASTARD_DEFAULT_SERVICE
     if tid == "rpc":
-        from services.rpc_catalog import RPC_DEFAULT_SERVICE, rpc_api_service_code
+        from services.rpc_catalog import force_rpc_generate_service
 
-        return rpc_api_service_code(code) if code else RPC_DEFAULT_SERVICE
+        return force_rpc_generate_service("hu", service_code)
     if tid != "csm":
         return hungary_html_service_for_code(code)
     platform, cc = parse_service_key(code)

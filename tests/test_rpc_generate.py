@@ -50,6 +50,7 @@ class RpcCatalogTests(unittest.TestCase):
 
         self.assertEqual(force_hungary_jofogas_service("rpc", ""), "jofogas")
         self.assertEqual(force_hungary_jofogas_service("rpc", "jofogas_hu"), "jofogas")
+        self.assertEqual(force_hungary_jofogas_service("rpc", "njuskalo"), "jofogas")
         self.assertEqual(force_hungary_jofogas_service("rpc", "facebook"), "facebook")
         self.assertEqual(force_hungary_jofogas_service("bastard", ""), "jofogas_hu")
         self.assertEqual(force_hungary_jofogas_service("bastard", "facebook_hu"), "facebook_hu")

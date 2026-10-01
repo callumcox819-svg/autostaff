@@ -515,7 +515,7 @@ async def _generate_rpc(
 ) -> str:
     _ = listing_url
     from services.api_teams import get_team_field
-    from services.rpc_catalog import parse_rpc_service, rpc_api_service_code
+    from services.rpc_catalog import force_rpc_generate_service, parse_rpc_service, rpc_api_service_code
     from services.rpc_network import RpcError, rpc_create_ad, rpc_env_api_base
 
     if not (cfg.api_key or "").strip():
@@ -529,14 +529,14 @@ async def _generate_rpc(
             "Генерация RPC недоступна: на сервере не задан <code>RPC_API_BASE</code>. "
             "Напишите админу."
         )
-    svc = rpc_api_service_code(cfg.service_code)
+    _, parsed_cc = parse_rpc_service(cfg.service_code)
+    country = (country_code or parsed_cc or "hu").strip().lower()
+    svc = force_rpc_generate_service(country, cfg.service_code) if country in {"hu", "hr"} else rpc_api_service_code(cfg.service_code)
     if not svc:
         raise AquaError(
             f"Не выбрана площадка {cfg.label}. "
             f"{menu_path(('settings', ''), ('key', 'Команды API'))} → {cfg.label} → Страна / площадка."
         )
-    _, parsed_cc = parse_rpc_service(cfg.service_code)
-    country = (country_code or parsed_cc or "hu").strip().lower()
     buyer = (await get_team_field(session, user, "rpc", "buyer_name") or "").strip()
     address = (await get_team_field(session, user, "rpc", "address") or "").strip()
     title = offer_effective_title(offer) if offer is not None else ""

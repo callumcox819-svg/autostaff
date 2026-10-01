@@ -950,8 +950,18 @@ async def api_team_rpc_country(callback: CallbackQuery, state: FSMContext) -> No
         await callback.answer()
         return
     _, tid, country = parts
+    country = (country or "").strip().lower()
     async with Session() as session:
         user = await get_or_create_user(session, callback.from_user.id)
+        cfg = await get_team_config(session, user, tid)
+        from services.rpc_catalog import force_rpc_generate_service
+
+        sk = force_rpc_generate_service(country, cfg.service_code)
+        await set_team_field(session, user, tid, "service_code", sk)
+        from services.aqua_keys import sync_html_service_from_code
+
+        await sync_html_service_from_code(session, user, sk)
+        await session.commit()
         cfg = await get_team_config(session, user, tid)
     text = (
         f"{html_emoji('compass')} <b>{html.escape(rpc_country_label(country))}</b>\n"

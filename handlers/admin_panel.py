@@ -26,14 +26,16 @@ router = Router(name="admin_panel")
 
 async def _notify_user_menu(bot, tid: int, *, is_admin_user: bool, text: str) -> bool:
     try:
-        from keyboards.main_menu import hide_reply_keyboard, main_menu_inline_kb
+        from keyboards.main_menu import main_menu_inline_kb
+        from utils.tg_flood import tg_call
 
-        await bot.send_message(tid, "⌨️", reply_markup=hide_reply_keyboard())
-        await bot.send_message(
-            tid,
-            text,
-            reply_markup=main_menu_inline_kb(tid, show_admin=is_admin_user),
-            parse_mode="HTML",
+        await tg_call(
+            lambda: bot.send_message(
+                tid,
+                text,
+                reply_markup=main_menu_inline_kb(tid, show_admin=is_admin_user),
+                parse_mode="HTML",
+            )
         )
         return True
     except Exception:

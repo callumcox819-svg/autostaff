@@ -5,14 +5,16 @@ import time
 
 from aiogram import Router, F
 from aiogram.types import Message, ReplyKeyboardRemove
+from aiogram.exceptions import TelegramRetryAfter
 from aiogram.filters import CommandStart
 from aiogram.fsm.context import FSMContext
 
-from keyboards.main_menu import hide_reply_keyboard, main_menu_inline_kb
+from keyboards.main_menu import main_menu_inline_kb
 from database import db_session
 from services.users import get_or_create_user
 from services.bot_roles import config_admin_ids
 from services.bot_access import deny_access_message
+from utils.tg_flood import tg_call
 from utils.ui_emoji import html_emoji, msg_fail, msg_wait
 
 router = Router()
@@ -41,13 +43,15 @@ def _welcome_html() -> str:
 
 
 async def _answer_welcome(message: Message, *, tg_id: int, show_admin: bool) -> None:
-    # Снять старую залипающую ReplyKeyboard (на телефоне закрывала пол-экрана).
-    await message.answer("⌨️", reply_markup=hide_reply_keyboard())
-    await message.answer(
-        _welcome_html(),
-        reply_markup=main_menu_inline_kb(tg_id, show_admin=show_admin),
-        parse_mode="HTML",
-    )
+    kb = main_menu_inline_kb(tg_id, show_admin=show_admin)
+    try:
+        await tg_call(
+            lambda: message.answer(_welcome_html(), reply_markup=kb, parse_mode="HTML")
+        )
+    except TelegramRetryAfter:
+        await message.answer(
+            "Телеграм временно режет сообщения. Подожди 15–20 секунд и снова /start.",
+        )
 
 
 def _remember_access(tg_id: int, *, is_admin: bool, has_access: bool) -> None:

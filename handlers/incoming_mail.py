@@ -67,7 +67,18 @@ from services.translate import translate_to_ru, _strip_html
 from handlers.templates import load_templates, TemplateItem
 from utils.bg_jobs import is_running as bg_is_running, start as bg_start
 from utils.callback_safe import callback_answer_safe, is_expired_callback_error
-from utils.ui_emoji import html_emoji, inline_button, back_inline, menu_path, msg_fail, msg_ok, msg_wait, msg_warn, toast
+from utils.tg_flood import tg_call
+from utils.ui_emoji import (
+    html_emoji,
+    inline_button,
+    back_inline,
+    menu_path,
+    msg_fail,
+    msg_ok,
+    msg_wait,
+    msg_warn,
+    toast,
+)
 
 router = Router()
 
@@ -737,21 +748,26 @@ async def _open_mail_reply_menu(
         return
 
     try:
-        ui = await callback.bot.send_message(
-            int(card.chat.id),
-            (
-                f"<b>{html_emoji('mail')} Ответ на письмо</b>\n"
-                f"Кому: <code>{_e(to_email)}</code>\n\n"
-                f"{REPLY_CHOICE_TEXT}"
-            ),
-            reply_markup=kb,
-            parse_mode="HTML",
-            reply_to_message_id=anchor_id,
+        ui = await tg_call(
+            lambda: callback.bot.send_message(
+                int(card.chat.id),
+                (
+                    f"<b>{html_emoji('mail')} Ответ на письмо</b>\n"
+                    f"Кому: <code>{_e(to_email)}</code>\n\n"
+                    f"{REPLY_CHOICE_TEXT}"
+                ),
+                reply_markup=kb,
+                parse_mode="HTML",
+                reply_to_message_id=anchor_id,
+            )
         )
         ui_message_id = int(ui.message_id)
     except Exception as e:
         logger.exception("mail_reply send_menu failed acc=%s uid=%s", acc_id, uid_key)
-        await callback.answer(f"Не удалось открыть меню: {type(e).__name__}", show_alert=True)
+        await callback.answer(
+            "Телеграм временно лимитирует сообщения. Подожди пару секунд и нажми ещё раз.",
+            show_alert=True,
+        )
         return
 
     await state.update_data(

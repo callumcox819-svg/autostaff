@@ -9,7 +9,8 @@ from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 
-from keyboards.main_menu import hide_reply_keyboard, main_menu_inline_kb_for
+from keyboards.main_menu import main_menu_inline_kb_for
+from utils.tg_flood import tg_call
 from utils.ui_emoji import html_emoji
 
 router = Router(name="main_menu")
@@ -18,18 +19,19 @@ logger = logging.getLogger(__name__)
 
 async def show_main_menu(message: Message, *, tg_user_id: int) -> None:
     kb = await main_menu_inline_kb_for(tg_user_id)
-    await message.answer(
-        f"{html_emoji('burst')} <b>Меню</b>\n"
-        "Кнопки под сообщением — чат на телефоне не перекрывают.\n"
-        "Или ⌘ у поля ввода: /menu /send /stop /stat /settings",
-        reply_markup=kb,
-        parse_mode="HTML",
+    await tg_call(
+        lambda: message.answer(
+            f"{html_emoji('burst')} <b>Меню</b>\n"
+            "Кнопки под сообщением — чат на телефоне не перекрывают.\n"
+            "Или ⌘ у поля ввода: /menu /send /stop /stat /settings",
+            reply_markup=kb,
+            parse_mode="HTML",
+        )
     )
 
 
 @router.message(Command("menu"))
 async def cmd_menu(message: Message) -> None:
-    await message.answer("⌨️", reply_markup=hide_reply_keyboard())
     await show_main_menu(message, tg_user_id=int(message.from_user.id))
 
 

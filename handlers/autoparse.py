@@ -86,6 +86,34 @@ def _mask_key(key: str) -> str:
     return f"{s[:4]}…{s[-4:]}"
 
 
+async def _set_status(msg, bot, chat_id: int, text: str):
+    """Обновить статус без нового SendMessage, если чат во флуд-бане."""
+    if msg is not None:
+        try:
+            await msg.edit_text(text, parse_mode="HTML")
+            return msg
+        except TelegramRetryAfter as e:
+            logger.warning(
+                "autoparse edit flood retry_after=%s",
+                getattr(e, "retry_after", None),
+            )
+        except TelegramBadRequest:
+            pass
+        except Exception:
+            pass
+    try:
+        return await bot.send_message(chat_id, text, parse_mode="HTML")
+    except TelegramRetryAfter as e:
+        logger.warning(
+            "autoparse send flood chat=%s retry_after=%s — парсим без новых SMS",
+            chat_id,
+            getattr(e, "retry_after", None),
+        )
+        return msg
+    except Exception:
+        return msg
+
+
 async def _edit(callback: CallbackQuery, text: str, kb: InlineKeyboardMarkup) -> None:
     try:
         await callback.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
@@ -1165,25 +1193,29 @@ async def autoparse_run(callback: CallbackQuery, state: FSMContext) -> None:
     bot = callback.bot
     chat_id = callback.message.chat.id
     uname = callback.from_user.username
+    label = "∞" if batches == 0 else str(batches)
+    seed = callback.message
+    try:
+        seed = await callback.message.answer(
+            f"{html_emoji('search')} Авто-парс: <b>{html.escape(label)}</b> батч(ей). "
+            f"Стоп: /stopparse",
+            parse_mode="HTML",
+        )
+    except TelegramRetryAfter:
+        logger.warning("autoparse start SMS flood tg=%s — edit menu", tg_id)
+        seed = callback.message
+    except Exception:
+        seed = callback.message
 
     async def _job() -> None:
         await _run_autoparse_loop(
-            bot, chat_id, tg_id, uname, batches=batches
+            bot, chat_id, tg_id, uname, batches=batches, status_seed=seed
         )
 
     if not bg_start(tg_id, "autoparse", _job()):
         await callback_answer_safe(callback, toast("wait", "Уже запущено"), show_alert=True)
         return
     await callback_answer_safe(callback, toast("ok", "Старт"))
-    label = "∞" if batches == 0 else str(batches)
-    try:
-        await callback.message.answer(
-            f"{html_emoji('search')} Авто-парс: <b>{html.escape(label)}</b> батч(ей). "
-            f"Стоп: /stopparse",
-            parse_mode="HTML",
-        )
-    except Exception:
-        pass
 
 
 async def _collect_listings(
@@ -1298,7 +1330,162 @@ async def _run_autoparse_loop(
     username: str | None,
     *,
     batches: int,
+    status_seed=None,
 ) -> None:
+    from handlers.validation import run_validation_items
+
+    infinite = batches == 0
+    seen: set[int] = set()
+    task_id: int | None = None
+    api_key = ""
+    created_here = False
+    status = status_seed
+    try:
+        async with Session() as session:
+            user = await get_or_create_user(session, tg_id)
+            api_key = await get_autoparse_key(session, user)
+            cc = await get_autoparse_country(session, user)
+            plat = await get_autoparse_platform(session, user)
+            need = await get_json_count(session, user)
+        schema = await fetch_schema(api_key)
+        meta = platform_schema(schema, plat)
+        if not meta:
+            await _set_status(
+                status,
+                bot,
+                chat_id,
+                msg_fail(
+                    f"Площадка <code>{html.escape(plat)}</code> нет в схеме парсера "
+                    f"для этой страны."
+                ),
+            )
+            return
+        existing = pick_task_for_filters(await list_tasks(api_key), platform=plat)
+        saved: dict = {}
+        async with Session() as session:
+            user = await get_or_create_user(session, tg_id)
+            saved = await get_saved_filters(session, user, plat)
+            filters, src = resolve_local_start_filters(
+                plat=meta,
+                bot_cc=cc,
+                json_count=need,
+                infinite=infinite,
+                saved=saved,
+                xp_task=existing,
+            )
+            if existing and isinstance(existing.get("filters"), dict) and existing.get("filters"):
+                store = dict(existing["filters"])
+                store.pop("internal_listing_count", None)
+                await set_saved_filters(session, user, plat, store)
+                src = f"XProject задача #{existing.get('task_id')} (сохранил)"
+        done = 0
+        while infinite or done < batches:
+            try:
+                task_id, created_here = await _start_or_reuse(api_key, plat, filters)
+                batch_label = f"{done + 1}" if infinite else f"{done + 1}/{batches}"
+                status = await _set_status(
+                    status,
+                    bot,
+                    chat_id,
+                    f"{html_emoji('wait')} Парсер: батч <b>{html.escape(batch_label)}</b> · "
+                    f"<code>{html.escape(plat)}</code> · задача <code>#{int(task_id)}</code>\n"
+                    f"Стартую выдачу JSON {need}…\n"
+                    f"<i>{html.escape(src)}</i>",
+                )
+                items = await _collect_listings(
+                    api_key,
+                    task_id,
+                    need,
+                    seen,
+                    infinite=infinite,
+                    status_msg=status,
+                    batch_label=batch_label,
+                    plat=plat,
+                    src=src,
+                )
+                if not items:
+                    status = await _set_status(
+                        status,
+                        bot,
+                        chat_id,
+                        f"{html_emoji('warn')} Батч {done + 1}: парсер пока пустой.",
+                    )
+                    if not infinite:
+                        break
+                    await asyncio.sleep(20)
+                    continue
+                status = await _set_status(
+                    status,
+                    bot,
+                    chat_id,
+                    f"{html_emoji('search')} <b>Авто-парс · валидация</b>\n"
+                    f"Батч <b>{done + 1}</b> · в JSON: <b>{len(items)}</b>",
+                )
+                await run_validation_items(
+                    bot=bot,
+                    chat_id=chat_id,
+                    tg_id=tg_id,
+                    items=items,
+                    status_msg=status,
+                    country_override=cc,
+                    username=username,
+                )
+                done += 1
+                if not infinite and created_here and task_id:
+                    try:
+                        await stop_task(api_key, task_id)
+                    except XProjectError:
+                        pass
+                    task_id = None
+            except asyncio.CancelledError:
+                raise
+            except TelegramRetryAfter as e:
+                logger.warning(
+                    "autoparse TG flood tg=%s retry_after=%s — continue parse",
+                    tg_id,
+                    getattr(e, "retry_after", None),
+                )
+                continue
+            except XProjectError as e:
+                await _set_status(status, bot, chat_id, msg_fail(str(e)))
+                if e.status in {401, 402} or not infinite:
+                    return
+                await asyncio.sleep(20)
+            except Exception:
+                logger.exception("autoparse batch tg=%s", tg_id)
+                if not infinite:
+                    raise
+                await asyncio.sleep(20)
+        await _set_status(
+            status, bot, chat_id, msg_ok(f"Авто-парс закончил. Батчей: {done}.")
+        )
+    except asyncio.CancelledError:
+        if api_key and task_id and created_here:
+            try:
+                await stop_task(api_key, task_id)
+            except Exception:
+                pass
+        await _set_status(
+            status, bot, chat_id, f"{html_emoji('warn')} Авто-парс остановлен."
+        )
+        raise
+    except XProjectError as e:
+        await _set_status(status, bot, chat_id, msg_fail(str(e)))
+    except TelegramRetryAfter as e:
+        logger.warning(
+            "autoparse TG flood tg=%s retry_after=%s",
+            tg_id,
+            getattr(e, "retry_after", None),
+        )
+    except Exception:
+        logger.exception("autoparse loop tg=%s", tg_id)
+        await _set_status(status, bot, chat_id, msg_fail("Авто-парс упал. Смотри логи."))
+    finally:
+        if api_key and task_id and created_here:
+            try:
+                await stop_task(api_key, task_id)
+            except Exception:
+                pass
     from handlers.validation import run_validation_items
 
     infinite = batches == 0

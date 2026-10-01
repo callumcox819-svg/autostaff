@@ -1284,7 +1284,10 @@ async def _start_or_reuse(api_key: str, platform: str, filters: dict) -> tuple[i
     except XProjectError as e:
         if e.status != 409:
             raise
-        tasks = await list_tasks(api_key)
+        try:
+            tasks = await list_tasks(api_key)
+        except XProjectError:
+            raise e
         hit = pick_existing_task(tasks, platform=platform)
         if hit:
             return int(hit["task_id"]), False
@@ -1307,18 +1310,28 @@ async def _run_autoparse_loop(
     api_key = ""
     created_here = False
     try:
+        hook = None
         try:
-            await tg_call(
+            hook = await tg_call(
                 lambda: bot.send_message(
                     chat_id,
-                    f"{html_emoji('wait')} Авто-парс: подключаюсь к XProject…",
+                    f"{html_emoji('wait')} Авто-парс: читаю настройки…",
                     parse_mode="HTML",
                 ),
                 retries=1,
                 cap=12.0,
             )
         except Exception:
-            logger.warning("autoparse: не смог написать «подключаюсь» tg=%s", tg_id)
+            logger.warning("autoparse: не смог написать старт tg=%s", tg_id)
+
+        async def _hook(text: str) -> None:
+            if hook is None:
+                return
+            try:
+                await hook.edit_text(text, parse_mode="HTML")
+            except Exception:
+                pass
+
         async with Session() as session:
             user = await get_or_create_user(session, tg_id)
             api_key = await get_autoparse_key(session, user)
@@ -1333,6 +1346,10 @@ async def _run_autoparse_loop(
             )
             return
         logger.info("autoparse start tg=%s plat=%s need=%s inf=%s", tg_id, plat, need, infinite)
+        await _hook(
+            f"{html_emoji('wait')} Авто-парс: схема XProject "
+            f"(<code>{html.escape(plat)}</code>)…"
+        )
         schema = await fetch_schema(api_key)
         meta = platform_schema(schema, plat)
         if not meta:
@@ -1345,7 +1362,12 @@ async def _run_autoparse_loop(
                 parse_mode="HTML",
             )
             return
-        existing = pick_task_for_filters(await list_tasks(api_key), platform=plat)
+        existing = None
+        await _hook(f"{html_emoji('wait')} Авто-парс: список задач XProject…")
+        try:
+            existing = pick_task_for_filters(await list_tasks(api_key), platform=plat)
+        except XProjectError as e:
+            logger.warning("autoparse list_tasks skip tg=%s: %s", tg_id, e)
         saved: dict = {}
         async with Session() as session:
             user = await get_or_create_user(session, tg_id)
@@ -1384,6 +1406,10 @@ async def _run_autoparse_loop(
 
         while infinite or done < batches:
             try:
+                await _hook(
+                    f"{html_emoji('wait')} Авто-парс: старт/reuse задачи "
+                    f"<code>{html.escape(plat)}</code>…"
+                )
                 task_id, created_here = await _start_or_reuse(api_key, plat, filters)
                 batch_label = f"{done + 1}" if infinite else f"{done + 1}/{batches}"
                 status = await tg_call(

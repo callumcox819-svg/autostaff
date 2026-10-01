@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import socket
 from typing import Any
 
 import aiohttp
@@ -30,11 +29,6 @@ def _detail(data: Any, fallback: str) -> str:
     return fallback
 
 
-def _timeout(timeout_sec: float) -> aiohttp.ClientTimeout:
-    t = max(3.0, float(timeout_sec))
-    return aiohttp.ClientTimeout(total=t, sock_connect=min(5.0, t), sock_read=t)
-
-
 async def _request(
     method: str,
     path: str,
@@ -42,8 +36,7 @@ async def _request(
     api_key: str,
     json_body: dict[str, Any] | None = None,
     params: dict[str, Any] | None = None,
-    timeout_sec: float = 12.0,
-    retries: int = 1,
+    timeout_sec: float = 20.0,
 ) -> Any:
     key = (api_key or "").strip()
     if not key:
@@ -54,84 +47,47 @@ async def _request(
         "Accept": "application/json",
         "Content-Type": "application/json",
     }
-    timeout = _timeout(timeout_sec)
-    last_net: Exception | None = None
-    attempts = max(1, int(retries) + 1)
-    for attempt in range(attempts):
-        connector = aiohttp.TCPConnector(
-            family=socket.AF_INET,
-            ttl_dns_cache=120,
-            ssl=True,
-            limit=8,
-        )
-        try:
-            async with aiohttp.ClientSession(
-                timeout=timeout, connector=connector
-            ) as session:
-                async with session.request(
-                    method, url, headers=headers, json=json_body, params=params
-                ) as resp:
-                    text = await resp.text()
-                    try:
-                        data = await resp.json(content_type=None)
-                    except Exception:
-                        data = None
-                    if resp.status == 401:
-                        raise XProjectError("Ключ парсера неверный.", status=401)
-                    if resp.status == 402:
-                        raise XProjectError(
-                            "Подписка на парсинг неактивна (402). Авто-парс остановлен.",
-                            status=402,
-                        )
-                    if resp.status == 409:
-                        raise XProjectError(
-                            _detail(data, "Такая задача уже запущена."),
-                            status=409,
-                        )
-                    if resp.status == 429:
-                        if attempt + 1 < attempts:
-                            await asyncio.sleep(1.2 * (attempt + 1))
-                            continue
-                        raise XProjectError(
-                            "Слишком много запросов к парсеру. Подожди.",
-                            status=429,
-                        )
-                    if resp.status in {502, 503, 504} and attempt + 1 < attempts:
-                        await asyncio.sleep(1.0 * (attempt + 1))
-                        continue
-                    if not (200 <= resp.status < 300):
-                        raise XProjectError(
-                            _detail(data, f"HTTP {resp.status}: {text[:240]}"),
-                            status=resp.status,
-                        )
-                    return data
-        except XProjectError:
-            raise
-        except (aiohttp.ClientError, asyncio.TimeoutError, TimeoutError) as e:
-            last_net = e
-            logger.warning(
-                "xproject %s %s try=%s/%s: %s",
-                method,
-                path,
-                attempt + 1,
-                attempts,
-                e,
-            )
-            if attempt + 1 < attempts:
-                await asyncio.sleep(0.6 * (attempt + 1))
-                continue
-            raise XProjectError(f"Сеть парсера: {e}") from e
-    raise XProjectError(f"Сеть парсера: {last_net}")
+    timeout = aiohttp.ClientTimeout(
+        total=timeout_sec, connect=8, sock_connect=8, sock_read=timeout_sec
+    )
+    try:
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.request(
+                method, url, headers=headers, json=json_body, params=params
+            ) as resp:
+                text = await resp.text()
+                try:
+                    data = await resp.json(content_type=None)
+                except Exception:
+                    data = None
+                if resp.status == 401:
+                    raise XProjectError("Ключ парсера неверный.", status=401)
+                if resp.status == 402:
+                    raise XProjectError(
+                        "Подписка на парсинг неактивна (402). Авто-парс остановлен.",
+                        status=402,
+                    )
+                if resp.status == 409:
+                    raise XProjectError(
+                        _detail(data, "Такая задача уже запущена."),
+                        status=409,
+                    )
+                if resp.status == 429:
+                    raise XProjectError("Слишком много запросов к парсеру. Подожди.", status=429)
+                if not (200 <= resp.status < 300):
+                    raise XProjectError(
+                        _detail(data, f"HTTP {resp.status}: {text[:240]}"),
+                        status=resp.status,
+                    )
+                return data
+    except XProjectError:
+        raise
+    except (aiohttp.ClientError, asyncio.TimeoutError, TimeoutError) as e:
+        raise XProjectError(f"Сеть парсера: {e}") from e
 
 
 async def fetch_schema(api_key: str) -> dict[str, Any]:
-    data = await _request(
-        "GET",
-        "/api/v1/parser/schema",
-        api_key=api_key,
-        timeout_sec=10.0,
-        retries=1,
-    )
+    data = await _request("GET", "/api/v1/parser/schema", api_key=api_key)
     return data if isinstance(data, dict) else {}
 
 
@@ -141,8 +97,6 @@ async def start_task(api_key: str, *, platform: str, filters: dict[str, Any]) ->
         "/api/v1/parser/start",
         api_key=api_key,
         json_body={"platform": platform, "filters": filters or {}},
-        timeout_sec=15.0,
-        retries=0,
     )
     if not isinstance(data, dict):
         raise XProjectError("Парсер не вернул задачу")
@@ -150,13 +104,7 @@ async def start_task(api_key: str, *, platform: str, filters: dict[str, Any]) ->
 
 
 async def list_tasks(api_key: str) -> list[dict[str, Any]]:
-    data = await _request(
-        "GET",
-        "/api/v1/parser/tasks",
-        api_key=api_key,
-        timeout_sec=10.0,
-        retries=0,
-    )
+    data = await _request("GET", "/api/v1/parser/tasks", api_key=api_key)
     if isinstance(data, list):
         return [x for x in data if isinstance(x, dict)]
     if isinstance(data, dict):
@@ -181,8 +129,6 @@ async def fetch_listings(
         f"/api/v1/parser/{int(task_id)}",
         api_key=api_key,
         params=params or None,
-        timeout_sec=15.0,
-        retries=1,
     )
     if not isinstance(data, dict):
         raise XProjectError("Плохой ответ выдачи парсера")
@@ -196,8 +142,6 @@ async def stop_task(api_key: str, task_id: int) -> None:
             f"/api/v1/parser/{int(task_id)}/stop",
             api_key=api_key,
             json_body={},
-            timeout_sec=10.0,
-            retries=0,
         )
     except XProjectError as e:
         if e.status in {404}:

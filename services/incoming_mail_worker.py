@@ -15,6 +15,7 @@ import time
 from contextlib import asynccontextmanager
 from email.header import decode_header
 from email.utils import parseaddr
+from datetime import datetime, timedelta
 from typing import Optional, List, Tuple, Dict, Any
 
 from aiogram import Bot
@@ -3397,6 +3398,137 @@ def incoming_mail_diag_snapshot() -> dict[str, Any]:
         "backoff_sec_by_account": backoff,
         "error_streak_by_account": {int(k): int(v) for k, v in _ERROR_STREAK.items()},
     }
+
+
+async def replay_unsent_incoming_to_telegram(
+    bot: Bot,
+    *,
+    hours: float | None = None,
+    limit: int | None = None,
+    gap_sec: float | None = None,
+) -> int:
+    """Дослать в TG письма из БД без telegram_message_id. IMAP last_uid не трогает."""
+    if (_os.getenv("IMAP_REPLAY_UNSENT") or "1").strip().lower() in {"0", "false", "off", "no"}:
+        return 0
+    hours = float(hours if hours is not None else (_os.getenv("IMAP_REPLAY_UNSENT_HOURS") or "40"))
+    limit = int(limit if limit is not None else (_os.getenv("IMAP_REPLAY_UNSENT_LIMIT") or "250"))
+    gap_sec = float(gap_sec if gap_sec is not None else (_os.getenv("IMAP_REPLAY_GAP_SEC") or "1.4"))
+    hours = max(1.0, min(hours, 72.0))
+    limit = max(1, min(limit, 400))
+    gap_sec = max(0.6, min(gap_sec, 5.0))
+    cutoff = datetime.utcnow() - timedelta(hours=hours)
+    from aiogram.exceptions import TelegramRetryAfter, TelegramForbiddenError, TelegramBadRequest
+
+    async with _imap_db_session() as session:
+        await _release_stale_telegram_notify_claims(session)
+        rows = (
+            await session.execute(
+                sa_select(IncomingMail, User)
+                .join(User, User.id == IncomingMail.user_id)
+                .where(
+                    sa_or(
+                        IncomingMail.telegram_message_id.is_(None),
+                        IncomingMail.telegram_message_id == -1,
+                    )
+                )
+                .where(IncomingMail.created_at >= cutoff)
+                .order_by(IncomingMail.created_at.asc())
+                .limit(limit)
+            )
+        ).all()
+
+    logger.info("IMAP TG replay: %s писем без карточки за %.0fч", len(rows), hours)
+    sent = 0
+    for mail, user in rows:
+        from_email = (mail.from_email or "").strip().lower()
+        from_name = (mail.from_name or "").strip()
+        subject = (mail.subject or "").strip()
+        body = (mail.body or "").strip()
+        if _is_google_system_mail(from_email, from_name, subject):
+            continue
+        if _is_smtp_block_bounce(from_email, subject, body):
+            continue
+        if _is_mailer_daemon_notice(from_email, subject) and _is_recipient_delivery_failure_bounce(
+            subject, body
+        ):
+            continue
+        tg_id = int(getattr(user, "telegram_id", 0) or 0)
+        if tg_id <= 0:
+            continue
+        mail_id = int(mail.id)
+        acc_id = int(mail.account_id)
+        uid_key = str(int(mail.imap_uid))
+        inbox_label = (getattr(user, "sender_name", None) or "").strip() or None
+        link_id = None
+        gen = (getattr(mail, "generated_link", None) or "").strip()
+        if gen:
+            link_id = link_id_from_generated_url(gen)
+        chunks = render_mail_text_chunks(
+            account_email=mail.account_email or "",
+            inbox_label=inbox_label,
+            from_name=from_name,
+            from_email=from_email,
+            subject=subject,
+            body=body,
+            offer_id=int(mail.resolved_offer_id) if mail.resolved_offer_id else None,
+            link_id=link_id,
+            service_label=(mail.service_label or "").strip() or None,
+            product_title=(mail.product_title or "").strip() or None,
+            offer_price=(mail.offer_price or "").strip() or None,
+        )
+        kb = build_kb(acc_id, uid_key, mail_id=mail_id)
+        try:
+            async with _imap_db_session() as session:
+                claimed = await _try_claim_telegram_notify(session, mail_id)
+            if not claimed:
+                continue
+            text = chunks[0] if chunks else "—"
+            try:
+                m = await bot.send_message(
+                    chat_id=tg_id,
+                    text=text,
+                    reply_markup=kb,
+                    parse_mode="HTML",
+                    disable_web_page_preview=True,
+                )
+            except TelegramRetryAfter as e:
+                wait = min(float(getattr(e, "retry_after", 5) or 5), 20.0)
+                logger.warning("IMAP replay flood tg=%s wait=%.0fs mail_id=%s", tg_id, wait, mail_id)
+                await asyncio.sleep(wait)
+                m = await bot.send_message(
+                    chat_id=tg_id,
+                    text=text,
+                    reply_markup=kb,
+                    parse_mode="HTML",
+                    disable_web_page_preview=True,
+                )
+            async with _imap_db_session() as session:
+                row = (
+                    await session.execute(
+                        sa_select(IncomingMail).where(IncomingMail.id == mail_id).limit(1)
+                    )
+                ).scalars().first()
+                if row:
+                    row.telegram_message_id = int(m.message_id)
+                    await _db_commit_retry(session)
+            sent += 1
+            await asyncio.sleep(gap_sec)
+        except (TelegramForbiddenError, TelegramBadRequest) as e:
+            logger.warning("IMAP replay skip mail_id=%s tg=%s: %s", mail_id, tg_id, e)
+            try:
+                async with _imap_db_session() as session:
+                    await _release_telegram_notify_claim(session, mail_id)
+            except Exception:
+                pass
+        except Exception:
+            logger.exception("IMAP replay fail mail_id=%s", mail_id)
+            try:
+                async with _imap_db_session() as session:
+                    await _release_telegram_notify_claim(session, mail_id)
+            except Exception:
+                pass
+    logger.info("IMAP TG replay done: sent=%s", sent)
+    return sent
 
 
 def start_incoming_mail_worker(bot: Bot, poll_seconds: int = 20) -> None:

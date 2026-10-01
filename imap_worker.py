@@ -168,8 +168,18 @@ async def main() -> None:
         logger.info("Старт опроса ящиков через %ss", delay)
         await asyncio.sleep(delay)
 
-    from services.incoming_mail_worker import start_incoming_mail_worker
+    from services.incoming_mail_worker import (
+        replay_unsent_incoming_to_telegram,
+        start_incoming_mail_worker,
+    )
     from services.smtp_block_control import start_smtp_block_cooldown_worker
+
+    try:
+        n = await replay_unsent_incoming_to_telegram(bot)
+        if n:
+            logger.info("Дослано в новый бот непрочитанных карточек: %s", n)
+    except Exception:
+        logger.exception("Replay карточек упал — IMAP опрос всё равно стартует")
 
     start_smtp_block_cooldown_worker()
     start_incoming_mail_worker(bot, poll_seconds=poll_seconds)

@@ -1,0 +1,190 @@
+"""Pager status folder selection (account-wide)."""
+
+from __future__ import annotations
+
+import json
+import logging
+
+from aiogram import F, Router
+from aiogram.types import CallbackQuery, Message
+
+import database as db
+from config import load_settings
+from handlers.pager_account import _pager_client, _secrets
+from keyboards.main_menu import folders_kb
+from services.pager_api import PagerAPIError
+from services.status_ids import (
+    ALL_INBOX_FOLDER_ID,
+    folder_callback_decode,
+    normalize_enabled_folders,
+)
+
+logger = logging.getLogger(__name__)
+router = Router()
+_settings = load_settings()
+
+
+async def _require_account(tg_user_id: int) -> dict | None:
+    acc = await db.get_account_by_tg(tg_user_id)
+    if not acc or not acc.get("session_ok"):
+        return None
+    return acc
+
+
+async def _pager_for_account(acc: dict):
+    cookies = json.loads(_secrets.decrypt(acc["session_enc"]))
+    client = _pager_client(
+        cookies,
+        org_id=str(acc.get("org_id") or ""),
+        org_slug=str(acc.get("org_slug") or _settings.pager_org_slug),
+        locale=str(acc.get("pager_locale") or ""),
+    )
+    await client.warm_session()
+    await client.resolve_org_id_live()
+    return client
+
+
+async def _sync_statuses(acc: dict) -> int:
+    client = await _pager_for_account(acc)
+    statuses = await client.list_statuses_api()
+    if statuses:
+        await db.sync_statuses(int(acc["id"]), statuses)
+    return len(statuses)
+
+
+def _folders_text(folder_rows: list[dict], *, synced: int = 0) -> str:
+    enabled = sum(1 for r in folder_rows if r.get("enabled"))
+    total = len(folder_rows)
+    all_on = total > 0 and enabled == total
+    enabled_ids = {
+        str(r.get("status_id", ""))
+        for r in folder_rows
+        if r.get("enabled")
+    }
+    head = f"Папок в Pager: {synced}\n\n" if synced else ""
+    hint = ""
+    if ALL_INBOX_FOLDER_ID in enabled_ids:
+        hint = (
+            "\n\n✅ <b>«Всі»</b> включена — бот берёт чаты как во вкладке "
+            "Pager «Всі» (все статусы)."
+        )
+    elif enabled_ids == {""}:
+        hint = (
+            "\n\n✅ Только <b>«Без статусу»</b> — бот отвечает только "
+            "на новые чаты без папки."
+        )
+    elif enabled_ids - {"", ALL_INBOX_FOLDER_ID}:
+        hint = (
+            "\n\n✅ Включены вороночные папки (В процесі / Чекаю ID / …) — "
+            "бот продолжает скрипты и отвечает в этих папках."
+        )
+    elif all_on:
+        hint = "\n\n✅ Все папки включены."
+    return (
+        f"{head}"
+        "Отметьте папки — откуда бот берёт чаты.\n"
+        f"Включено: <b>{enabled}</b> из <b>{total}</b>"
+        f"{hint}\n\n"
+        "Каналы (страницы FB) — в 📡 Каналы."
+    )
+
+
+async def _folder_rows(acc: dict) -> list[dict]:
+    account_id = int(acc["id"])
+    enabled = await db.get_account_enabled_folders(account_id)
+    if enabled:
+        specific, all_inbox = normalize_enabled_folders(enabled)
+        if specific and ALL_INBOX_FOLDER_ID in enabled:
+            await db.toggle_account_folder(account_id, ALL_INBOX_FOLDER_ID, False)
+    return await db.list_account_folder_rows(account_id)
+
+
+@router.message(F.text == "📂 Выбор папок")
+async def folders_menu(message: Message) -> None:
+    acc = await _require_account(message.from_user.id)
+    if not acc:
+        await message.answer("Сначала подключите Pager: 🔐 Pager аккаунт")
+        return
+    try:
+        n = await _sync_statuses(acc)
+    except PagerAPIError as exc:
+        await message.answer(f"❌ Не удалось загрузить папки: {exc}")
+        return
+    folder_rows = await _folder_rows(acc)
+    if not folder_rows or len(folder_rows) <= 1:
+        await message.answer(
+            "Папки не найдены в Pager. Нажмите 🔄 Обновить папки "
+            "или перелогиньтесь в 🔐 Pager аккаунт."
+        )
+        return
+    await message.answer(
+        _folders_text(folder_rows, synced=n),
+        parse_mode="HTML",
+        reply_markup=folders_kb(folder_rows),
+    )
+
+
+@router.callback_query(F.data == "fld:sync")
+async def cb_folders_sync(cb: CallbackQuery) -> None:
+    acc = await _require_account(cb.from_user.id)
+    if not acc:
+        await cb.answer("Нет сессии")
+        return
+    await cb.answer("Обновляю…")
+    try:
+        n = await _sync_statuses(acc)
+        folder_rows = await _folder_rows(acc)
+        await cb.message.edit_text(
+            _folders_text(folder_rows, synced=n),
+            parse_mode="HTML",
+            reply_markup=folders_kb(folder_rows),
+        )
+    except PagerAPIError as exc:
+        await cb.message.answer(f"❌ {exc}")
+
+
+@router.callback_query(F.data.startswith("fld:t:"))
+async def cb_folder_toggle(cb: CallbackQuery) -> None:
+    acc = await _require_account(cb.from_user.id)
+    if not acc:
+        await cb.answer("Нет сессии")
+        return
+    token = cb.data.split(":", 2)[2] if cb.data.count(":") >= 2 else ""
+    status_id = folder_callback_decode(token)
+    account_id = int(acc["id"])
+    folder_rows = await _folder_rows(acc)
+    row = next(
+        (r for r in folder_rows if str(r.get("status_id", "")) == status_id),
+        None,
+    )
+    if not row:
+        await cb.answer("Папка не найдена — нажмите 🔄 Обновить папки")
+        return
+    new_state = not bool(row.get("enabled"))
+    await db.toggle_account_folder(account_id, str(row["status_id"]), new_state)
+    folder_rows = await _folder_rows(acc)
+    await cb.message.edit_text(
+        _folders_text(folder_rows),
+        parse_mode="HTML",
+        reply_markup=folders_kb(folder_rows),
+    )
+    await cb.answer("Включено" if new_state else "Выключено")
+
+
+@router.callback_query(F.data == "fld:on")
+@router.callback_query(F.data == "fld:off")
+async def cb_folder_all(cb: CallbackQuery) -> None:
+    acc = await _require_account(cb.from_user.id)
+    if not acc:
+        await cb.answer("Нет сессии")
+        return
+    enabled = cb.data == "fld:on"
+    account_id = int(acc["id"])
+    await db.set_all_account_folders(account_id, enabled)
+    folder_rows = await _folder_rows(acc)
+    await cb.message.edit_text(
+        _folders_text(folder_rows),
+        parse_mode="HTML",
+        reply_markup=folders_kb(folder_rows),
+    )
+    await cb.answer("Все включены" if enabled else "Все выключены")

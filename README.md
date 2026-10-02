@@ -1,165 +1,70 @@
-# Pager New Test
+# Pager AI Bot (Zambia test)
 
-Testable Telegram-first MVP for the new Pager bot rebuild.
+Telegram-бот + воркер для [Pager.co.ua](https://www.pager.co.ua): каждый пользователь TG подключает **свой** аккаунт Pager, бот автоматически отправляет **скрипты ZM** в Messenger, в Telegram приходят только **эскалации** (депозит, жалобы, ID не распознан).
 
-It already includes:
+## Быстрый старт
 
-- separate playbooks for `ZM`, `CM`, and `EG`
-- per-channel enable/disable config
-- per-channel country selection
-- per-channel template bank selection
-- Telegram long polling bot
-- local chat state storage for testing (JSON file or PostgreSQL)
-- OCR-based screenshot classification
-- proof-driven transitions based on screenshots and customer confirmations
-- Telegram handoff after deposit confirmation
-- live Pager account validation through imported cookies
-- live channel loading from the connected Pager session
-- live template-bank discovery from the connected Pager session
-- **Pager auto-reply worker** — polls enabled channels every `pollIntervalSeconds`, takes chats, sends saved-reply presets
+```powershell
+cd C:\Users\user\Projects\pager-ai-bot
+python -m venv .venv
+.venv\Scripts\activate
+pip install -r requirements.txt
+playwright install chromium
 
-## Core flow
+# Ключ шифрования
+python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
 
-The bot is designed around one shared rule:
+copy .env.example .env
+# BOT_TOKEN, ENCRYPTION_KEY, опционально OPENAI_API_KEY
 
-1. customer shows interest
-2. bot sends registration instructions
-3. customer sends registration screenshot or visible ID
-4. bot sends deposit instructions
-5. customer sends screenshot with balance on the gaming account
-6. bot sends the Telegram link and moves to the post-deposit stage
-
-Status changes must happen only after customer confirmation or proof, not only because the bot sent a reply.
-
-## What is already testable
-
-You can already test the logic through Telegram without Pager API:
-
-- start the bot with your Telegram token
-- choose a channel/playbook with `/channels`
-- toggle channel on/off, switch country, and pick a bank directly in the channel row
-- green/red channel toggles with in-place menu updates (no duplicate menus)
-- send text messages to trigger text rules
-- send screenshots to trigger OCR proof classification
-- inspect the current test state with `/status`
-
-This makes the project useful before the Pager session/API layer is connected.
-
-You can now also test a real Pager session:
-
-- open `Pager аккаунт`
-- choose `Импорт cookies`
-- paste your Pager cookies in one line
-- the bot validates the session against `/api/channel`
-- after success, `Каналы` switches to the real live channel list from that account
-- if Pager returns saved-reply folders, the bank button in each channel row uses those real folders
-
-## Environment variables
-
-Create `.env` from `.env.example`:
-
-```env
-TELEGRAM_BOT_TOKEN=put_your_botfather_token_here
-TELEGRAM_BOT_NAME=Pager Test Bot
-PAGER_BASE_URL=https://api.pager.co.ua
-BOT_CONFIG_PATH=config/bot.config.yaml
-BOT_STATE_PATH=data/chat-state.json
-DATABASE_URL=
-OCR_ENABLED=true
-OCR_LANG=eng
-POLL_INTERVAL_MS=2000
+python bot.py
 ```
 
-Notes:
+## Подключение Pager (в боте)
 
-- `TELEGRAM_BOT_TOKEN` is required
-- `DATABASE_URL` — if set, chat state is stored in PostgreSQL (survives Railway redeploys); if omitted, falls back to `BOT_STATE_PATH`
-- `OCR_LANG=eng` is the safest starting point
-- if you want to experiment with Arabic/French OCR later, you can try values like `eng+ara+fra`
-- local chat state is stored in `data/chat-state.json` when `DATABASE_URL` is not set
+1. **🔐 Pager аккаунт** → **Email + пароль** (Playwright)  
+   или **🍪 Импорт cookies** (надёжнее): DevTools → Network → Cookie header  
+2. **📡 Каналы** → включить Kelvin Phiri (ZM)  
+3. `/escalation` — куда слать «нужен человек» (по умолчанию — ваш TG id)
 
-## Railway deployment
+## Команды
 
-1. Add a **PostgreSQL** service in the Railway project.
-2. Link `DATABASE_URL` from Postgres to the bot service (Railway usually does this automatically).
-3. Redeploy — login, channel toggles, and template selections will persist across redeploys.
+| Команда | Действие |
+|---------|----------|
+| `/pause` | Пауза авто-ответов |
+| `/resume` | Включить снова |
+| `/status` | Сессия, каналы |
 
-The bot creates the `bot_chat_states` table automatically on startup.
+## Воронка ZM (скрипты в `data/scripts/zm/`)
 
-## Telegram commands
+1. interested → intro  
+2. ok → how it works + ZMW  
+3. yes → registration + link → папка «В процесі реєстрації»  
+4. скрин-пример → «Чекаю ID»  
+5. фото/ID → депозит-скрипт → «Реєстрація»  
+6. скрин депозита → TG + TG-канал  
 
-- `/start` - show the quick usage summary
-- `/channels` - choose the channel/playbook to test
-- `/status` - show current chat state
-- `/reset` - reset the local state for this Telegram chat
+## Railway
 
-## Pager auto-reply
+Деплой через **Dockerfile** (внутри уже Chromium для входа по email/паролю).
 
-After login and channel setup:
+Variables: `BOT_TOKEN`, `ENCRYPTION_KEY`, `OPENAI_API_KEY` (optional)
 
-1. Open `Каналы`, enable the channel (🟢), pick country and template folder.
-2. The background worker polls Pager every `pollIntervalSeconds` (default 20s).
-3. For each **incoming** chat in enabled channels it:
-   - takes the chat (assigns operator)
-   - reads the latest customer message (text or screenshot)
-   - picks the next preset via playbook rules
-   - resolves text from the **Pager saved-reply folder** (YAML fallback)
-   - sends via SPA POST + take-chat flow (same as the old Python bot)
-4. You get a Telegram notification for each successful reply.
+**Обязательно для API Pager** (orgId не всегда определяется автоматически):
+- `PAGER_ORG_SLUG=tehsup` — slug в URL (orgId подставится автоматически для tehsup)
+- `PAGER_ORG_ID=org_3Cd5AHJTskSRAzLNkoft2qlfaUw` — явно, если slug другой
+- `PAGER_LOCALE=uk` — язык (по умолчанию `uk`)
 
-Per-conversation stage is stored in the database (`conversations` map inside chat state).
+Ссылка в TG: `https://www.pager.co.ua/uk/tehsup/chats?channelId=...`  
+Pager **не открывает конкретный чат** по URL — только канал; имя клиента в уведомлении.
 
-## Pager account status
+После push в GitHub: Railway → **Redeploy** (сборка ~2–3 мин, образ больше обычного).
 
-At the moment:
+Cookies-импорт остаётся запасным вариантом.
 
-- `cookies` auth is live and validated against real Pager API
-- `email + password` auth is live and validated against real Pager API
-- the bot loads saved-reply folders from Pager `/api/reply/folder` and replies from `/api/reply`
-- if a specific account does not expose those endpoints in the current session, the bot falls back to country defaults from config
+## Структура
 
-## Screenshot logic
-
-Supported proof types:
-
-- `registration_screenshot`
-- `id_screenshot`
-- `deposit_balance_screenshot`
-- `unclear_screenshot`
-
-Expected behavior:
-
-- registration or ID proof -> move to registration-confirmed or deposit stage
-- deposit/balance proof -> send Telegram handoff template
-- unclear screenshot -> ask for a clearer image and do not advance
-
-Current OCR logic uses text found in the screenshot plus Telegram caption text if present. For early testing, captions like `id`, `client`, `balance`, or `deposit` help the classifier a lot.
-
-## Project structure
-
-- `config/bot.config.yaml` - channel config, status mapping, template banks, country playbooks
-- `src/config.ts` - strict config schema with `zod`
-- `src/decision-engine.ts` - next-action logic for text and screenshot proofs
-- `src/proof-classifier.ts` - OCR-based proof detection
-- `src/pager-client.ts` - Pager API (channels, conversations, messages, send)
-- `src/pager-worker.ts` - background Pager polling and auto-reply
-- `src/template-resolver.ts` - map playbook roles to Pager saved replies
-- `src/telegram-api.ts` - raw Telegram Bot API wrapper
-- `src/state-store.ts` - per-chat state (JSON file or PostgreSQL)
-- `src/index.ts` - bot runtime
-
-## Run
-
-```bash
-npm install
-npm run check
-npm run build
-npm run dev
-```
-
-## Next implementation steps
-
-1. folder/status filtering (Без статусу, funnel folders) like the old bot
-2. wire status changes back to Pager API using real status IDs
-3. smarter preset matching by script order / UI snippets
-4. reduce operator Telegram noise (optional silent mode)
+- `bot.py` — Telegram + worker  
+- `services/pager_api.py` — API Pager  
+- `services/worker_loop.py` — опрос чатов  
+- `database.py` — аккаунты пользователей (SQLite)

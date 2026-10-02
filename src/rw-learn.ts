@@ -6,6 +6,7 @@ import {
   type RwScriptDraft,
   type RwScriptDrafts,
 } from "./rw-script-engine.js";
+import { FOLDER_ONLY_COUNTRIES, FOLDER_MARKETS } from "./folder-presets.js";
 import {
   isInProgressStatusConversation,
   isNoStatusConversation,
@@ -19,7 +20,20 @@ export const RW_LEARN_CHANNEL_HINTS = [
   "patrick uwimana",
 ] as const;
 
-export type WorkerCountry = "ZM" | "CM" | "EG" | "RW" | "CL" | "MG" | "DJ" | "JO";
+export type WorkerCountry =
+  | "ZM"
+  | "CM"
+  | "EG"
+  | "RW"
+  | "CL"
+  | "MG"
+  | "DJ"
+  | "JO"
+  | "MR"
+  | "BF"
+  | "BJ"
+  | "CR"
+  | "SN";
 
 export type RwLearningEventKind =
   | "no_status_lead"
@@ -179,6 +193,11 @@ export function defaultCountryForChannelName(name: string): WorkerCountry {
   }
   if (/moukoko|ndzi|cameroon|cm|tchouameni/.test(normalized)) {
     return "CM";
+  }
+  for (const code of FOLDER_ONLY_COUNTRIES) {
+    if (FOLDER_MARKETS[code].hints.some((hint) => normalized.includes(hint))) {
+      return code;
+    }
   }
   return "ZM";
 }

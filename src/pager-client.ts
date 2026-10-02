@@ -78,6 +78,8 @@ export type PagerSavedReply = {
   id: string;
   text: string;
   name?: string;
+  /** Folder order from the API. Falls back to the array index. */
+  order?: number;
 };
 
 export class PagerApiError extends Error {
@@ -528,8 +530,10 @@ export class PagerClient {
         id,
         text,
         name: firstString(record.name, record.title, record.label),
+        order: readReplyOrder(record, index),
       });
     }
+    replies.sort((left, right) => (left.order ?? 0) - (right.order ?? 0));
     return replies;
   }
 
@@ -1814,6 +1818,19 @@ function normalizeReplyFolders(payload: unknown): PagerTemplateBank[] {
   }
 
   return folders;
+}
+
+function readReplyOrder(record: Record<string, unknown>, index: number): number {
+  for (const key of ["order", "position", "index", "sortOrder", "sort"]) {
+    const value = record[key];
+    if (typeof value === "number" && Number.isFinite(value)) {
+      return value;
+    }
+    if (typeof value === "string" && value.trim() && Number.isFinite(Number(value))) {
+      return Number(value);
+    }
+  }
+  return index;
 }
 
 function firstString(...values: unknown[]): string | undefined {

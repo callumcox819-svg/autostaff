@@ -28,6 +28,12 @@ import { extractCmClientLoginId17 } from "./cm-proof.js";
 import { looksLikeOwnScriptEcho } from "./funnel-outbound.js";
 import { isLinkAccessProblemMessage, isCustomerClarificationMessage, isScamOrTrustQuestion } from "./customer-clarity.js";
 import {
+  folderMarketLanguage,
+  isFolderMarket,
+  isFolderOnlyCountry,
+  planFolderPresetAdvance,
+} from "./folder-presets.js";
+import {
   defaultCountryForChannelName,
   isClChannelName,
   isDjChannelName,
@@ -632,7 +638,8 @@ async function processOperatorAccount(deps: WorkerDeps, state: ChatState): Promi
       item.runtime.country === "CL" ||
       item.runtime.country === "MG" ||
       item.runtime.country === "DJ" ||
-      item.runtime.country === "JO",
+      item.runtime.country === "JO" ||
+      isFolderOnlyCountry(item.runtime.country),
   )
     ? Math.max(MAX_CONVERSATIONS_PER_ACCOUNT, INBOX_TOP_UNREAD + INBOX_TOP_CM_FOLLOWUP)
     : 150;
@@ -984,7 +991,8 @@ async function buildWorkQueue(
       channel.runtime.country !== "CL" &&
       channel.runtime.country !== "MG" &&
       channel.runtime.country !== "DJ" &&
-      channel.runtime.country !== "JO"
+      channel.runtime.country !== "JO" &&
+      !isFolderOnlyCountry(channel.runtime.country)
     ) {
       continue;
     }
@@ -993,7 +1001,7 @@ async function buildWorkQueue(
     const isCl = channel.runtime.country === "CL";
     const isZm = channel.runtime.country === "ZM";
     const isMg = channel.runtime.country === "MG";
-    const isDj = channel.runtime.country === "DJ";
+    const isDj = channel.runtime.country === "DJ" || isFolderOnlyCountry(channel.runtime.country);
     const isJo = channel.runtime.country === "JO";
     const isRw = channel.runtime.country === "RW";
     const channelFolderIds = resolveChannelEnabledFolderIds(
@@ -1201,7 +1209,7 @@ async function buildWorkQueue(
       if (!shouldQueueMgConversation(conv) && !catchUpEligible) {
         continue;
       }
-    } else if (runtime?.runtime.country === "DJ") {
+    } else if (runtime?.runtime.country === "DJ" || isFolderOnlyCountry(runtime?.runtime.country ?? "")) {
       if (!shouldQueueDjConversation(conv) && !catchUpEligible) {
         continue;
       }
@@ -1719,6 +1727,9 @@ async function processConversation(
   if (workerCountry === "JO") {
     return processJoConversation(deps, state, client, workingConv, runtime, channel);
   }
+  if (isFolderOnlyCountry(workerCountry)) {
+    return processFolderMarketConversation(deps, state, client, workingConv, runtime, channel);
+  }
   if (isJoChannelName(runtime.channelName)) {
     console.warn(
       `Pager worker: ${runtime.channelName} is a Jordan channel but country=${workerCountry} — routing JO`,
@@ -2200,6 +2211,23 @@ async function processCmConversation(
     ))
   ) {
     return false;
+  }
+
+  if (
+    await trySendFolderPreset(
+      deps,
+      state,
+      client,
+      conv,
+      runtime,
+      convId,
+      convState,
+      lastIncoming,
+      outgoingTexts,
+      latestCustomerText,
+    )
+  ) {
+    return true;
   }
 
   const threadStep = cmInferStepFromThread(messages);
@@ -3880,6 +3908,23 @@ async function processDjConversation(
     return false;
   }
 
+  if (
+    await trySendFolderPreset(
+      deps,
+      state,
+      client,
+      conv,
+      runtime,
+      convId,
+      convState,
+      lastIncoming,
+      outgoingTexts,
+      latestCustomerText,
+    )
+  ) {
+    return true;
+  }
+
   const threadStep = djInferStepFromThread(messages);
   const gapStep = djFunnelStepFromScriptGaps(outgoingTexts, convState.funnelStep ?? 0);
   const effectiveStep = Math.max(threadStep, gapStep, convState.funnelStep ?? 0);
@@ -5328,6 +5373,163 @@ async function processEgConversation(
   return true;
 }
 
+async function trySendFolderPreset(
+  deps: WorkerDeps,
+  state: ChatState,
+  client: PagerClient,
+  conv: PagerConversation,
+  runtime: EnabledChannel,
+  convId: string,
+  convState: ConversationRuntimeState,
+  lastIncoming: PagerMessage,
+  outgoingTexts: string[],
+  customerText: string,
+): Promise<boolean> {
+  const language = folderMarketLanguage(runtime.runtime.country);
+  if (!language || !isFolderMarket(runtime.runtime.country)) {
+    return false;
+  }
+  const folderId =
+    runtime.runtime.templateBankId || pickLiveTemplateBank(state, runtime.runtime.country)?.id;
+  if (!folderId) {
+    console.warn(
+      `Pager worker: ${runtime.runtime.country} ${convId.slice(0, 8)} — saved-reply folder is not linked`,
+    );
+    return false;
+  }
+
+  let replies;
+  try {
+    replies = await client.getSavedReplies(folderId);
+  } catch (error) {
+    console.warn(`Pager worker: saved replies failed ${convId.slice(0, 8)}:`, formatError(error));
+    return false;
+  }
+  const plan = planFolderPresetAdvance(replies, outgoingTexts, customerText, language);
+  if (!plan) {
+    return false;
+  }
+  if (plan.action === "hold") {
+    console.log(
+      `Pager worker: ${runtime.runtime.country} ${convId.slice(0, 8)} preset hold (${plan.reason}), no AI`,
+    );
+    return true;
+  }
+
+  console.log(
+    `Pager worker: ${runtime.runtime.country} ${convId.slice(0, 8)} ${plan.role}${plan.table ? " table" : ""} from saved replies, no AI`,
+  );
+  let sent = false;
+  for (let attempt = 1; attempt <= 2; attempt += 1) {
+    sent = await client.sendMessageReliable(convId, plan.text.trim(), {
+      channelId: runtime.channelId,
+      conv,
+    });
+    if (sent) {
+      break;
+    }
+    await sleep(600 * attempt);
+  }
+  if (!sent) {
+    await patchConversationState(deps.stateStore, state.chatId, convId, {
+      sendFailures: (convState.sendFailures ?? 0) + 1,
+    });
+    console.error(`Pager worker: preset send failed ${convId.slice(0, 8)} ${plan.role}`);
+    return true;
+  }
+  await patchConversationState(deps.stateStore, state.chatId, convId, {
+    conversationId: convId,
+    channelId: runtime.channelId,
+    lastCustomerMessageId: lastIncoming.id,
+    lastCustomerMessageAt: lastIncoming.createdAt,
+    lastReplyAt: new Date().toISOString(),
+    lastReplyRole: plan.role,
+    funnelStep: plan.index + 1,
+    sendFailures: 0,
+  });
+  return true;
+}
+
+async function processFolderMarketConversation(
+  deps: WorkerDeps,
+  state: ChatState,
+  client: PagerClient,
+  conv: PagerConversation,
+  runtime: EnabledChannel,
+  _channel: ReturnType<typeof buildRuntimeChannelConfig>,
+): Promise<boolean> {
+  const convId = conv.id;
+  const currentState = (await deps.stateStore.get(state.chatId)) ?? state;
+  const convState = getConversationState(currentState, convId, runtime.channelId);
+  if ((convState.sendFailures ?? 0) >= MAX_SEND_FAILURES) {
+    return false;
+  }
+
+  const messages = await client.listMessages(convId, 1, 80);
+  if (!messages.length) {
+    return false;
+  }
+  const sorted = [...messages].sort(
+    (left, right) => Date.parse(right.createdAt ?? "") - Date.parse(left.createdAt ?? ""),
+  );
+  const spanish = folderMarketLanguage(runtime.runtime.country) === "es";
+  const lastIncoming = findLatestIncomingFromThread(sorted, conv, spanish ? "ZM" : "CM");
+  if (!lastIncoming) {
+    return false;
+  }
+  const operatorUserId = await client.probeOperatorUserId();
+  if (
+    shouldSkipConversationBotSpokeLast(conv, sorted, lastIncoming, {
+      operatorUserId,
+      country: spanish ? "ZM" : "CM",
+      catchUpRead: isCatchUpReadActive(currentState.catchUpRead),
+    })
+  ) {
+    return false;
+  }
+
+  const outgoingTexts = messages
+    .filter((message) => {
+      const direction = (message.messageDirection ?? "").toLowerCase();
+      return (direction === "outgoing" || direction === "out") && Boolean((message.text || "").trim());
+    })
+    .map((message) => (message.text || "").trim());
+  const latestCustomerText = (lastIncoming.text || "").trim();
+  if (
+    !(await ensureCustomerMessageEligible(
+      deps,
+      state,
+      client,
+      conv,
+      convId,
+      convState,
+      lastIncoming,
+      sorted,
+      {
+        operatorUserId,
+        countryLabel: runtime.runtime.country,
+        country: spanish ? "ZM" : "DJ",
+        catchUpRead: isCatchUpReadActive(currentState.catchUpRead),
+      },
+    ))
+  ) {
+    return false;
+  }
+
+  return trySendFolderPreset(
+    deps,
+    state,
+    client,
+    conv,
+    runtime,
+    convId,
+    convState,
+    lastIncoming,
+    outgoingTexts,
+    latestCustomerText,
+  );
+}
+
 async function processGenericConversation(
   deps: WorkerDeps,
   state: ChatState,
@@ -6483,7 +6685,19 @@ function pickLiveTemplateBank(
     MG: MG_FOLDER_NAME_HINTS,
     DJ: DJ_FOLDER_NAME_HINTS,
     JO: JO_FOLDER_NAME_HINTS,
+    MR: ["мавритан", "mauritan"],
+    BF: ["буркина", "burkina"],
+    BJ: ["бенін", "бенин", "benin", "bénin"],
+    CR: ["коста", "costa"],
+    SN: ["сенегал", "senegal", "sénégal"],
   };
+  if (isFolderOnlyCountry(country)) {
+    const matchedOnly = banks.find((bank) => {
+      const normalized = bank.name.toLowerCase();
+      return hints[country].some((hint) => normalized.includes(hint));
+    });
+    return matchedOnly;
+  }
   const matched = banks.find((bank) => {
     const normalized = bank.name.toLowerCase();
     return hints[country].some((hint) => normalized.includes(hint));
@@ -6546,7 +6760,11 @@ function buildRuntimeChannelConfig(
   const country = runtime.runtime.country;
   const templateBank = resolveYamlTemplateBankName(config, country, runtime.channelId);
   const yamlCountry = (
-    country === "RW" || country === "CL" || country === "MG" || country === "DJ"
+    country === "RW" ||
+    country === "CL" ||
+    country === "MG" ||
+    country === "DJ" ||
+    isFolderOnlyCountry(country)
       ? "CM"
       : country === "JO"
         ? "EG"

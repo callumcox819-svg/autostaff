@@ -90,6 +90,7 @@ import {
   usesPostbackStatsForFetch,
 } from "./xpartners-postback.js";
 
+import { isFolderOnlyCountry } from "./folder-presets.js";
 import {
   defaultCountryForChannelName,
   formatRwLearningSummary,
@@ -100,15 +101,34 @@ import {
 const COUNTRY_FOLDER_HINTS: Record<WorkerCountry, string[]> = {
   ZM: ["замб", "zamb", "zambia"],
   EG: ["егип", "egypt", "hapka"],
-  CM: ["камер", "cameroon"],
+  CM: ["камер", "cameroon", "cameroun"],
   RW: ["ruand", "rwand", "rw"],
   CL: ["chile", "chili", "чили", "cl"],
   MG: ["мадаг", "madag", "madagascar", "mg", "mdg"],
   DJ: ["джибут", "djibouti", "djib", "djf", "bji"],
   JO: ["йордан", "jordan", "jo", "jod", "jor"],
+  MR: ["мавритан", "mauritan"],
+  BF: ["буркина", "burkina"],
+  BJ: ["бенін", "бенин", "benin", "bénin"],
+  CR: ["коста", "costa"],
+  SN: ["сенегал", "senegal", "sénégal"],
 };
 
-const OPERATOR_COUNTRY_CODES = new Set<WorkerCountry>(["ZM", "CM", "EG", "RW", "CL", "MG", "DJ", "JO"]);
+const OPERATOR_COUNTRY_CODES = new Set<WorkerCountry>([
+  "ZM",
+  "CM",
+  "EG",
+  "RW",
+  "CL",
+  "MG",
+  "DJ",
+  "JO",
+  "MR",
+  "BF",
+  "BJ",
+  "CR",
+  "SN",
+]);
 
 const CHANNEL_COUNTRY_DISPLAY: Record<string, string> = {
   CM: "Камерун",
@@ -119,6 +139,11 @@ const CHANNEL_COUNTRY_DISPLAY: Record<string, string> = {
   MG: "Мадагаскар",
   DJ: "Джибути",
   JO: "Йордания",
+  MR: "Мавритания",
+  BF: "Буркина-Фасо",
+  BJ: "Бенин",
+  CR: "Коста-Рика",
+  SN: "Сенегал",
 };
 
 function formatChannelIdSuffix(id: string): string {
@@ -470,10 +495,12 @@ async function handleCallback(
           ? "Чили · локальные скрипты ES/EN/FR"
           : country === "MG"
             ? "Мадагаскар · FR · MAD778"
-            : country === "DJ"
-              ? "Джибути · FR · BJI777"
+            :       country === "DJ"
+              ? "Джибути · сохранённые ответы"
               : country === "JO"
                 ? "Йордания · AR · JOR778"
+            : CHANNEL_COUNTRY_DISPLAY[country]
+              ? `${CHANNEL_COUNTRY_DISPLAY[country]} · сохранённые ответы`
             : `Страна: ${country}`,
     );
     await showChannelsMenu(chatId, nextState, messageId);
@@ -825,7 +852,8 @@ async function handleMessage(message: TelegramMessage) {
     effectiveChannel.country === "RW" ||
     effectiveChannel.country === "CL" ||
     effectiveChannel.country === "MG" ||
-    effectiveChannel.country === "DJ"
+    effectiveChannel.country === "DJ" ||
+    isFolderOnlyCountry(effectiveChannel.country)
       ? "CM"
       : effectiveChannel.country === "JO"
         ? "EG"
@@ -836,7 +864,8 @@ async function handleMessage(message: TelegramMessage) {
     country: (effectiveChannel.country === "RW" ||
     effectiveChannel.country === "CL" ||
     effectiveChannel.country === "MG" ||
-    effectiveChannel.country === "DJ"
+    effectiveChannel.country === "DJ" ||
+    isFolderOnlyCountry(effectiveChannel.country)
       ? "CM"
       : effectiveChannel.country === "JO"
         ? "EG"
@@ -1330,7 +1359,13 @@ function pickTemplateBankFromLiveBanks(
     const normalized = bank.name.toLowerCase();
     return hints.some((hint) => normalized.includes(hint));
   });
-  return matched ?? banks[0];
+  if (matched) {
+    return matched;
+  }
+  if (isFolderOnlyCountry(country)) {
+    return undefined;
+  }
+  return banks[0];
 }
 
 function buildChannelRuntimeMap(

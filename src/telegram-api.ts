@@ -453,39 +453,17 @@ export function buildChannelKeyboard(
 }
 
 export function buildCountryKeyboard(channelId: string): ReplyMarkup {
+  const country = (label: string, code: string) =>
+    inlineBtn(label, `country_pick|${channelId}|${code}`, {
+      emojiId: PREMIUM_EMOJI.globe,
+      style: "primary",
+    });
   return {
     inline_keyboard: [
-      [
-        inlineBtn("Замбия", `country_pick|${channelId}|ZM`, { emojiId: PREMIUM_EMOJI.flagZm }),
-        inlineBtn("Египет", `country_pick|${channelId}|EG`, { emojiId: PREMIUM_EMOJI.flagEg }),
-      ],
-      [
-        inlineBtn("Камерун", `country_pick|${channelId}|CM`, { emojiId: PREMIUM_EMOJI.flagCm }),
-        inlineBtn("Руанда", `country_pick|${channelId}|RW`, {
-          emojiId: PREMIUM_EMOJI.globe,
-          style: "primary",
-        }),
-      ],
-      [
-        inlineBtn("Чили", `country_pick|${channelId}|CL`, {
-          emojiId: PREMIUM_EMOJI.globe,
-          style: "primary",
-        }),
-        inlineBtn("Мадагаскар", `country_pick|${channelId}|MG`, {
-          emojiId: PREMIUM_EMOJI.globe,
-          style: "primary",
-        }),
-      ],
-      [
-        inlineBtn("Джибути", `country_pick|${channelId}|DJ`, {
-          emojiId: PREMIUM_EMOJI.globe,
-          style: "primary",
-        }),
-        inlineBtn("Йордания", `country_pick|${channelId}|JO`, {
-          emojiId: PREMIUM_EMOJI.globe,
-          style: "primary",
-        }),
-      ],
+      [country("Мавритания", "MR"), country("Джибути", "DJ")],
+      [country("Буркина-Фасо", "BF"), country("Камерун", "CM")],
+      [country("Бенин", "BJ"), country("Коста-Рика", "CR")],
+      [country("Сенегал", "SN")],
       [inlineBtn("Назад", "channels:back", { emojiId: PREMIUM_EMOJI.back })],
     ],
   };

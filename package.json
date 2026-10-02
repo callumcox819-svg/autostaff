@@ -1,0 +1,41 @@
+{
+  "name": "pagernewtest",
+  "version": "1.0.0",
+  "description": "Clean Pager bot foundation with country playbooks and proof-driven transitions.",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "check": "tsc -p tsconfig.json --noEmit",
+    "dev": "tsx src/index.ts",
+    "start": "node dist/index.js",
+    "sync:scripts": "npm run build && node tools/sync-pager-scripts.mjs"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/callumcox819-svg/pagernewtest.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "bugs": {
+    "url": "https://github.com/callumcox819-svg/pagernewtest/issues"
+  },
+  "homepage": "https://github.com/callumcox819-svg/pagernewtest#readme",
+  "dependencies": {
+    "dotenv": "^17.4.2",
+    "fetch-cookie": "^3.2.0",
+    "pg": "^8.22.0",
+    "set-cookie-parser": "^3.1.1",
+    "tesseract.js": "^7.0.0",
+    "tough-cookie": "^6.0.1",
+    "yaml": "^2.8.1",
+    "zod": "^4.1.5"
+  },
+  "devDependencies": {
+    "@types/node": "^26.1.0",
+    "@types/pg": "^8.20.0",
+    "tsx": "^4.23.0",
+    "typescript": "^6.0.3"
+  }
+}

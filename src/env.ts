@@ -162,6 +162,14 @@ export function shouldPreferGraphqlApi(env: AppEnv): boolean {
   return Boolean(process.env.RAILWAY_ENVIRONMENT || process.env.RAILWAY_PROJECT_ID);
 }
 
+function trimmedProcessEnv(): NodeJS.ProcessEnv {
+  const out: NodeJS.ProcessEnv = {};
+  for (const [key, value] of Object.entries(process.env)) {
+    out[key] = typeof value === "string" ? value.trim() : value;
+  }
+  return out;
+}
+
 export function loadEnv(): AppEnv {
-  return envSchema.parse(process.env);
+  return envSchema.parse(trimmedProcessEnv());
 }

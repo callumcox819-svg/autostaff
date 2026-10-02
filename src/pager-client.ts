@@ -5,6 +5,7 @@ import {
   resolvePagerApiBaseUrl,
   resolvePagerWebBaseUrl,
 } from "./pager-urls.js";
+import { legacyOneXbetMarker } from "./melbet-guard.js";
 import { looksLikeLeakedChannelFolder } from "./status-folders.js";
 
 export type PagerChannel = {
@@ -953,6 +954,13 @@ export class PagerClient {
       attachments?: Array<{ type: string; payload: { url: string } }>;
     },
   ): Promise<boolean> {
+    const blocked = legacyOneXbetMarker(text);
+    if (blocked) {
+      console.error(
+        `Pager send blocked ${convId.slice(0, 8)}: legacy 1xbet marker "${blocked}". This bot sends Melbet saved replies only.`,
+      );
+      return false;
+    }
     const prepared = await this.prepareOutbound(convId, options?.conv, options?.userId);
     const userId = prepared.userId;
     let conv = prepared.conv;

@@ -32,7 +32,7 @@ export function buildAiLanguageLockRule(country: CountryCode): string {
   return [
     `CRITICAL LANGUAGE: The customer is in market ${country}.`,
     `Write your ENTIRE reply ONLY in ${label}.`,
-    `Do NOT use ${neverUse} in the reply (except brand names like 1xBET or MTN).`,
+    `Do NOT use ${neverUse} in the reply. The brand is Melbet, never 1xBET. Never invent a link or promo code.`,
     englishOnly
       ? "Always write in English even if the customer writes in French or another language."
       : country === "CM"

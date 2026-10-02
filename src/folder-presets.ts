@@ -38,6 +38,49 @@ export function folderMarketLanguage(country: string): PresetLanguage | undefine
   return isFolderMarket(country) ? FOLDER_MARKETS[country].language : undefined;
 }
 
+/** Infer Melbet country from a Pager saved-reply folder name (e.g. «Бенин» → BJ). */
+export function inferFolderMarketFromBankName(bankName?: string): FolderMarketCode | undefined {
+  if (!bankName?.trim()) {
+    return undefined;
+  }
+  const normalized = bankName
+    .normalize("NFD")
+    .replace(/\p{M}/gu, "")
+    .toLowerCase();
+  for (const code of Object.keys(FOLDER_MARKETS) as FolderMarketCode[]) {
+    if (FOLDER_MARKETS[code].hints.some((hint) => normalized.includes(hint))) {
+      return code;
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Melbet: if saved country is a stale 1xbet code (ZM/RW/…), recover from template folder.
+ */
+export function coerceMelbetCountry(
+  country: string | undefined,
+  templateBank?: string,
+  channelName?: string,
+): FolderMarketCode | undefined {
+  if (country && isFolderMarket(country)) {
+    return country;
+  }
+  const fromBank = inferFolderMarketFromBankName(templateBank);
+  if (fromBank) {
+    return fromBank;
+  }
+  if (channelName) {
+    const normalized = channelName.toLowerCase();
+    for (const code of Object.keys(FOLDER_MARKETS) as FolderMarketCode[]) {
+      if (FOLDER_MARKETS[code].hints.some((hint) => normalized.includes(hint))) {
+        return code;
+      }
+    }
+  }
+  return undefined;
+}
+
 export type PresetPlan =
   | { action: "send"; text: string; index: number; role: string; table: boolean }
   | { action: "hold"; reason: string };

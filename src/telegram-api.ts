@@ -364,14 +364,20 @@ export function getDeployLabel(): string {
 }
 
 const COUNTRY_LABELS: Record<string, string> = {
-  ZM: "ZM",
-  EG: "EG",
-  CM: "CM",
-  RW: "RW",
-  CL: "CL",
-  MG: "MG",
+  MR: "MR",
   DJ: "DJ",
-  JO: "JO",
+  BF: "BF",
+  CM: "CM",
+  BJ: "BJ",
+  CR: "CR",
+  SN: "SN",
+  // Stale 1xbet leftovers — show as needing a Melbet country pick.
+  ZM: "??",
+  EG: "??",
+  RW: "??",
+  CL: "??",
+  MG: "??",
+  JO: "??",
 };
 
 function truncateLabel(value: string, max = 14): string {

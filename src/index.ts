@@ -90,13 +90,16 @@ import {
   usesPostbackStatsForFetch,
 } from "./xpartners-postback.js";
 
-import { isFolderOnlyCountry } from "./folder-presets.js";
+import { isFolderMarket, isFolderOnlyCountry, coerceMelbetCountry, type FolderMarketCode } from "./folder-presets.js";
 import {
   defaultCountryForChannelName,
   formatRwLearningSummary,
   resolveWorkerCountryForChannel,
   type WorkerCountry,
 } from "./rw-learn.js";
+
+/** Melbet Auto Staff — only these countries are processed by the worker. */
+const MELBET_COUNTRY_CODES = ["MR", "DJ", "BF", "CM", "BJ", "CR", "SN"] as const satisfies ReadonlyArray<FolderMarketCode>;
 
 const COUNTRY_FOLDER_HINTS: Record<WorkerCountry, string[]> = {
   ZM: ["замб", "zamb", "zambia"],
@@ -114,31 +117,11 @@ const COUNTRY_FOLDER_HINTS: Record<WorkerCountry, string[]> = {
   SN: ["сенегал", "senegal", "sénégal"],
 };
 
-const OPERATOR_COUNTRY_CODES = new Set<WorkerCountry>([
-  "ZM",
-  "CM",
-  "EG",
-  "RW",
-  "CL",
-  "MG",
-  "DJ",
-  "JO",
-  "MR",
-  "BF",
-  "BJ",
-  "CR",
-  "SN",
-]);
+const OPERATOR_COUNTRY_CODES = new Set<WorkerCountry>([...MELBET_COUNTRY_CODES]);
 
 const CHANNEL_COUNTRY_DISPLAY: Record<string, string> = {
   CM: "Камерун",
-  EG: "Египет",
-  ZM: "Замбия",
-  RW: "Руанда",
-  CL: "Чили",
-  MG: "Мадагаскар",
   DJ: "Джибути",
-  JO: "Йордания",
   MR: "Мавритания",
   BF: "Буркина-Фасо",
   BJ: "Бенин",
@@ -154,6 +137,32 @@ function formatChannelIdSuffix(id: string): string {
 function parseOperatorCountry(value: string): WorkerCountry | undefined {
   const code = value.trim().toUpperCase();
   return OPERATOR_COUNTRY_CODES.has(code as WorkerCountry) ? (code as WorkerCountry) : undefined;
+}
+
+function isMelbetCountry(country: string | undefined): country is FolderMarketCode {
+  return Boolean(country && isFolderMarket(country));
+}
+
+/** Fix stale 1xbet countries (ZM/RW/…) using Melbet template folder name when possible. */
+function coerceMelbetRuntime(
+  runtime: ChannelRuntimeState,
+  channelName?: string,
+): ChannelRuntimeState {
+  const coerced = coerceMelbetCountry(runtime.country, runtime.templateBank, channelName);
+  if (coerced && coerced !== runtime.country) {
+    return { ...runtime, country: coerced };
+  }
+  return runtime;
+}
+
+function displayCountryLabel(country: string | undefined): string {
+  if (!country) {
+    return "??";
+  }
+  if (!isMelbetCountry(country)) {
+    return "?? (выбери страну)";
+  }
+  return CHANNEL_COUNTRY_DISPLAY[country] ?? country;
 }
 
 const env = loadEnv();
@@ -334,6 +343,13 @@ async function handleCallback(
     const page = Number(extra ?? "0");
     const runtime = getChannelRuntime(latestState, channel.id, channel.country);
     const nextEnabled = !isChannelEnabled(latestState, channel.id, runtime.enabled);
+    if (nextEnabled && !isMelbetCountry(runtime.country)) {
+      await telegram.answerCallbackQuery(
+        callbackId,
+        "Сначала выбери страну Melbet (кнопка ??)",
+      );
+      return;
+    }
     const nextState = await setChannelEnabled(chatId, latestState, channel.id, nextEnabled);
     await telegram.answerCallbackQuery(callbackId, nextEnabled ? "🟢 Включено" : "🔴 Выключено");
     if (messageId) {
@@ -369,7 +385,7 @@ async function handleCallback(
       }
 
       const { client } = sessionResult;
-      const convs = await client.listConversations({ channelId: channel.id, pageSize: 10 });
+      const convs = await client.listConversations({ channelId: channel.id, pageSize: 20 });
       const sorted = [...convs].sort((a, b) => {
         const ta = Date.parse(a.lastMessageAt ?? "") || 0;
         const tb = Date.parse(b.lastMessageAt ?? "") || 0;
@@ -379,21 +395,40 @@ async function handleCallback(
       let preview = "Нет чатов на этом канале.";
       let lastAt = "";
       if (latest) {
-        const msgs = await client.listMessages(latest.id, 1, 20);
-        const customerMsg = [...msgs].reverse().find((message) =>
-          isIncomingDirection(message.messageDirection),
-        );
+        const msgs = await client.listMessages(latest.id, 1, 40);
+        const incoming = [...msgs]
+          .reverse()
+          .filter((message) => isIncomingDirection(message.messageDirection))
+          .slice(0, 3)
+          .map((message) => (message.text ?? "").trim().slice(0, 120))
+          .filter(Boolean);
         const fallback = msgs[msgs.length - 1];
-        const snippet = (customerMsg?.text ?? fallback?.text ?? "").trim().slice(0, 160);
+        const fallbackText = (fallback?.text ?? "").trim().slice(0, 160);
         lastAt = latest.lastMessageAt
           ? new Date(latest.lastMessageAt).toLocaleString("ru-RU")
           : "";
-        preview = snippet || "(без текста — возможно фото или стикер)";
+        if (incoming.length) {
+          preview = incoming.map((text, index) => `${index + 1}) ${text}`).join("\n");
+        } else {
+          preview = fallbackText || "(без текста — возможно фото или стикер)";
+        }
       }
 
       const suffix = formatChannelIdSuffix(channel.id);
-      const source = row?.channelSource ? `\nFB page: ${row.channelSource}` : "";
-      const countryLabel = CHANNEL_COUNTRY_DISPLAY[row?.country ?? channel.country] ?? row?.country;
+      const source = row?.channelSource ? `\nИсточник: ${row.channelSource}` : "";
+      const country = row?.country ?? channel.country;
+      const countryLabel = displayCountryLabel(country);
+      const melbetOk = isMelbetCountry(country);
+      const warning = melbetOk
+        ? ""
+        : [
+            "",
+            "⚠️ Бот Melbet НЕ отвечает на этом канале:",
+            "страна не Melbet (ZM/RW/… — остаток 1xbet).",
+            "Жми кнопку страны и выбери Мавритания/Бенин/Камерун/…",
+            "Потом папку шаблонов под эту страну.",
+          ].join("\n");
+
       await telegram.sendMessage(
         chatId,
         [
@@ -404,10 +439,15 @@ async function handleCallback(
           "",
           `Последний чат${lastAt ? ` (${lastAt})` : ""}:`,
           preview,
+          warning,
           "",
-          "Сверь с Pager/Facebook — какая страница даёт такой лид.",
-          "Если страна неверна — жми кнопку страны (CM/EG/…) у этого канала.",
-        ].join("\n"),
+          "Сверь текст с Pager/Facebook — у одинаковых имён разный ID.",
+          melbetOk
+            ? "Если страна неверна — жми кнопку страны (MR/BJ/CM/…) у этого канала."
+            : "",
+        ]
+          .filter((line) => line !== undefined)
+          .join("\n"),
       );
     } catch (error) {
       await telegram.sendMessage(chatId, `Не удалось загрузить чат: ${formatError(error)}`);
@@ -489,19 +529,9 @@ async function handleCallback(
     const nextState = await stateStore.get(chatId) ?? state;
     await telegram.answerCallbackQuery(
       callbackId,
-      country === "RW"
-        ? "Руанда · авто-воронка"
-        : country === "CL"
-          ? "Чили · локальные скрипты ES/EN/FR"
-          : country === "MG"
-            ? "Мадагаскар · FR · MAD778"
-            :       country === "DJ"
-              ? "Джибути · сохранённые ответы"
-              : country === "JO"
-                ? "Йордания · AR · JOR778"
-            : CHANNEL_COUNTRY_DISPLAY[country]
-              ? `${CHANNEL_COUNTRY_DISPLAY[country]} · сохранённые ответы`
-            : `Страна: ${country}`,
+      CHANNEL_COUNTRY_DISPLAY[country]
+        ? `${CHANNEL_COUNTRY_DISPLAY[country]} · сохранённые ответы Melbet`
+        : `Страна: ${country}`,
     );
     await showChannelsMenu(chatId, nextState, messageId);
     return;
@@ -1163,7 +1193,7 @@ function getSelectableChannels(state: ChatState) {
   if (liveChannels.length > 0) {
     return liveChannels.map((channel) => {
       const fallbackCountry = inferCountryFromName(channel.name);
-      const runtime = getChannelRuntime(state, channel.id, fallbackCountry);
+      const runtime = getChannelRuntime(state, channel.id, fallbackCountry, channel.name);
       return {
         id: channel.id,
         name: channel.name,
@@ -1176,7 +1206,7 @@ function getSelectableChannels(state: ChatState) {
   }
 
   return config.channels.map((channel) => {
-    const runtime = getChannelRuntime(state, channel.id, channel.country);
+    const runtime = getChannelRuntime(state, channel.id, channel.country, channel.name);
     return {
       id: channel.id,
       name: channel.name,
@@ -1251,14 +1281,17 @@ async function setAllChannelsEnabled(
   enabled: boolean,
 ): Promise<ChatState | undefined> {
   const selectable = getSelectableChannels(state);
-  const enabledIds = enabled ? selectable.map((channel) => channel.id) : [];
+  const enabledIds = enabled
+    ? selectable.filter((channel) => isMelbetCountry(channel.country)).map((channel) => channel.id)
+    : [];
   const channels: Record<string, ChannelRuntimeState> = { ...(state.channels ?? {}) };
 
   for (const channel of selectable) {
-    const runtime = getChannelRuntime(state, channel.id, channel.country);
+    const runtime = getChannelRuntime(state, channel.id, channel.country, channel.name);
+    const canEnable = enabled && isMelbetCountry(runtime.country);
     channels[channel.id] = {
       ...runtime,
-      enabled,
+      enabled: canEnable,
     };
   }
 
@@ -1300,8 +1333,17 @@ function mergeChannelsOnLogin(
   const merged: Record<string, ChannelRuntimeState> = { ...defaults };
   for (const [channelId, runtime] of Object.entries(state.channels ?? {})) {
     if (merged[channelId]) {
-      merged[channelId] = { ...merged[channelId], ...runtime };
+      const channelName = channels.find((channel) => channel.id === channelId)?.name;
+      merged[channelId] = coerceMelbetRuntime(
+        { ...merged[channelId], ...runtime },
+        channelName,
+      );
     }
+  }
+
+  for (const channelId of Object.keys(merged)) {
+    const channelName = channels.find((channel) => channel.id === channelId)?.name;
+    merged[channelId] = coerceMelbetRuntime(merged[channelId], channelName);
   }
 
   const liveIds = new Set(channels.map((channel) => channel.id));
@@ -1331,19 +1373,23 @@ function getChannelRuntime(
   state: ChatState,
   channelId: string,
   fallbackCountry: WorkerCountry,
+  channelName?: string,
 ) {
   const existing = state.channels?.[channelId];
   if (existing) {
-    return existing;
+    return coerceMelbetRuntime(existing, channelName);
   }
 
   const bank = pickTemplateBankFromLiveBanks(getLiveTemplateBanks(state), fallbackCountry);
-  return {
-    enabled: false,
-    country: fallbackCountry,
-    templateBank: bank?.name,
-    templateBankId: bank?.id,
-  };
+  return coerceMelbetRuntime(
+    {
+      enabled: false,
+      country: fallbackCountry,
+      templateBank: bank?.name,
+      templateBankId: bank?.id,
+    },
+    channelName,
+  );
 }
 
 function pickTemplateBankFromLiveBanks(
@@ -1362,10 +1408,11 @@ function pickTemplateBankFromLiveBanks(
   if (matched) {
     return matched;
   }
-  if (isFolderOnlyCountry(country)) {
+  // Melbet: never fall back to a random first folder (that caused Rwanda→Benin).
+  if (isFolderMarket(country) || isFolderOnlyCountry(country)) {
     return undefined;
   }
-  return banks[0];
+  return undefined;
 }
 
 function buildChannelRuntimeMap(
@@ -1605,7 +1652,36 @@ async function refreshPagerData(chatId: number, state: ChatState): Promise<ChatS
       session.channels.map((channel) => ({ id: channel.id, name: channel.name })),
       session.templateBanks.map((bank) => ({ id: bank.id, name: bank.name })),
     );
-    const mergedChannels = { ...defaults, ...(state.channels ?? {}) };
+    const mergedChannels: Record<string, ChannelRuntimeState> = {};
+    const allIds = new Set([...Object.keys(defaults), ...Object.keys(state.channels ?? {})]);
+    for (const channelId of allIds) {
+      const channelName =
+        session.channels.find((channel) => channel.id === channelId)?.name ?? "";
+      const runtime = coerceMelbetRuntime(
+        {
+          ...(defaults[channelId] ?? {
+            enabled: false,
+            country: defaultCountryForChannelName(channelName),
+          }),
+          ...(state.channels?.[channelId] ?? {}),
+        },
+        channelName,
+      );
+      // If country was coerced from template bank, also align bank when missing match.
+      if (isMelbetCountry(runtime.country) && !runtime.templateBank) {
+        const bank = pickTemplateBankFromLiveBanks(
+          session.templateBanks.map((item) => ({ id: item.id, name: item.name })),
+          runtime.country,
+        );
+        mergedChannels[channelId] = {
+          ...runtime,
+          templateBank: bank?.name ?? runtime.templateBank,
+          templateBankId: bank?.id ?? runtime.templateBankId,
+        };
+      } else {
+        mergedChannels[channelId] = runtime;
+      }
+    }
     const enabledChannelIds = collectEnabledChannelIds({
       ...state,
       channels: mergedChannels,
@@ -1975,7 +2051,15 @@ function buildChannelsMenuCaption(state: ChatState, page = 0): string {
   const pageLabel = totalPages > 1 ? ` · стр. ${safePage + 1}/${totalPages}` : "";
 
   const base = `Каналы ${enabled}/${channels.length}${pageLabel} · build ${getDeployLabel()}`;
-  return hasDuplicateNames ? `${base}\nОдинаковые имена — жми ℹ️.` : base;
+  const needsCountry = channels.filter((channel) => !isMelbetCountry(channel.country)).length;
+  const hints: string[] = [];
+  if (hasDuplicateNames) {
+    hints.push("Одинаковые имена — жми ℹ️ (смотри ID и текст чата).");
+  }
+  if (needsCountry > 0) {
+    hints.push(`⚠️ ${needsCountry} канал(ов) без страны Melbet (кнопка ??) — бот их не обрабатывает.`);
+  }
+  return hints.length ? `${base}\n${hints.join("\n")}` : base;
 }
 
 async function sendPagerAccountMenu(chatId: number, state: ChatState) {

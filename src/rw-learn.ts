@@ -6,12 +6,14 @@ import {
   type RwScriptDraft,
   type RwScriptDrafts,
 } from "./rw-script-engine.js";
-import { FOLDER_ONLY_COUNTRIES, FOLDER_MARKETS } from "./folder-presets.js";
+import { FOLDER_MARKETS, isFolderMarket } from "./folder-presets.js";
 import {
   isInProgressStatusConversation,
   isNoStatusConversation,
   isRwCompletedConversation,
 } from "./status-folders.js";
+
+export { isFolderMarket };
 
 /** Каналы с первого скрина — наблюдение до полноценных шаблонов RW. */
 export const RW_LEARN_CHANNEL_HINTS = [
@@ -152,53 +154,37 @@ export function resolveWorkerCountryForChannel(
   savedCountry?: WorkerCountry,
   yamlCountry?: WorkerCountry,
 ): WorkerCountry {
-  // Operator override always wins (e.g. Tchouameni channel set to MG manually).
-  if (savedCountry) {
+  // Melbet operator override only when it is a Melbet folder market.
+  if (savedCountry && isFolderMarket(savedCountry)) {
     return savedCountry;
-  }
-  if (isClChannelName(channelName)) {
-    return "CL";
-  }
-  if (isMgChannelName(channelName)) {
-    return "MG";
   }
   if (isDjChannelName(channelName)) {
     return "DJ";
   }
-  if (isJoChannelName(channelName)) {
-    return "JO";
-  }
-  return yamlCountry ?? defaultCountryForChannelName(channelName);
+  return yamlCountry && isFolderMarket(yamlCountry)
+    ? yamlCountry
+    : defaultCountryForChannelName(channelName);
 }
 
+/**
+ * Melbet bot: infer country only from Melbet folder markets.
+ * Unknown names stay without a Melbet country (sentinel ZM) so the worker
+ * skips until the operator picks MR/DJ/BF/CM/BJ/CR/SN.
+ */
 export function defaultCountryForChannelName(name: string): WorkerCountry {
-  if (isRwLearnChannelName(name)) {
-    return "RW";
-  }
-  if (isClChannelName(name)) {
-    return "CL";
-  }
-  if (isMgChannelName(name)) {
-    return "MG";
+  const normalized = name.toLowerCase();
+  if (/moukoko|ndzi|cameroon|cm|tchouameni|cameroun/.test(normalized)) {
+    return "CM";
   }
   if (isDjChannelName(name)) {
     return "DJ";
   }
-  if (isJoChannelName(name)) {
-    return "JO";
-  }
-  const normalized = name.toLowerCase();
-  if (/mahmoud|anas|ahmad|moulaye|egypt|eg/.test(normalized)) {
-    return "EG";
-  }
-  if (/moukoko|ndzi|cameroon|cm|tchouameni/.test(normalized)) {
-    return "CM";
-  }
-  for (const code of FOLDER_ONLY_COUNTRIES) {
+  for (const code of Object.keys(FOLDER_MARKETS) as Array<keyof typeof FOLDER_MARKETS>) {
     if (FOLDER_MARKETS[code].hints.some((hint) => normalized.includes(hint))) {
       return code;
     }
   }
+  // Sentinel: not a Melbet market — UI shows "??", worker skips until operator picks.
   return "ZM";
 }
 

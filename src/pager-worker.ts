@@ -28,6 +28,7 @@ import { extractCmClientLoginId17 } from "./cm-proof.js";
 import { looksLikeOwnScriptEcho } from "./funnel-outbound.js";
 import { isLinkAccessProblemMessage, isCustomerClarificationMessage, isScamOrTrustQuestion } from "./customer-clarity.js";
 import {
+  coerceMelbetCountry,
   folderMarketLanguage,
   isFolderMarket,
   isFolderOnlyCountry,
@@ -1696,7 +1697,7 @@ async function processConversation(
   const workerCountry = runtime.runtime.country;
   if (!isFolderMarket(workerCountry)) {
     console.log(
-      `Pager worker: skip ${workingConv.id.slice(0, 8)} country=${workerCountry} — Melbet saved replies only, 1xbet scripts disabled`,
+      `Pager worker: skip ${workingConv.id.slice(0, 8)} country=${workerCountry} — Melbet only (pick MR/DJ/BF/CM/BJ/CR/SN)`,
     );
     return false;
   }
@@ -5286,13 +5287,16 @@ function getEnabledChannels(config: BotConfig, state: ChatState): EnabledChannel
         continue;
       }
       const yamlChannel = getChannelConfig(config, channel.id);
-      const country = resolveWorkerCountryForChannel(
+      const saved = state.channels?.[channel.id];
+      const resolved = resolveWorkerCountryForChannel(
         channel.name,
-        state.channels?.[channel.id]?.country,
+        saved?.country,
         yamlChannel?.country,
       );
+      const country =
+        coerceMelbetCountry(resolved, saved?.templateBank ?? yamlChannel?.templateBank, channel.name) ??
+        resolved;
       const bank = pickLiveTemplateBank(state, country);
-      const saved = state.channels?.[channel.id];
       const runtime: ChannelRuntimeState = saved
         ? { ...saved, country }
         : {
@@ -5314,13 +5318,19 @@ function getEnabledChannels(config: BotConfig, state: ChatState): EnabledChannel
       }
       const yamlChannel = getChannelConfig(config, channelId);
       const liveChannel = liveChannels.find((channel) => channel.id === channelId);
-      const country = resolveWorkerCountryForChannel(
+      const saved = state.channels?.[channelId];
+      const resolved = resolveWorkerCountryForChannel(
         liveChannel?.name ?? yamlChannel?.name ?? "",
-        state.channels?.[channelId]?.country,
+        saved?.country,
         yamlChannel?.country,
       );
+      const country =
+        coerceMelbetCountry(
+          resolved,
+          saved?.templateBank ?? yamlChannel?.templateBank,
+          liveChannel?.name ?? yamlChannel?.name,
+        ) ?? resolved;
       const bank = pickLiveTemplateBank(state, country);
-      const saved = state.channels?.[channelId];
       const runtime: ChannelRuntimeState = saved
         ? { ...saved, country }
         : {

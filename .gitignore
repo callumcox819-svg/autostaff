@@ -1,7 +1,5 @@
-__pycache__/
-*.py[cod]
+node_modules/
+dist/
 .env
-*.db
-.venv/
-venv/
-.gag_bot.pid
+data/
+tools/.pager-cookie

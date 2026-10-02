@@ -1,12 +1,8 @@
-# Один startCommand для всех сервисов репо; роль: Variables → APP_ROLE
-# newbot: APP_ROLE=bot (или не задавать)
-# imap-worker: APP_ROLE=imap_worker
-# См. docs/railway-imap-worker.md
-
 [build]
-builder = "NIXPACKS"
+builder = "nixpacks"
+buildCommand = "npm install && npm run build"
 
 [deploy]
-startCommand = "sh scripts/railway-start.sh"
+startCommand = "npm start"
 restartPolicyType = "ON_FAILURE"
-restartPolicyMaxRetries = 5
+restartPolicyMaxRetries = 10

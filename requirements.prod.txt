@@ -1,2 +1,0 @@
-# Синхронизировано с requirements.txt (Railway читает только requirements.txt).
--r requirements.txt

@@ -117,15 +117,40 @@ function replyHasUrl(text: string): boolean {
   return /https?:\/\/|tinyurl\.com|bit\.ly|t\.me\/|www\./i.test(text);
 }
 
-/** Registration instructions that promise a link but do not contain the URL yet. */
-export function isRegistrationWithoutLink(text: string): boolean {
-  if (replyHasUrl(text)) {
-    return false;
-  }
+function looksLikeRegistrationCopy(text: string): boolean {
   const folded = foldPresetText(text);
-  return /voici le lien|here is the link|este es el enlace|aqui esta el enlace|aqui tienes el enlace|lien special pour|lien d'inscription|special registration link|enlace especial/.test(
+  return /voici le lien|here is the link|este es el enlace|aqui esta el enlace|aqui tienes el enlace|lien special|lien d'inscription|special registration link|enlace especial|je vais vous envoyer un lien|te enviare un enlace|te envio el enlace|codigo promo|code promo/.test(
     folded,
   );
+}
+
+/**
+ * Registration instructions with the URL in the next saved reply.
+ * Same rule for every Melbet country: the link bubble follows the registration text.
+ */
+export function isRegistrationWithoutLink(
+  text: string,
+  replies?: PagerSavedReply[],
+  index?: number,
+): boolean {
+  if (!text.trim() || replyHasUrl(text) || isTablePresetText(text)) {
+    return false;
+  }
+  if (replies && index != null) {
+    for (let cursor = index + 1; cursor < replies.length && cursor <= index + 2; cursor += 1) {
+      const next = replies[cursor];
+      if (!next?.text.trim() || isTablePresetText(next.text)) {
+        break;
+      }
+      if (replyHasUrl(next.text)) {
+        return true;
+      }
+      if (next.text.trim().length > 180) {
+        break;
+      }
+    }
+  }
+  return looksLikeRegistrationCopy(text);
 }
 
 function replyWasSent(replyText: string, outgoingTexts: string[]): boolean {
@@ -168,7 +193,7 @@ export function registrationBundle(replies: PagerSavedReply[], start: number): P
     return [];
   }
   const bubbles = [first];
-  if (!isRegistrationWithoutLink(first.text)) {
+  if (!isRegistrationWithoutLink(first.text, replies, start)) {
     return bubbles;
   }
   for (let cursor = start + 1; cursor < replies.length && bubbles.length < 3; cursor += 1) {
@@ -316,7 +341,7 @@ export function folderRegistrationLinkWasSent(
 ): boolean {
   for (let index = 0; index < replies.length; index += 1) {
     const reply = replies[index];
-    if (!reply || !isRegistrationWithoutLink(reply.text) || !replyWasSent(reply.text, outgoingTexts)) {
+    if (!reply || !isRegistrationWithoutLink(reply.text, replies, index) || !replyWasSent(reply.text, outgoingTexts)) {
       continue;
     }
     const link = registrationBundle(replies, index).find((bubble) => replyHasUrl(bubble.text));
@@ -324,7 +349,12 @@ export function folderRegistrationLinkWasSent(
       return true;
     }
   }
-  return false;
+  return replies.some(
+    (reply) =>
+      replyHasUrl(reply.text) &&
+      replyWasSent(reply.text, outgoingTexts) &&
+      looksLikeRegistrationCopy(reply.text),
+  );
 }
 
 /** Registration already went out, but the link saved-reply after it did not. */
@@ -333,7 +363,7 @@ export function planMissingRegistrationLink(
   outgoingTexts: string[],
 ): PresetBubble[] | null {
   const last = lastSentPresetIndex(replies, outgoingTexts);
-  if (last < 0 || !isRegistrationWithoutLink(replies[last]?.text ?? "")) {
+  if (last < 0 || !isRegistrationWithoutLink(replies[last]?.text ?? "", replies, last)) {
     return null;
   }
   const missing = registrationBundle(replies, last)

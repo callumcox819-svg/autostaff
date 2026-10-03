@@ -263,6 +263,37 @@ function isBareAgreement(language: PresetLanguage, text: string): boolean {
   return pattern.test(folded);
 }
 
+/** Customer is moving the saved-reply funnel forward, not only a bare «oui». */
+function shouldAdvancePreset(language: PresetLanguage, text: string): boolean {
+  if (isDecline(language, text)) {
+    return false;
+  }
+  const folded = foldPresetText(text).replace(/[!?.…]+$/g, "").trim();
+  if (!folded || folded.length > 120) {
+    return false;
+  }
+  if (/\b(arnaque|scam|voleur|faux numero|faux compte)\b/.test(folded)) {
+    return false;
+  }
+  if (isBareAgreement(language, text)) {
+    return true;
+  }
+  if (language === "es") {
+    if (/^(aok|ok+|si+|quiero|me interesa|mas info|necesito ayuda)/.test(folded) || /\b(invertir|informacion|ayuda)\b/.test(folded)) {
+      return true;
+    }
+  } else if (
+    /^(aok|okk|ok+|ouii|wi+|plus d'infos?|plus dinfos|infos|je voulais|j'ai besoin|besoin d'aide|aidemoi|aide moi|aidez)/.test(
+      folded,
+    ) ||
+    /\b(investir|investissement|interesse|plus d'info|besoin d'aide|gagner de l'argent)\b/.test(folded)
+  ) {
+    return true;
+  }
+  // Short replies after a script («Aok», «Je voulais investir») must not leave the chat stuck.
+  return folded.length <= 80;
+}
+
 function isTableAmountChoice(text: string): boolean {
   const folded = foldPresetText(text);
   if (!folded || folded.length > 40 || text.includes("?")) {
@@ -312,7 +343,8 @@ export function planFolderPresetAdvance(
     };
   }
 
-  const agreed = isBareAgreement(language, customerText) || (last === tableIndex && isTableAmountChoice(customerText));
+  const agreed =
+    shouldAdvancePreset(language, customerText) || (last === tableIndex && isTableAmountChoice(customerText));
   if (!agreed) {
     return null;
   }

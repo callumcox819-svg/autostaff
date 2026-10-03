@@ -309,6 +309,24 @@ export function planFolderPresetAdvance(
   };
 }
 
+/** Registration instructions and the link bubble after them are both already in the thread. */
+export function folderRegistrationLinkWasSent(
+  replies: PagerSavedReply[],
+  outgoingTexts: string[],
+): boolean {
+  for (let index = 0; index < replies.length; index += 1) {
+    const reply = replies[index];
+    if (!reply || !isRegistrationWithoutLink(reply.text) || !replyWasSent(reply.text, outgoingTexts)) {
+      continue;
+    }
+    const link = registrationBundle(replies, index).find((bubble) => replyHasUrl(bubble.text));
+    if (link && replyWasSent(link.text, outgoingTexts)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 /** Registration already went out, but the link saved-reply after it did not. */
 export function planMissingRegistrationLink(
   replies: PagerSavedReply[],

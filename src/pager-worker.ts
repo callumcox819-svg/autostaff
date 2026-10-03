@@ -32,6 +32,7 @@ import {
   folderMarketLanguage,
   isFolderMarket,
   isFolderOnlyCountry,
+  folderRegistrationLinkWasSent,
   planFolderPresetAdvance,
   planMissingRegistrationLink,
   type PresetBubble,
@@ -4578,7 +4579,29 @@ async function trySendFolderPreset(
   console.log(
     `Pager worker: ${runtime.runtime.country} ${convId.slice(0, 8)} ${plan.bubbles.map((bubble) => bubble.role).join("+")}${plan.table ? " table" : ""} from saved replies, no AI`,
   );
-  await deliverPresetBubbles(deps, state, client, conv, runtime, convId, convState, lastIncoming, plan.bubbles);
+  const sentTexts = await deliverPresetBubbles(
+    deps,
+    state,
+    client,
+    conv,
+    runtime,
+    convId,
+    convState,
+    lastIncoming,
+    plan.bubbles,
+  );
+  if (sentTexts.length) {
+    await moveToRegistrationFolderIfLinkSent(
+      deps,
+      state,
+      client,
+      conv,
+      runtime,
+      convId,
+      replies,
+      [...outgoingTexts, ...sentTexts],
+    );
+  }
   return true;
 }
 
@@ -4592,8 +4615,8 @@ async function deliverPresetBubbles(
   convState: ConversationRuntimeState,
   lastIncoming: PagerMessage | undefined,
   bubbles: PresetBubble[],
-): Promise<boolean> {
-  let sentAny = false;
+): Promise<string[]> {
+  const sentTexts: string[] = [];
   for (const bubble of bubbles) {
     let sent = false;
     for (let attempt = 1; attempt <= 2; attempt += 1) {
@@ -4611,9 +4634,9 @@ async function deliverPresetBubbles(
         sendFailures: (convState.sendFailures ?? 0) + 1,
       });
       console.error(`Pager worker: preset send failed ${convId.slice(0, 8)} ${bubble.role}`);
-      return sentAny;
+      return sentTexts;
     }
-    sentAny = true;
+    sentTexts.push(bubble.text.trim());
     await patchConversationState(deps.stateStore, state.chatId, convId, {
       conversationId: convId,
       channelId: runtime.channelId,
@@ -4628,7 +4651,33 @@ async function deliverPresetBubbles(
       await sleep(700);
     }
   }
-  return sentAny;
+  return sentTexts;
+}
+
+async function moveToRegistrationFolderIfLinkSent(
+  deps: WorkerDeps,
+  state: ChatState,
+  client: PagerClient,
+  conv: PagerConversation,
+  runtime: EnabledChannel,
+  convId: string,
+  replies: Awaited<ReturnType<PagerClient["getSavedReplies"]>>,
+  outgoingTexts: string[],
+): Promise<boolean> {
+  if (!folderRegistrationLinkWasSent(replies, outgoingTexts)) {
+    return false;
+  }
+  return maybeEnsureInProgressAfterRegLink(
+    deps,
+    state,
+    client,
+    conv,
+    convId,
+    runtime.channelId,
+    runtime.runtime.country,
+    outgoingTexts,
+    () => true,
+  );
 }
 
 async function trySendMissingRegistrationLink(
@@ -4658,13 +4707,34 @@ async function trySendMissingRegistrationLink(
     return false;
   }
   const missing = planMissingRegistrationLink(replies, outgoingTexts);
-  if (!missing?.length) {
-    return false;
+  let covered = [...outgoingTexts];
+  if (missing?.length) {
+    console.log(
+      `Pager worker: ${runtime.runtime.country} ${convId.slice(0, 8)} registration link follow-up ${missing.map((bubble) => bubble.role).join("+")}`,
+    );
+    const sentTexts = await deliverPresetBubbles(
+      deps,
+      state,
+      client,
+      conv,
+      runtime,
+      convId,
+      convState,
+      undefined,
+      missing,
+    );
+    covered = [...outgoingTexts, ...sentTexts];
   }
-  console.log(
-    `Pager worker: ${runtime.runtime.country} ${convId.slice(0, 8)} registration link follow-up ${missing.map((bubble) => bubble.role).join("+")}`,
+  return moveToRegistrationFolderIfLinkSent(
+    deps,
+    state,
+    client,
+    conv,
+    runtime,
+    convId,
+    replies,
+    covered,
   );
-  return deliverPresetBubbles(deps, state, client, conv, runtime, convId, convState, undefined, missing);
 }
 
 async function processFolderMarketConversation(

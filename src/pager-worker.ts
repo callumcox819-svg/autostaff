@@ -33,6 +33,8 @@ import {
   isFolderMarket,
   isFolderOnlyCountry,
   planFolderPresetAdvance,
+  planMissingRegistrationLink,
+  type PresetBubble,
 } from "./folder-presets.js";
 import {
   defaultCountryForChannelName,
@@ -2073,6 +2075,20 @@ async function processCmConversation(
       catchUpRead: isCatchUpReadActive(currentState.catchUpRead),
     })
   ) {
+    if (
+      await trySendMissingRegistrationLink(
+        deps,
+        state,
+        client,
+        conv,
+        runtime,
+        convId,
+        convState,
+        outgoingTexts,
+      )
+    ) {
+      return true;
+    }
     console.log(
       `Pager worker: skip ${convId.slice(0, 8)} CM — bot_spoke_last (awaiting_customer)`,
     );
@@ -3370,6 +3386,7 @@ async function processDjConversation(
   }
 
   const operatorUserIdEarly = await client.probeOperatorUserId();
+  const outgoingTexts = collectDjOutgoingTexts(messages);
   if (
     shouldSkipConversationBotSpokeLast(conv, sorted, lastIncoming, {
       operatorUserId: operatorUserIdEarly,
@@ -3377,13 +3394,25 @@ async function processDjConversation(
       catchUpRead: isCatchUpReadActive(currentState.catchUpRead),
     })
   ) {
+    if (
+      await trySendMissingRegistrationLink(
+        deps,
+        state,
+        client,
+        conv,
+        runtime,
+        convId,
+        convState,
+        outgoingTexts,
+      )
+    ) {
+      return true;
+    }
     console.log(
       `Pager worker: skip ${convId.slice(0, 8)} DJ — bot_spoke_last (awaiting_customer)`,
     );
     return false;
   }
-
-  const outgoingTexts = collectDjOutgoingTexts(messages);
   const latestCustomerText = (lastIncoming.text || "").trim();
   const recentCustomerTexts = recentCustomerMessageTexts(sorted, conv);
   const djNewLeadBypass =
@@ -4547,37 +4576,95 @@ async function trySendFolderPreset(
   }
 
   console.log(
-    `Pager worker: ${runtime.runtime.country} ${convId.slice(0, 8)} ${plan.role}${plan.table ? " table" : ""} from saved replies, no AI`,
+    `Pager worker: ${runtime.runtime.country} ${convId.slice(0, 8)} ${plan.bubbles.map((bubble) => bubble.role).join("+")}${plan.table ? " table" : ""} from saved replies, no AI`,
   );
-  let sent = false;
-  for (let attempt = 1; attempt <= 2; attempt += 1) {
-    sent = await client.sendMessageReliable(convId, plan.text.trim(), {
-      channelId: runtime.channelId,
-      conv,
-    });
-    if (sent) {
-      break;
-    }
-    await sleep(600 * attempt);
-  }
-  if (!sent) {
-    await patchConversationState(deps.stateStore, state.chatId, convId, {
-      sendFailures: (convState.sendFailures ?? 0) + 1,
-    });
-    console.error(`Pager worker: preset send failed ${convId.slice(0, 8)} ${plan.role}`);
-    return true;
-  }
-  await patchConversationState(deps.stateStore, state.chatId, convId, {
-    conversationId: convId,
-    channelId: runtime.channelId,
-    lastCustomerMessageId: lastIncoming.id,
-    lastCustomerMessageAt: lastIncoming.createdAt,
-    lastReplyAt: new Date().toISOString(),
-    lastReplyRole: plan.role,
-    funnelStep: plan.index + 1,
-    sendFailures: 0,
-  });
+  await deliverPresetBubbles(deps, state, client, conv, runtime, convId, convState, lastIncoming, plan.bubbles);
   return true;
+}
+
+async function deliverPresetBubbles(
+  deps: WorkerDeps,
+  state: ChatState,
+  client: PagerClient,
+  conv: PagerConversation,
+  runtime: EnabledChannel,
+  convId: string,
+  convState: ConversationRuntimeState,
+  lastIncoming: PagerMessage | undefined,
+  bubbles: PresetBubble[],
+): Promise<boolean> {
+  let sentAny = false;
+  for (const bubble of bubbles) {
+    let sent = false;
+    for (let attempt = 1; attempt <= 2; attempt += 1) {
+      sent = await client.sendMessageReliable(convId, bubble.text.trim(), {
+        channelId: runtime.channelId,
+        conv,
+      });
+      if (sent) {
+        break;
+      }
+      await sleep(600 * attempt);
+    }
+    if (!sent) {
+      await patchConversationState(deps.stateStore, state.chatId, convId, {
+        sendFailures: (convState.sendFailures ?? 0) + 1,
+      });
+      console.error(`Pager worker: preset send failed ${convId.slice(0, 8)} ${bubble.role}`);
+      return sentAny;
+    }
+    sentAny = true;
+    await patchConversationState(deps.stateStore, state.chatId, convId, {
+      conversationId: convId,
+      channelId: runtime.channelId,
+      lastCustomerMessageId: lastIncoming?.id,
+      lastCustomerMessageAt: lastIncoming?.createdAt,
+      lastReplyAt: new Date().toISOString(),
+      lastReplyRole: bubble.role,
+      funnelStep: bubble.index + 1,
+      sendFailures: 0,
+    });
+    if (bubble !== bubbles[bubbles.length - 1]) {
+      await sleep(700);
+    }
+  }
+  return sentAny;
+}
+
+async function trySendMissingRegistrationLink(
+  deps: WorkerDeps,
+  state: ChatState,
+  client: PagerClient,
+  conv: PagerConversation,
+  runtime: EnabledChannel,
+  convId: string,
+  convState: ConversationRuntimeState,
+  outgoingTexts: string[],
+): Promise<boolean> {
+  const language = folderMarketLanguage(runtime.runtime.country);
+  if (!language || !isFolderMarket(runtime.runtime.country)) {
+    return false;
+  }
+  const folderId =
+    runtime.runtime.templateBankId || pickLiveTemplateBank(state, runtime.runtime.country)?.id;
+  if (!folderId) {
+    return false;
+  }
+  let replies;
+  try {
+    replies = await client.getSavedReplies(folderId);
+  } catch (error) {
+    console.warn(`Pager worker: saved replies failed ${convId.slice(0, 8)}:`, formatError(error));
+    return false;
+  }
+  const missing = planMissingRegistrationLink(replies, outgoingTexts);
+  if (!missing?.length) {
+    return false;
+  }
+  console.log(
+    `Pager worker: ${runtime.runtime.country} ${convId.slice(0, 8)} registration link follow-up ${missing.map((bubble) => bubble.role).join("+")}`,
+  );
+  return deliverPresetBubbles(deps, state, client, conv, runtime, convId, convState, undefined, missing);
 }
 
 async function processFolderMarketConversation(
@@ -4608,6 +4695,12 @@ async function processFolderMarketConversation(
     return false;
   }
   const operatorUserId = await client.probeOperatorUserId();
+  const outgoingTexts = messages
+    .filter((message) => {
+      const direction = (message.messageDirection ?? "").toLowerCase();
+      return (direction === "outgoing" || direction === "out") && Boolean((message.text || "").trim());
+    })
+    .map((message) => (message.text || "").trim());
   if (
     shouldSkipConversationBotSpokeLast(conv, sorted, lastIncoming, {
       operatorUserId,
@@ -4615,15 +4708,17 @@ async function processFolderMarketConversation(
       catchUpRead: isCatchUpReadActive(currentState.catchUpRead),
     })
   ) {
-    return false;
+    return trySendMissingRegistrationLink(
+      deps,
+      state,
+      client,
+      conv,
+      runtime,
+      convId,
+      convState,
+      outgoingTexts,
+    );
   }
-
-  const outgoingTexts = messages
-    .filter((message) => {
-      const direction = (message.messageDirection ?? "").toLowerCase();
-      return (direction === "outgoing" || direction === "out") && Boolean((message.text || "").trim());
-    })
-    .map((message) => (message.text || "").trim());
   const latestCustomerText = (lastIncoming.text || "").trim();
   if (
     !(await ensureCustomerMessageEligible(

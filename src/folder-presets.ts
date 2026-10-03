@@ -81,8 +81,14 @@ export function coerceMelbetCountry(
   return undefined;
 }
 
+export type PresetBubble = {
+  text: string;
+  index: number;
+  role: string;
+};
+
 export type PresetPlan =
-  | { action: "send"; text: string; index: number; role: string; table: boolean }
+  | { action: "send"; bubbles: PresetBubble[]; table: boolean }
   | { action: "hold"; reason: string };
 
 const AMOUNT_PAIR =
@@ -107,7 +113,29 @@ export function findTablePresetIndex(replies: PagerSavedReply[]): number {
   return replies.findIndex((reply) => isTablePresetText(reply.text));
 }
 
+function replyHasUrl(text: string): boolean {
+  return /https?:\/\/|tinyurl\.com|bit\.ly|t\.me\/|www\./i.test(text);
+}
+
+/** Registration instructions that promise a link but do not contain the URL yet. */
+export function isRegistrationWithoutLink(text: string): boolean {
+  if (replyHasUrl(text)) {
+    return false;
+  }
+  const folded = foldPresetText(text);
+  return /voici le lien|here is the link|este es el enlace|aqui esta el enlace|aqui tienes el enlace|lien special pour|lien d'inscription|special registration link|enlace especial/.test(
+    folded,
+  );
+}
+
 function replyWasSent(replyText: string, outgoingTexts: string[]): boolean {
+  const url = replyText.match(/https?:\/\/\S+/i)?.[0]?.replace(/[),.;]+$/g, "");
+  if (url && url.length >= 12) {
+    const needle = url.toLowerCase();
+    if (outgoingTexts.some((outgoing) => outgoing.toLowerCase().includes(needle))) {
+      return true;
+    }
+  }
   const folded = foldPresetText(replyText);
   const needle = folded.slice(0, 80);
   if (needle.length < 24) {
@@ -123,6 +151,45 @@ function replyWasSent(replyText: string, outgoingTexts: string[]): boolean {
     }
     return body.length >= 24 && needle.includes(body.slice(0, 80));
   });
+}
+
+function bubbleAt(replies: PagerSavedReply[], index: number): PresetBubble | undefined {
+  const reply = replies[index];
+  if (!reply?.text.trim()) {
+    return undefined;
+  }
+  return { text: reply.text, index, role: `preset:${index + 1}` };
+}
+
+/** Registration text plus the following link bubble (and a short promo line between them). */
+export function registrationBundle(replies: PagerSavedReply[], start: number): PresetBubble[] {
+  const first = bubbleAt(replies, start);
+  if (!first) {
+    return [];
+  }
+  const bubbles = [first];
+  if (!isRegistrationWithoutLink(first.text)) {
+    return bubbles;
+  }
+  for (let cursor = start + 1; cursor < replies.length && bubbles.length < 3; cursor += 1) {
+    const next = replies[cursor];
+    if (!next?.text.trim() || isTablePresetText(next.text)) {
+      break;
+    }
+    const isLink = replyHasUrl(next.text);
+    if (!isLink && next.text.trim().length > 180) {
+      break;
+    }
+    const bubble = bubbleAt(replies, cursor);
+    if (!bubble) {
+      break;
+    }
+    bubbles.push(bubble);
+    if (isLink) {
+      break;
+    }
+  }
+  return bubbles;
 }
 
 export function lastSentPresetIndex(replies: PagerSavedReply[], outgoingTexts: string[]): number {
@@ -209,11 +276,13 @@ export function planFolderPresetAdvance(
     if (!first?.text.trim()) {
       return null;
     }
+    const bubbles = registrationBundle(replies, 0);
+    if (!bubbles.length) {
+      return null;
+    }
     return {
       action: "send",
-      text: first.text,
-      index: 0,
-      role: "preset:1",
+      bubbles,
       table: tableIndex === 0,
     };
   }
@@ -227,15 +296,30 @@ export function planFolderPresetAdvance(
   if (next >= replies.length) {
     return { action: "hold", reason: "agreement-after-last-preset" };
   }
-  const reply = replies[next];
-  if (!reply?.text.trim()) {
+  const bubbles = registrationBundle(replies, next).filter(
+    (bubble) => !replyWasSent(bubble.text, outgoingTexts),
+  );
+  if (!bubbles.length) {
     return { action: "hold", reason: "empty-next-preset" };
   }
   return {
     action: "send",
-    text: reply.text,
-    index: next,
-    role: `preset:${next + 1}`,
-    table: next === tableIndex,
+    bubbles,
+    table: bubbles.some((bubble) => bubble.index === tableIndex),
   };
+}
+
+/** Registration already went out, but the link saved-reply after it did not. */
+export function planMissingRegistrationLink(
+  replies: PagerSavedReply[],
+  outgoingTexts: string[],
+): PresetBubble[] | null {
+  const last = lastSentPresetIndex(replies, outgoingTexts);
+  if (last < 0 || !isRegistrationWithoutLink(replies[last]?.text ?? "")) {
+    return null;
+  }
+  const missing = registrationBundle(replies, last)
+    .slice(1)
+    .filter((bubble) => !replyWasSent(bubble.text, outgoingTexts));
+  return missing.length ? missing : null;
 }

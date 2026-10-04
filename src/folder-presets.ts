@@ -312,12 +312,12 @@ export function planFolderPresetAdvance(
   outgoingTexts: string[],
   customerText: string,
   language: PresetLanguage,
-  options?: { restartIfUnscripted?: boolean },
+  options?: { restartIfUnscripted?: boolean; advanceOnReaction?: boolean },
 ): PresetPlan | null {
   if (!replies.length) {
     return null;
   }
-  if (!customerText.trim() && !options?.restartIfUnscripted) {
+  if (!customerText.trim() && !options?.restartIfUnscripted && !options?.advanceOnReaction) {
     return null;
   }
   if (customerText.trim() && isDecline(language, customerText)) {
@@ -330,7 +330,7 @@ export function planFolderPresetAdvance(
   if (last < 0) {
     const alreadySpoke = outgoingTexts.some((text) => text.trim().length > 0);
     // Catch-up of «Без статусу»: a human line before the bot was on must not block preset 1.
-    if (alreadySpoke && !options?.restartIfUnscripted) {
+    if (alreadySpoke && !options?.restartIfUnscripted && !options?.advanceOnReaction) {
       return null;
     }
     const first = replies[0];
@@ -349,7 +349,9 @@ export function planFolderPresetAdvance(
   }
 
   const agreed =
-    shouldAdvancePreset(language, customerText) || (last === tableIndex && isTableAmountChoice(customerText));
+    Boolean(options?.advanceOnReaction) ||
+    shouldAdvancePreset(language, customerText) ||
+    (last === tableIndex && isTableAmountChoice(customerText));
   if (!agreed) {
     return null;
   }

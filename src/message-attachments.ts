@@ -2,7 +2,18 @@ import type { PagerMessage } from "./pager-client.js";
 
 export type MessageAttachment = NonNullable<PagerMessage["attachments"]>[number];
 
-const POSITIVE_EMOJI_ONLY = /^[\s👍👌✅🔥❤️🙏😊🙂💯👏]+$/u;
+const POSITIVE_EMOJI_ONLY = /^[\s👍👌✅🔥❤️❤💙🙏😊🙂💯👏♥]+$/u;
+/** Facebook Messenger "like" sticker ids (the big blue thumb). */
+const FACEBOOK_LIKE_STICKER_IDS = new Set([
+  "369239263222822",
+  "369239343222814",
+  "369239383222810",
+]);
+
+function isPositiveEmojiText(text: string): boolean {
+  const stripped = text.trim().replace(/\p{Emoji_Modifier}/gu, "");
+  return Boolean(stripped) && stripped.length <= 16 && POSITIVE_EMOJI_ONLY.test(stripped);
+}
 
 export function isMessengerReactionAttachment(
   attachments?: MessageAttachment[] | null,
@@ -30,6 +41,7 @@ export function isMessengerReactionAttachment(
           "emoji.php",
           "/images/emoji",
           "static.xx.fbcdn.net/images/emoji",
+          ...FACEBOOK_LIKE_STICKER_IDS,
         ].some((marker) => url.includes(marker))
       ) {
         return true;
@@ -39,7 +51,9 @@ export function isMessengerReactionAttachment(
       if (width && height) {
         const w = Number(width);
         const h = Number(height);
-        if (Number.isFinite(w) && Number.isFinite(h) && w <= 200 && h <= 200) {
+        const max = Math.max(w, h);
+        const min = Math.min(w, h);
+        if (Number.isFinite(w) && Number.isFinite(h) && max <= 512 && min / max >= 0.75) {
           return true;
         }
       }
@@ -65,7 +79,7 @@ export function isReactionOnlyMessage(
   messageReaction?: string | null,
 ): boolean {
   const trimmed = (text || "").trim();
-  if (trimmed && POSITIVE_EMOJI_ONLY.test(trimmed) && trimmed.length <= 8) {
+  if (trimmed && isPositiveEmojiText(trimmed)) {
     return true;
   }
   if (!trimmed && isMessengerReactionAttachment(attachments)) {

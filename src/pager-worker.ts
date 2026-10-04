@@ -4734,11 +4734,13 @@ async function trySendFolderPreset(
     console.warn(`Pager worker: saved replies failed ${convId.slice(0, 8)}:`, formatError(error));
     return false;
   }
+  const advanceOnReaction = Boolean(resolveMessageReaction(lastIncoming));
   const plan = planFolderPresetAdvance(replies, outgoingTexts, customerText, language, {
     restartIfUnscripted:
       isCatchUpReadActive(state.catchUpRead) &&
       isNoStatusConversation(conv) &&
       hasUnreadMarkers(conv),
+    advanceOnReaction,
   });
   if (!plan) {
     return false;

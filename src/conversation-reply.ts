@@ -8,7 +8,7 @@ import type { ConversationRuntimeState } from "./state-store.js";
 import type { CountryCode } from "./config.js";
 import { isAutomatedFunnelOutgoing } from "./funnel-outbound.js";
 import { isCustomerClarificationMessage, isLinkAccessProblemMessage } from "./customer-clarity.js";
-import { extractProofImageUrl } from "./message-attachments.js";
+import { extractProofImageUrl, isReactionOnlyMessage } from "./message-attachments.js";
 import { egFunnelNeedsContinuation } from "./eg-script-engine.js";
 import {
   cmAgeQuestionSentInHistory,
@@ -404,6 +404,12 @@ export function isActionableCustomerMessage(
     )
   ) {
     return false;
+  }
+
+  if (
+    isReactionOnlyMessage(lastIncoming.text ?? "", lastIncoming.attachments, lastIncoming.reaction)
+  ) {
+    return true;
   }
 
   if (isFreshCustomerMessage(lastIncoming.createdAt)) {

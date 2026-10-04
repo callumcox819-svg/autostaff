@@ -543,6 +543,7 @@ export class PagerClient {
     pageSize?: number;
     channelId?: string;
     statusId?: string;
+    offset?: number;
   }): Promise<PagerConversation[]> {
     const orgId = await this.ensureOrgId();
     const params: Record<string, string> = {
@@ -555,6 +556,10 @@ export class PagerClient {
     }
     if (options?.statusId !== undefined) {
       params.statusId = options.statusId;
+    }
+    if (options?.offset !== undefined) {
+      params.offset = String(options.offset);
+      params.skip = String(options.offset);
     }
 
     const payload = await this.requestWithOrgRetry<PagerConversation[]>(
@@ -1907,6 +1912,18 @@ export function normalizePagerConversation(raw: unknown): PagerConversation {
     base.channelId,
     base.channel?.id,
   );
+  const statusRecord =
+    record.status && typeof record.status === "object"
+      ? (record.status as Record<string, unknown>)
+      : undefined;
+  const statusId = firstString(
+    record.statusId,
+    record.status_id,
+    statusRecord?.id,
+    base.statusId,
+    base.status?.id,
+  );
+  const statusName = firstString(statusRecord?.name, statusRecord?.title, base.status?.name);
 
   const unreadRaw = record.unreadCount ?? record.unread_count ?? record.unreadMessagesCount;
   let unreadCount = base.unreadCount;
@@ -1946,6 +1963,10 @@ export function normalizePagerConversation(raw: unknown): PagerConversation {
     ...base,
     id,
     channelId,
+    statusId: statusId ?? "",
+    status:
+      base.status ??
+      (statusId || statusName ? { id: statusId, name: statusName } : undefined),
     lastMessageAt,
     lastMessageDirection,
     conversationState,

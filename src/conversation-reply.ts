@@ -121,6 +121,10 @@ export function shouldQueueCatchUpUnreadConversation(conv: PagerConversation): b
 }
 
 export function shouldQueueCatchUpConversation(conv: PagerConversation): boolean {
+  // The whole «Без статусу» pile, including threads that already end with a page message.
+  if (isNoStatusConversation(conv)) {
+    return true;
+  }
   return (
     shouldQueueCatchUpReadConversation(conv) || shouldQueueCatchUpUnreadConversation(conv)
   );

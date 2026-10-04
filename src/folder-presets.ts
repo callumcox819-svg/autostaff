@@ -314,10 +314,13 @@ export function planFolderPresetAdvance(
   language: PresetLanguage,
   options?: { restartIfUnscripted?: boolean },
 ): PresetPlan | null {
-  if (!replies.length || !customerText.trim()) {
+  if (!replies.length) {
     return null;
   }
-  if (isDecline(language, customerText)) {
+  if (!customerText.trim() && !options?.restartIfUnscripted) {
+    return null;
+  }
+  if (customerText.trim() && isDecline(language, customerText)) {
     return null;
   }
 

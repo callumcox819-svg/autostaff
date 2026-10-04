@@ -12,12 +12,21 @@ export type StatusFolderState = {
   aiEnabled?: boolean;
 };
 
+export function conversationStatusId(conv: PagerConversation): string {
+  return (conv.statusId ?? conv.status?.id ?? "").trim();
+}
+
 export function isNoStatusConversation(conv: PagerConversation): boolean {
-  if (!conv.statusId) {
+  const name = (conv.status?.name || "").trim().toLowerCase();
+  if (
+    name.includes("без статус") ||
+    name.includes("no status") ||
+    name === "—" ||
+    name === "-"
+  ) {
     return true;
   }
-  const name = (conv.status?.name || "").trim().toLowerCase();
-  return name.includes("без статус") || name === "" || name === "—" || name === "-";
+  return !conversationStatusId(conv);
 }
 
 export function conversationFolderKey(conv: PagerConversation): string {

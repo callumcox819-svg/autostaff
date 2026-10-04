@@ -312,6 +312,7 @@ export function planFolderPresetAdvance(
   outgoingTexts: string[],
   customerText: string,
   language: PresetLanguage,
+  options?: { restartIfUnscripted?: boolean },
 ): PresetPlan | null {
   if (!replies.length || !customerText.trim()) {
     return null;
@@ -325,7 +326,8 @@ export function planFolderPresetAdvance(
 
   if (last < 0) {
     const alreadySpoke = outgoingTexts.some((text) => text.trim().length > 0);
-    if (alreadySpoke) {
+    // Catch-up of «Без статусу»: a human line before the bot was on must not block preset 1.
+    if (alreadySpoke && !options?.restartIfUnscripted) {
       return null;
     }
     const first = replies[0];

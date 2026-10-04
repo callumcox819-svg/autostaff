@@ -363,8 +363,10 @@ const INBOX_TOP_EG = 250;
 const INBOX_PAGES_EG = 25;
 /** Deep enough for large inboxes (2500+ chats) — do not stop until unread cap or end. */
 const INBOX_PAGES_DEEP = 25;
-/** Max read threads per channel per cycle during «догнать чаты». */
-const CATCH_UP_INBOX_CAP = 120;
+/** Max no-status / read threads queued per cycle during «догнать чаты». */
+const CATCH_UP_INBOX_CAP = 200;
+/** Pages of the «Без статусу» filter to walk on catch-up (100 chats each). */
+const CATCH_UP_NO_STATUS_PAGES = 20;
 
 const operatorCyclesInFlight = new Set<number>();
 const conversationsInFlight = new Set<string>();
@@ -925,6 +927,83 @@ function resolveChannelEnabledFolderIds(
   return enabledFolderIds;
 }
 
+function noStatusFolderEnabled(enabledFolderIds: Set<string> | null): boolean {
+  if (!enabledFolderIds?.size) {
+    return false;
+  }
+  if (enabledFolderIds.has(NO_STATUS_FOLDER_ID)) {
+    return true;
+  }
+  return enabledFolderIds.size === 1 && enabledFolderIds.has(ALL_INBOX_FOLDER_ID);
+}
+
+function isCatchUpChannelCountry(country: string | undefined): boolean {
+  return (
+    country === "CM" ||
+    country === "EG" ||
+    country === "ZM" ||
+    country === "RW" ||
+    country === "CL" ||
+    country === "MG" ||
+    country === "DJ" ||
+    country === "JO" ||
+    isFolderOnlyCountry(country ?? "")
+  );
+}
+
+/** Page the «Без статусу» folder itself so old unread leads are not buried in the mixed inbox. */
+async function collectNoStatusCatchUp(
+  client: PagerClient,
+  channelId: string,
+  cap: number,
+): Promise<PagerConversation[]> {
+  const found: PagerConversation[] = [];
+  for (const statusId of ["", "null"]) {
+    let matchedFilter = false;
+    for (let page = 1; page <= CATCH_UP_NO_STATUS_PAGES && found.length < cap; page += 1) {
+      let batch: PagerConversation[];
+      try {
+        batch = await client.listConversations({
+          channelId,
+          page,
+          pageSize: 100,
+          statusId,
+        });
+      } catch (error) {
+        console.warn(
+          `Pager worker: no-status catch-up list failed channel ${channelId.slice(0, 8)} status=${statusId || "(empty)"}:`,
+          error instanceof Error ? error.message : error,
+        );
+        break;
+      }
+      if (!batch.length) {
+        break;
+      }
+      const noStatus = batch.filter((conv) => isNoStatusConversation(conv));
+      if (noStatus.length < batch.length) {
+        break;
+      }
+      matchedFilter = true;
+      for (const conv of noStatus) {
+        if (!shouldQueueCatchUpConversation(conv) || found.some((item) => item.id === conv.id)) {
+          continue;
+        }
+        found.push(conv);
+        if (found.length >= cap) {
+          break;
+        }
+      }
+      if (batch.length < 100) {
+        break;
+      }
+    }
+    if (matchedFilter) {
+      return found;
+    }
+  }
+  return found;
+}
+
 async function buildWorkQueue(
   client: PagerClient,
   folderScopedConversations: PagerConversation[],
@@ -940,6 +1019,33 @@ async function buildWorkQueue(
   const catchUpActive = isCatchUpReadActive(chatState.catchUpRead);
   let catchUpAdded = 0;
 
+  if (catchUpActive && noStatusFolderEnabled(enabledFolderIds)) {
+    for (const channel of enabledChannels) {
+      if (catchUpAdded >= CATCH_UP_INBOX_CAP) {
+        break;
+      }
+      if (!isFolderMarket(channel.runtime.country)) {
+        continue;
+      }
+      const backlog = await collectNoStatusCatchUp(
+        client,
+        channel.channelId,
+        CATCH_UP_INBOX_CAP - catchUpAdded,
+      );
+      for (const conv of backlog) {
+        if (selected.has(conv.id)) {
+          continue;
+        }
+        selected.set(conv.id, conv);
+        catchUpConversationIds.add(conv.id);
+        catchUpAdded += 1;
+      }
+    }
+    if (catchUpAdded) {
+      console.log(`Pager worker: catch-up no-status folder added=${catchUpAdded}`);
+    }
+  }
+
   if (catchUpActive) {
     for (const conv of folderScopedConversations) {
       if (catchUpAdded >= CATCH_UP_INBOX_CAP) {
@@ -950,17 +1056,7 @@ async function buildWorkQueue(
         continue;
       }
       const runtime = enabledChannels.find((item) => item.channelId === channelId);
-      if (
-        !runtime ||
-        (runtime.runtime.country !== "CM" &&
-          runtime.runtime.country !== "EG" &&
-          runtime.runtime.country !== "ZM" &&
-          runtime.runtime.country !== "RW" &&
-          runtime.runtime.country !== "CL" &&
-          runtime.runtime.country !== "MG" &&
-          runtime.runtime.country !== "DJ" &&
-          runtime.runtime.country !== "JO")
-      ) {
+      if (!runtime || !isCatchUpChannelCountry(runtime.runtime.country)) {
         continue;
       }
       const folderIds = resolveChannelEnabledFolderIds(
@@ -1014,7 +1110,11 @@ async function buildWorkQueue(
       hasCmChannel,
       hasEgChannel,
     );
-    const maxPages = isEg ? INBOX_PAGES_EG : INBOX_PAGES_DEEP;
+    const maxPages = isEg
+      ? INBOX_PAGES_EG
+      : catchUpActive && noStatusFolderEnabled(enabledFolderIds)
+        ? Math.max(INBOX_PAGES_DEEP, 40)
+        : INBOX_PAGES_DEEP;
     const pageSize = isEg ? 100 : 100;
     const unreadCap = isEg ? INBOX_TOP_EG : INBOX_TOP_UNREAD;
     const followUpCap = INBOX_TOP_CM_FOLLOWUP;
@@ -1173,7 +1273,11 @@ async function buildWorkQueue(
 
       const unreadFull = unreadAdded >= unreadCap;
       const followUpFull = followUpAdded >= followUpCap;
-      if (unreadFull && followUpFull) {
+      const catchUpStillOpen =
+        catchUpActive &&
+        noStatusFolderEnabled(channelFolderIds) &&
+        catchUpAdded < CATCH_UP_INBOX_CAP;
+      if (unreadFull && followUpFull && !catchUpStillOpen) {
         break;
       }
       if (inboxPage.length < pageSize) {
@@ -4565,7 +4669,10 @@ async function trySendFolderPreset(
     console.warn(`Pager worker: saved replies failed ${convId.slice(0, 8)}:`, formatError(error));
     return false;
   }
-  const plan = planFolderPresetAdvance(replies, outgoingTexts, customerText, language);
+  const plan = planFolderPresetAdvance(replies, outgoingTexts, customerText, language, {
+    restartIfUnscripted:
+      isCatchUpReadActive(state.catchUpRead) && isNoStatusConversation(conv),
+  });
   if (!plan) {
     return false;
   }

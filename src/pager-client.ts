@@ -1741,7 +1741,8 @@ export class PagerClient {
     const url = new URL(path, this.apiBaseUrl);
     if (options.params) {
       for (const [key, value] of Object.entries(options.params)) {
-        if (value) {
+        // Empty statusId is the «Без статусу» filter. Other empty params stay omitted.
+        if (value || key === "statusId") {
           url.searchParams.set(key, value);
         }
       }

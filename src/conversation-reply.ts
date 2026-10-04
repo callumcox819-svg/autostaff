@@ -86,12 +86,13 @@ export function shouldQueueCatchUpReadConversation(conv: PagerConversation): boo
   if (isOutgoingDirection(conv.lastMessageDirection)) {
     return false;
   }
+  // «Без статусу» backlog sat there before the bot was enabled — any age, not only 24h.
+  if (isNoStatusConversation(conv)) {
+    return true;
+  }
   const lastAt = resolveLastMessageAt(conv);
   if (!lastAt || !isWithinCatchUpReadWindow(lastAt)) {
     return false;
-  }
-  if (isNoStatusConversation(conv)) {
-    return isIncomingDirection(conv.lastMessageDirection) || isNewLeadConversation(conv);
   }
   return isIncomingDirection(conv.lastMessageDirection);
 }
@@ -410,7 +411,6 @@ export function isActionableCustomerMessage(
     options?.catchUpRead &&
     conv &&
     isNoStatusConversation(conv) &&
-    hasUnreadMarkers(conv) &&
     !hasBotReplyAfterCustomerMessage(
       sortedMessages,
       lastIncoming,

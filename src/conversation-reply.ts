@@ -86,10 +86,6 @@ export function shouldQueueCatchUpReadConversation(conv: PagerConversation): boo
   if (isOutgoingDirection(conv.lastMessageDirection)) {
     return false;
   }
-  // «Без статусу» backlog sat there before the bot was enabled — any age, not only 24h.
-  if (isNoStatusConversation(conv)) {
-    return true;
-  }
   const lastAt = resolveLastMessageAt(conv);
   if (!lastAt || !isWithinCatchUpReadWindow(lastAt)) {
     return false;
@@ -121,8 +117,8 @@ export function shouldQueueCatchUpUnreadConversation(conv: PagerConversation): b
 }
 
 export function shouldQueueCatchUpConversation(conv: PagerConversation): boolean {
-  // The whole «Без статусу» pile, including threads that already end with a page message.
-  if (isNoStatusConversation(conv)) {
+  // Unread «Без статусу» is the red counter. A reply clears it, same as a manual operator reply.
+  if (isNoStatusConversation(conv) && hasUnreadMarkers(conv)) {
     return true;
   }
   return (
@@ -180,8 +176,11 @@ export function isFreshCustomerMessage(createdAt?: string, nowMs = Date.now()): 
 }
 
 export function hasUnreadMarkers(conv: PagerConversation): boolean {
+  if (conv.listedUnread) {
+    return true;
+  }
   const state = (conv.conversationState ?? "").trim().toLowerCase();
-  if (state === "unread") {
+  if (state === "unread" || state === "new" || state === "unseen" || state === "not_read") {
     return true;
   }
   if (typeof conv.unreadCount === "number" && conv.unreadCount > 0) {

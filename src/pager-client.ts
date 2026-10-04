@@ -39,6 +39,8 @@ export type PagerConversation = {
   conversationState?: string;
   unreadCount?: number;
   isUnread?: boolean;
+  /** Set when this row came from an unread inbox query. Not a Pager field. */
+  listedUnread?: boolean;
   clientPSID?: string;
   responsibleUserId?: string;
   responsibleuserId?: string;
@@ -544,6 +546,7 @@ export class PagerClient {
     channelId?: string;
     statusId?: string;
     offset?: number;
+    conversationState?: string;
   }): Promise<PagerConversation[]> {
     const orgId = await this.ensureOrgId();
     const params: Record<string, string> = {
@@ -561,6 +564,10 @@ export class PagerClient {
       params.offset = String(options.offset);
       params.skip = String(options.offset);
     }
+    if (options?.conversationState) {
+      params.conversationState = options.conversationState;
+      params.state = options.conversationState;
+    }
 
     const payload = await this.requestWithOrgRetry<PagerConversation[]>(
       "/api/conversation",
@@ -570,7 +577,10 @@ export class PagerClient {
       ? payload.map((item) => normalizePagerConversation(item))
       : [];
     if (options?.channelId) {
-      return conversations.filter((conv) => conv.channelId === options.channelId);
+      return conversations.filter((conv) => {
+        const id = conv.channelId || "";
+        return !id || id === options.channelId;
+      });
     }
     return conversations;
   }
@@ -1372,12 +1382,25 @@ export class PagerClient {
 
   private async markConversationRead(convId: string, userId: string): Promise<void> {
     const orgId = await this.ensureOrgId();
-    await this.request(`/api/conversation/${convId}`, {
-      method: "PATCH",
-      params: { userId, orgId },
-      body: { conversationState: "read" },
-      referer: this.chatReferer(convId),
-    });
+    const bodies: Array<Record<string, unknown>> = [
+      { conversationState: "read", unreadCount: 0, isUnread: false },
+      { conversationState: "read" },
+    ];
+    let lastError: unknown;
+    for (const body of bodies) {
+      try {
+        await this.request(`/api/conversation/${convId}`, {
+          method: "PATCH",
+          params: { userId, orgId },
+          body,
+          referer: this.chatReferer(convId),
+        });
+        return;
+      } catch (error) {
+        lastError = error;
+      }
+    }
+    throw lastError;
   }
 
   private async getResponsibleUserId(convId: string): Promise<string> {
@@ -1925,7 +1948,13 @@ export function normalizePagerConversation(raw: unknown): PagerConversation {
   );
   const statusName = firstString(statusRecord?.name, statusRecord?.title, base.status?.name);
 
-  const unreadRaw = record.unreadCount ?? record.unread_count ?? record.unreadMessagesCount;
+  const unreadRaw =
+    record.unreadCount ??
+    record.unread_count ??
+    record.unreadMessagesCount ??
+    record.unreadMessages ??
+    record.unseenCount ??
+    record.newMessagesCount;
   let unreadCount = base.unreadCount;
   if (typeof unreadRaw === "number" && Number.isFinite(unreadRaw)) {
     unreadCount = unreadRaw;
@@ -1934,6 +1963,7 @@ export function normalizePagerConversation(raw: unknown): PagerConversation {
   }
 
   const unreadFlag = record.isUnread ?? record.is_unread ?? record.unread;
+  const readFlag = record.isRead ?? record.is_read;
   let isUnread = base.isUnread;
   if (typeof unreadFlag === "boolean") {
     isUnread = unreadFlag;
@@ -1941,6 +1971,12 @@ export function normalizePagerConversation(raw: unknown): PagerConversation {
     isUnread = true;
   } else if (unreadFlag === 0 || unreadFlag === "0" || unreadFlag === "false") {
     isUnread = false;
+  }
+  if (
+    isUnread !== true &&
+    (readFlag === false || readFlag === 0 || readFlag === "0" || readFlag === "false")
+  ) {
+    isUnread = true;
   }
 
   const clientRecord =

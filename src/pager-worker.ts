@@ -797,9 +797,9 @@ async function processOperatorAccount(deps: WorkerDeps, state: ChatState): Promi
       const report =
         catchUpChecked > 0
           ? [
-              "Догон «Без статусу»:",
-              `в очереди ${catchUpChecked}, отправлено скриптов ${catchUpReplied}.`,
-              "Цифра в Pager уменьшится, когда чат уйдёт в «В процесі реєстрації» после реги и ссылки.",
+              "Догон непрочитанных в «Без статусу»:",
+              `в очереди ${catchUpChecked}, ответов ${catchUpReplied}.`,
+              "Счётчик падает от ответа бота так же, как от ручного ответа оператора.",
               catchUpReplied < catchUpChecked
                 ? "Остальные в этой очереди — без скрипта или уже отвечены в треде."
                 : "",
@@ -952,7 +952,37 @@ function isCatchUpChannelCountry(country: string | undefined): boolean {
   );
 }
 
-/** Page the «Без статусу» folder itself so old leads are not buried in the mixed inbox. */
+async function listCatchUpBatch(
+  client: PagerClient,
+  channelId: string,
+  options: { page: number; statusId?: string; conversationState?: string; offset?: number },
+): Promise<PagerConversation[] | null> {
+  try {
+    return await client.listConversations({
+      channelId,
+      page: options.page,
+      pageSize: 100,
+      statusId: options.statusId,
+      conversationState: options.conversationState,
+      offset: options.offset,
+    });
+  } catch (error) {
+    console.warn(
+      `Pager worker: no-status catch-up list failed channel ${channelId.slice(0, 8)}:`,
+      error instanceof Error ? error.message : error,
+    );
+    return null;
+  }
+}
+
+function sameConversationPage(left: PagerConversation[], right: PagerConversation[]): boolean {
+  if (!left.length || left.length !== right.length) {
+    return false;
+  }
+  return left[0]?.id === right[0]?.id && left[left.length - 1]?.id === right[right.length - 1]?.id;
+}
+
+/** Unread rows in «Без статусу» — the red counter an operator reply clears. */
 async function collectNoStatusCatchUp(
   client: PagerClient,
   channelId: string,
@@ -960,63 +990,80 @@ async function collectNoStatusCatchUp(
 ): Promise<PagerConversation[]> {
   const found: PagerConversation[] = [];
   const seen = new Set<string>();
-  const strategies: Array<{ statusId?: string; useOffset: boolean }> = [
-    { statusId: "", useOffset: false },
-    { statusId: "", useOffset: true },
-    { statusId: "null", useOffset: false },
-    { useOffset: false },
+  const plain = await listCatchUpBatch(client, channelId, { page: 1 });
+  const probes: Array<{ statusId?: string; conversationState: string }> = [
+    { statusId: "", conversationState: "unread" },
+    { conversationState: "unread" },
   ];
 
-  for (const strategy of strategies) {
+  const pushUnread = (conv: PagerConversation) => {
+    if (!conv.id || seen.has(conv.id) || found.length >= cap) {
+      return;
+    }
+    const convChannel = conv.channelId || conv.channel?.id || "";
+    if (convChannel && convChannel !== channelId) {
+      return;
+    }
+    if (!isNoStatusConversation(conv)) {
+      return;
+    }
+    seen.add(conv.id);
+    found.push({ ...conv, listedUnread: true });
+  };
+
+  for (const probe of probes) {
     if (found.length >= cap) {
       break;
     }
-    for (let page = 1; page <= CATCH_UP_NO_STATUS_PAGES && found.length < cap; page += 1) {
-      let batch: PagerConversation[];
-      try {
-        batch = await client.listConversations({
-          channelId,
-          page,
-          pageSize: 100,
-          statusId: strategy.statusId,
-          offset: strategy.useOffset ? (page - 1) * 100 : undefined,
-        });
-      } catch (error) {
-        console.warn(
-          `Pager worker: no-status catch-up list failed channel ${channelId.slice(0, 8)} status=${strategy.statusId || "(empty)"}:`,
-          error instanceof Error ? error.message : error,
-        );
-        break;
-      }
-      if (!batch.length) {
+    const first = await listCatchUpBatch(client, channelId, { page: 1, ...probe });
+    if (!first?.length) {
+      continue;
+    }
+    if (plain && sameConversationPage(plain, first)) {
+      continue;
+    }
+    for (const conv of first) {
+      pushUnread(conv);
+    }
+    for (let page = 2; page <= CATCH_UP_NO_STATUS_PAGES && found.length < cap; page += 1) {
+      const batch = await listCatchUpBatch(client, channelId, { page, ...probe });
+      if (!batch?.length) {
         break;
       }
       const fresh = batch.filter((conv) => conv.id && !seen.has(conv.id));
       if (!fresh.length) {
         break;
       }
-      let pageNoStatus = 0;
       for (const conv of fresh) {
-        seen.add(conv.id);
-        const convChannel = conv.channelId || conv.channel?.id || "";
-        if (convChannel && convChannel !== channelId) {
-          continue;
-        }
-        if (!isNoStatusConversation(conv)) {
-          continue;
-        }
-        pageNoStatus += 1;
-        found.push(conv);
-        if (found.length >= cap) {
-          break;
-        }
-      }
-      if (strategy.statusId !== undefined && page === 1 && pageNoStatus === 0) {
-        break;
+        pushUnread(conv);
       }
       if (batch.length < 100) {
         break;
       }
+    }
+    if (found.length) {
+      return found;
+    }
+  }
+
+  for (let page = 1; page <= CATCH_UP_NO_STATUS_PAGES && found.length < cap; page += 1) {
+    const batch = await listCatchUpBatch(client, channelId, { page, statusId: "" });
+    if (!batch?.length) {
+      break;
+    }
+    const fresh = batch.filter((conv) => conv.id && !seen.has(conv.id));
+    if (!fresh.length) {
+      break;
+    }
+    for (const conv of fresh) {
+      if (isNoStatusConversation(conv) && hasUnreadMarkers(conv)) {
+        pushUnread(conv);
+      } else if (conv.id) {
+        seen.add(conv.id);
+      }
+    }
+    if (batch.length < 100) {
+      break;
     }
   }
   return found;
@@ -1750,7 +1797,7 @@ async function processConversation(
   try {
     const opened = await client.openConversation(conv.id);
     if (opened) {
-      workingConv = opened;
+      workingConv = { ...opened, listedUnread: conv.listedUnread || opened.listedUnread };
     }
   } catch {
     // keep list snapshot
@@ -4689,7 +4736,9 @@ async function trySendFolderPreset(
   }
   const plan = planFolderPresetAdvance(replies, outgoingTexts, customerText, language, {
     restartIfUnscripted:
-      isCatchUpReadActive(state.catchUpRead) && isNoStatusConversation(conv),
+      isCatchUpReadActive(state.catchUpRead) &&
+      isNoStatusConversation(conv) &&
+      hasUnreadMarkers(conv),
   });
   if (!plan) {
     return false;
@@ -4897,7 +4946,9 @@ async function processFolderMarketConversation(
     })
     .map((message) => (message.text || "").trim());
   const catchUpNoStatus =
-    isCatchUpReadActive(currentState.catchUpRead) && isNoStatusConversation(conv);
+    isCatchUpReadActive(currentState.catchUpRead) &&
+    isNoStatusConversation(conv) &&
+    hasUnreadMarkers(conv);
   if (
     shouldSkipConversationBotSpokeLast(conv, sorted, lastIncoming, {
       operatorUserId,
@@ -5982,6 +6033,7 @@ async function ensureCustomerMessageEligible(
   if (
     catchUpRead &&
     isNoStatusConversation(conv) &&
+    hasUnreadMarkers(conv) &&
     !(convState.lastCustomerMessageId === lastIncoming.id && convState.lastReplyAt)
   ) {
     return true;
